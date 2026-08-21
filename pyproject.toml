@@ -1,0 +1,34 @@
+[project]
+name = "pyraimd2"
+version = "0.2.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "kpleo", email = "pengkang@buaa.edu.cn" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "ase>=3.29.0",
+    "mace-torch>=0.3.16",
+    "pyscf>=2.14.0",
+]
+
+[project.scripts]
+pyraimd2 = "pyraimd2:main"
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "rdkit>=2026.3.5",
+    "ruff>=0.16.3",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks slow tests (deselected by default; run with --runslow)",
+]
+addopts = ["-m", "not slow"]

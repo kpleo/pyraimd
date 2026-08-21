@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Analysis artifacts (large binaries stay out of git)
+analysis/**/*.db
+analysis/*model*
+
+# macOS
+.DS_Store
