@@ -1,4 +1,4 @@
-"""Trajectory analysis tools (design-m3.md)."""
+"""Trajectory analysis tools."""
 
 from pyraimd2.analysis.split import parse_boundaries, segment_held_out
 from pyraimd2.analysis.wigner_seitz import (

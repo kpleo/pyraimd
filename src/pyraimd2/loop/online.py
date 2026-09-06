@@ -1,4 +1,4 @@
-"""Online adaptation glue (M2 §3): one object ingests every DFT label.
+"""Online adaptation: one object ingests every DFT label.
 
 After each DFT-labeled step the :class:`OnlineUpdater`:
 
@@ -31,7 +31,7 @@ class OnlineUpdater:
         committee: The trainable surrogate.
         observe: Sink for (s, e) pairs — ``ConformalSwitch.observe`` in the
             calibrated loop; a no-op for uncalibrated ablations.
-        n_label: Fine-tune period in new DFT labels (M2 §3: N_label = 8).
+        n_label: Fine-tune period in new DFT labels (default: 8).
         label_source: Supplier of the full current label set for fine-tuning
             (e.g. ``lambda: store.iter_labels(run_id)``).  When None, the
             updater accumulates (atoms, label) pairs from the observations

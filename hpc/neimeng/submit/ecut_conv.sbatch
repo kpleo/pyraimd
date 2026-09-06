@@ -10,9 +10,9 @@
 #SBATCH --output=slurm_%x_%A_%a.out
 #SBATCH --error=slurm_%x_%A_%a.err
 
-# pyraimd2 M3: ecut convergence series for the LP30 bulk electrolyte box
+# Pyramid: ecut convergence series for the LP30 bulk electrolyte box
 # (288 atoms, Gamma, PBE+D3). One array element per ecutwfc value.
-# Neimeng A "normal" contract: 28 CPU/node, --mem=120G, no GPU (docs/hpc.md).
+# Neimeng A "normal" contract: 28 CPU/node, --mem=120G, no GPU.
 
 set -euo pipefail
 ECUTS=(40 50 60 70)

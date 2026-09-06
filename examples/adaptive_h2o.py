@@ -1,4 +1,4 @@
-"""M1 acceptance demo: 200-step adaptive NVE on H2O at 300 K, CPU only.
+"""Scheduled-reference example: 200-step adaptive NVE on H2O at 300 K, CPU only.
 
 Chain: PyscfEngine (PBE/def2-SVP) + MaceSurrogate (MACE-MP-0 small, frozen)
 + ScheduledSwitch(period=10) + Store (SQLite) + Runner (VelocityVerlet).
@@ -52,7 +52,7 @@ def main() -> int:
     summary = runner.run(MD_STEPS)
 
     n_labels = len(list(store.iter_labels("h2o-nve-300K")))
-    print("\n=== PYRAIMD-2 M1 adaptive loop: H2O NVE ===")
+    print("\n=== Pyramid scheduled-reference loop: H2O NVE ===")
     print("run id:          h2o-nve-300K")
     print(f"store:           {db_path}")
     print(f"MD steps:        {summary.n_steps} x {TIMESTEP_FS} fs "

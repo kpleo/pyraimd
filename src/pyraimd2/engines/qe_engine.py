@@ -1,6 +1,6 @@
-"""Quantum ESPRESSO engine (M3): periodic DFT labels via pw.x.
+"""Quantum ESPRESSO engine: periodic DFT labels via pw.x.
 
-Design-doc contract (design-phase-b.md §3, §4): the engine is a swappable
+The engine is a swappable
 label source behind the ``Engine`` protocol; subprocess exit codes are always
 checked and failures raise :class:`EngineError` — never silently reuse stale
 output. Each call runs in its own directory ``run_root/label`` (no CWD

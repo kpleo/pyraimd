@@ -1,6 +1,6 @@
 """Runner: drives ASE VelocityVerlet with the SwitchingCalculator (§4.1).
 
-Restart correctness (design doc §3, rule 3): the Store holds, per logged
+Restart state: the Store holds, per logged
 step, the atoms snapshot at force-evaluation time (positions and velocity
 Verlet *half-step* momenta) plus the forces that drove the MD.
 :meth:`Runner.resume` reconstructs the on-step momenta exactly as the

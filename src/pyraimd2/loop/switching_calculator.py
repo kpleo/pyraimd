@@ -1,5 +1,4 @@
-"""SwitchingCalculator: the per-step contract of design doc §4.2 as an ASE
-calculator.
+"""SwitchingCalculator: route force evaluations through an ASE calculator.
 
 Every force evaluation:
 
@@ -13,20 +12,19 @@ Step numbering: the counter starts at -1 on a fresh run.  VelocityVerlet
 evaluates the initial geometry x0 once before the first MD step, so that
 evaluation is logged as step -1 and MD step k >= 1 is driven by the
 evaluation logged as step k-1.  Hence ``run(n_steps)`` logs steps
--1 .. n_steps-1 and every evaluation is audited (design doc §4.1: "logs
-everything").
+-1 .. n_steps-1 and every evaluation is recorded.
 
 Engine failures propagate as :class:`~pyraimd2.engines.base.EngineError` —
-the calculator never falls back to the surrogate silently (§3, rule 2), and
+the calculator never falls back to the surrogate silently, and
 nothing is logged or counted for a failed evaluation.
 
-Online adaptation (M2 §3): the optional ``on_label`` hook is called with a
+Online adaptation: the optional ``on_label`` hook is called with a
 :class:`~pyraimd2.switch.base.LabelObservation` after every successfully
 logged "dft" step (engine label + shadow prediction).  Hook exceptions
 propagate — the label is already durably in the Store at that point.
 
-Randomized exploration labels (referee §2.4; pre-registered, OFF by
-default): with ``explore_frac`` = p > 0, each *accepted* ("ml") step draws
+Randomized exploration labels (off by default): with ``explore_frac`` = p > 0,
+each *accepted* ("ml") step draws
 ``u ~ U[0,1)`` from a dedicated, deterministically seeded stream, and on
 ``u < p`` the engine label is computed ANYWAY — a shadow label.  The step
 still propagates with the surrogate forces (the current force remains fixed; labels may change later
@@ -35,7 +33,7 @@ payload attached and "explore-label" in its reason string, and the label
 flows through ``on_label`` into the calibration window/updater like any
 other label — that is its purpose (drift audit on accepted steps).
 
-Streak semantics (T4d invariant): an explore label does NOT reset the
+Streak semantics: an explore label does NOT reset the
 conformal streak.  The streak belongs to the *decision* path:
 ``ConformalSwitch.assess`` increments it on an "ml" decision and resets it
 only on a "dft" decision, while ``observe`` is pure window ingestion and

@@ -1,7 +1,7 @@
-"""In-process PySCF engine for finite molecules (design doc §8: local dev DFT).
+"""In-process PySCF engine for finite molecules.
 
 Restricted closed-shell KS-DFT (RKS) only.  Unit conversions happen exactly
-here, at the engine boundary (design doc §3, rule 6): PySCF works in
+here, at the engine boundary: PySCF works in
 Hartree/Bohr, the rest of the package works in eV/Å via ``ase.units``.
 """
 
@@ -72,6 +72,6 @@ class PyscfEngine:
         return EngineResult(
             energy=float(energy_ha) * units.Hartree,
             forces=-grad_ha_bohr * (units.Hartree / units.Bohr),
-            stress=None,  # finite molecule: no cell, no virial (design doc §3 rule 7 note)
+            stress=None,  # finite molecule: no cell, no virial
             wall_time_s=wall_time_s,
         )

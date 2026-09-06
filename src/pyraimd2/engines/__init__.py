@@ -1,4 +1,4 @@
-"""Engine protocol and implementations (design doc §6)."""
+"""Engine protocol and implementations."""
 
 from pyraimd2.engines.base import Engine, EngineError, EngineResult
 from pyraimd2.engines.ase_engine import AseEngine

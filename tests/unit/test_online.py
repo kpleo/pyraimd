@@ -1,4 +1,4 @@
-"""OnlineUpdater and the SwitchingCalculator on_label hook (M2 §3)."""
+"""OnlineUpdater and the SwitchingCalculator on_label hook."""
 
 from __future__ import annotations
 
@@ -137,7 +137,7 @@ def test_hook_not_called_when_engine_fails(tmp_path, cluster) -> None:
 
 
 def test_live_loop_full_online_wiring(tmp_path, cluster) -> None:
-    """The M2 chain in the live loop: ConformalSwitch + OnlineUpdater through
+    """Online adaptation in the live loop: ConformalSwitch + OnlineUpdater through
     the calculator hook — every engine call lands in the window, and the
     fine-tune trigger fires on schedule."""
     committee = FakeCommittee(CLUSTER_R0, bias_amplitude=0.05, spread=0.01)

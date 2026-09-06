@@ -2,8 +2,9 @@
 
 Every force evaluation is one row: the atoms snapshot (positions *and*
 momenta), the route, the switch's reason, the surrogate prediction, and the
-engine label when present.  The loop can be killed and resumed from the Store
-alone (design doc §3, rule 3).
+engine label when present. Legacy runners use these records for restart;
+energetic restart additionally needs calibration and check state and is not
+implemented yet.
 
 Note: use a ``.db`` file suffix — ASE maps it to its SQLite3 backend.
 """

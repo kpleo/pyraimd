@@ -1,4 +1,4 @@
-"""Trivial import smoke tests (M0). Real tests arrive with the loop modules."""
+"""Package import and version smoke tests."""
 
 import pyraimd2
 

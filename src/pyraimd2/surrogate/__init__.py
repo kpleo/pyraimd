@@ -1,4 +1,4 @@
-"""Surrogate protocol and implementations (design doc §6)."""
+"""Surrogate protocol and implementations."""
 
 from pyraimd2.surrogate.base import (
     Surrogate,

@@ -1,4 +1,4 @@
-"""Switch protocol and implementations (design doc §6)."""
+"""Switch protocol and implementations."""
 
 from pyraimd2.switch.base import Decision, LabelObservation, Route, Switch
 from pyraimd2.switch.conformal import ConformalSwitch, conformal_quantile

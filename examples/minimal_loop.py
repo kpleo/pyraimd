@@ -1,4 +1,4 @@
-"""Minimal closed-loop environment verification for PYRAIMD-2 (M0).
+"""Check the MACE, ASE and PySCF interfaces for Pyramid.
 
 Chain under test:  torch -> mace-torch (MACE-MP-0 foundation model) -> ASE MD
                    -> PySCF (DFT reference)
@@ -124,7 +124,7 @@ def main() -> int:
                    (f"E_PBE = {e_ref:.8f} Ha, max|F_analytic - F_FD| = {fd_dev:.2e} eV/A; "
                     f"informational: cos(F_MACE, F_PBE) = {cos:.3f} (OOD molecule, not gated)")))
 
-    print("\n=== PYRAIMD-2 minimal loop report ===")
+    print("\n=== Pyramid backend check report ===")
     for name, ok, detail in checks:
         print(f"[{'PASS' if ok else 'FAIL'}] {name}\n       {detail}")
     n_fail = sum(not ok for _, ok, _ in checks)

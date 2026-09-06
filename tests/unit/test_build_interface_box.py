@@ -1,4 +1,4 @@
-"""Unit tests for experiments/build_interface_box.py (flagship A builder).
+"""Unit tests for experiments/build_interface_box.py (interface builder).
 
 Pure-Python coverage only: composition bookkeeping, box geometry, density
 accounting, the PBC overlap checker, packmol input rendering, and the

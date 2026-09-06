@@ -1,8 +1,8 @@
-"""Engine protocol: the supervised quantum-label boundary (design doc §4.1).
+"""Engine protocol: the supervised quantum-label boundary.
 
 An engine turns an ``ase.Atoms`` into a label (energy, forces, stress) in ASE
 units.  Engines raise :class:`EngineError` on any failure — they never return
-partial or stale results (design doc §3, rule 2).
+partial or stale results.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class EngineResult:
 
 
 class Engine(Protocol):
-    """A swappable quantum-chemistry backend (design doc §4.1)."""
+    """A swappable quantum-chemistry backend."""
 
     name: str
 

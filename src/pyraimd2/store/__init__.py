@@ -1,4 +1,4 @@
-"""Append-only run store (design doc §6)."""
+"""Append-only run store."""
 
 from pyraimd2.store.store import Store
 

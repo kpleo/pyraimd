@@ -1,8 +1,7 @@
 """Generate the QE ecut-convergence campaign inputs for the tungsten bulk box.
 
-Flagship B (design-m3.md v2): bcc W, 4x4x4 unit cells = 128 atoms, Gamma only,
-PBE (no D3 needed for a metal), mv smearing native. Protocol inherited from the
-electrolyte campaign (design-m3.md §3.1): nbnd headroom, fully converged
+Configuration: bcc W, 4x4x4 unit cells = 128 atoms, Gamma only,
+PBE (no D3 needed for a metal), mv smearing native. Electronic settings: nbnd headroom, fully converged
 Davidson, local-TF mixing. W kjpaw pseudo: 14 valence electrons/atom, suggested
 cutoffs 50.4/475.2 Ry (wfc/rho) -> series brackets the suggestion at rho=10x.
 

@@ -1,11 +1,11 @@
-"""Builders for the flagship-B tungsten irradiation experiments (design-m3.md v2).
+"""Builders for tungsten irradiation initial configurations.
 
 Single implementation behind the CLI scripts in ``hpc/neimeng/scripts/``:
 
 - :func:`build_spike_config` — the two-temperature thermal-spike surrogate of
   the cascade core (naming discipline: never "cascade simulation"). The draw
   sequence is exactly the legacy ``make_w_spike.py`` one, so identical seeds
-  reproduce the flagship configurations bitwise.
+  reproduce seeded configurations bitwise.
 - :func:`build_pka_config` — PKA initialization for self-proof (a)
   (PKA-vs-spike validation): one central W atom kicked along a cubic
   direction family (<100>/<110>/<111>) on top of a 300 K Maxwell-Boltzmann
@@ -48,7 +48,7 @@ from ase.build import bulk
 from ase.io import write
 from ase.md.velocitydistribution import Stationary, thermalize_momenta
 
-A0_W = 3.165  # bcc W lattice constant, Angstrom (design-m3.md v2.1: 3.1648, CRC)
+A0_W = 3.165  # bcc W lattice constant, Angstrom (rounded from 3.1648, CRC)
 
 # Canonical members of the cubic direction families offered on the CLI.
 PKA_DIRECTIONS: dict[str, tuple[float, float, float]] = {
@@ -341,8 +341,8 @@ def build_ed_scan_configs(
                 "experiment": "ed_scan",
                 "scan_point": i,
                 "note": (
-                    "E_d scan stub (design-m3.md v2.1: no DFT-resolved directional "
-                    "E_d for W exists); configuration only, not submitted"
+                    "E_d scan initial condition; subsequent dynamics and "
+                    "defect analysis required; configuration only, not submitted"
                 ),
             }
         )

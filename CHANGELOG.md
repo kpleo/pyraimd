@@ -20,3 +20,5 @@
   import and existing switching workflows.
 - Replace the overview with the energetic workflow and add architecture and
   method guides.
+- Remove obsolete development-stage notes, missing design-document references
+  and a historical analysis driver that depended on unpublished run files.

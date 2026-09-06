@@ -1,19 +1,16 @@
-"""Build the tungsten thermal-spike initial condition (flagship B, design-m3.md v2).
+"""Build a tungsten thermal-spike initial condition.
 
-Protocol (numbers are placeholders pending the literature-anchoring audit; every
-constant is a CLI argument so the anchored values drop in without code changes):
+Configurable starting parameters (choose them for the material process):
 
 - bcc W, NCELLS^3 unit cells (7 -> 686 atoms; 6 -> 432 is the documented fallback)
 - a spherical core of radius CORE_R_A at the box center is heated to CORE_T K,
   the matrix to MATRIX_T K, by Maxwell-Boltzmann velocity draws (two-temperature
   initialization = the thermal-spike idealization of a cascade core)
-- output: XYZ with cell + a JSON sidecar recording every parameter (seeded,
-  restart-complete per the project constitution)
+- output: XYZ with cell + a JSON sidecar recording every parameter (seeded initial configuration)
 
 The implementation lives in ``pyraimd2.builders.w_irradiation`` (shared with the
 finite-size series so all spike configs are numerically identical for a seed);
-this script is the flagship CLI wrapper and reproduces the pre-refactor output
-bitwise.
+this script supplies the command-line interface.
 
 Usage:
   uv run python hpc/neimeng/scripts/make_w_spike.py --out w_spike_686.xyz \

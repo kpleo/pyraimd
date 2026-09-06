@@ -1,4 +1,4 @@
-"""MD loop: Runner + SwitchingCalculator + online adaptation glue (design doc §6)."""
+"""MD loop: Runner + SwitchingCalculator + online adaptation glue."""
 
 from pyraimd2.loop.online import OnlineUpdater
 from pyraimd2.loop.energetic import EnergeticCalculator, EnergeticRunner, EnergeticRunSummary

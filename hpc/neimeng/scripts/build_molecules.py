@@ -1,4 +1,4 @@
-"""Build the LP30-class electrolyte molecules (M3 tier 1/2 building blocks).
+"""Build the molecular components of an LP30-class electrolyte.
 
 Generates MM/UFF-optimized gas-phase geometries with RDKit and writes them as
 git-tracked xyz files under hpc/neimeng/inputs/molecules/:

@@ -1,5 +1,4 @@
-"""Switch protocol: the routing decision is a first-class, logged object
-(design doc §3, rule 5)."""
+"""Switch protocol: the routing decision is a first-class, logged object."""
 
 from __future__ import annotations
 
@@ -40,7 +39,7 @@ class Switch(Protocol):
 
 @dataclass(frozen=True)
 class LabelObservation:
-    """One DFT-labeled step, handed to online-adaptation hooks (M2 §3).
+    """One DFT-labeled step, handed to online-adaptation hooks.
 
     Produced by the SwitchingCalculator on every "dft" route (and by the
     offline replay on every revealed frame): the engine label plus the

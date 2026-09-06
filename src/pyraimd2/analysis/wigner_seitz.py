@@ -1,5 +1,5 @@
 """Wigner-Seitz point-defect counting for irradiation cascades
-(design-m3.md; method: Nordlund et al., PRB 57, 7556 (1998); implementation
+(method: Nordlund et al., PRB 57, 7556 (1998); implementation
 follows Stukowski, MSMSE 18, 015012 (2010), the OVITO algorithm).
 
 Every atom is assigned to its nearest perfect-lattice reference site under

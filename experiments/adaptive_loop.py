@@ -1,4 +1,4 @@
-"""Adaptive MD driver for a single allocated HPC node (M3).
+"""Adaptive MD driver for a single allocated HPC node.
 
 Runs the full pyraimd2 loop inside ONE Slurm allocation: MACE committee
 predicts, ConformalSwitch decides, and on "dft" the QeEngine launches pw.x
@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--timestep-fs", type=float, default=0.5)
     p.add_argument("--ecutwfc", type=float, default=50.0)
     p.add_argument("--ecutrho", type=float, default=None,
-                   help="density cutoff (Ry); default = 8x ecutwfc. The flagship "
+                   help="density cutoff (Ry); default = 8x ecutwfc. The example "
                         "protocols use 10x (60/600 electrolyte, 70/700 W) — pass "
                         "explicitly to match the bootstrap labels")
     p.add_argument("--conv-thr", type=float, default=None,
@@ -117,20 +117,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--alpha", type=float, default=0.05)
     p.add_argument("--streak-rho", type=float, default=0.0,
                    help="streak-inflation rate: B_k(s) = qhat*(s+delta)*(1+rho*k), "
-                        "k = accepted steps since the last DFT label. Measured "
-                        "streak drift on the flagship box: ~0.05/step (audit "
-                        "7617790: 4/6 accepted steps violated eps=1.0 without "
-                        "it; the inflated bound rejects exactly those). "
-                        "0 = pre-finding plain bound")
+                        "k = accepted steps since the last decision-driven DFT label. "
+                        "0 disables streak inflation")
     p.add_argument("--explore-frac", type=float, default=0.0,
-                   help="randomized exploration-label fraction (referee §2.4; "
-                        "pre-registered forward-looking protocol, OFF at 0.0). "
+                   help="randomized exploration-label fraction ("
+                        "OFF at 0.0). "
                         "On each ACCEPTED step, with probability p the engine "
                         "label is computed anyway (shadow label): it enters "
                         "the calibration window/updater as usual — pure "
                         "drift audit — but the step still propagates with the "
-                        "surrogate forces, so the certified trajectory is "
-                        "bit-identical to p=0. Rows keep route=ml with "
+                        "surrogate forces. New labels may affect later "
+                        "decisions and updates. Rows keep route=ml with "
                         "'explore-label' in the reason; the conformal streak "
                         "is NOT reset (it counts decision-driven labels). "
                         "Draws come from a dedicated default_rng(--seed) "

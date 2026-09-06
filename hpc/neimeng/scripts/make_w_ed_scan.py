@@ -1,16 +1,12 @@
-"""<100> threshold-displacement-energy (E_d) scan stub (design-m3.md v2.1).
+"""Generate configurations for a tungsten threshold-displacement-energy scan.
 
-Generates the directional E_d scan grid — PKA configurations along <100> at
-40-140 eV in 10 eV steps — as configurations plus JSON sidecars only; no
-calculations are submitted. Motivation (v2.1 audit): directional MD values
-exist (Banisalman et al. 2017) but no DFT-resolved directional E_d for W, so
-this is the "<100> E_d from DFT fallback" mini-experiment. Point i uses
-seed + i so the 300 K thermal draws are independent across the grid.
+The default grid gives a primary knock-on atom 40--140 eV along <100> in
+10 eV increments. Each point uses seed + i for its thermal initialization.
+Only structures and JSON metadata are written; determining a displacement
+threshold requires subsequent dynamics and defect analysis.
 
 Usage:
-  uv run python hpc/neimeng/scripts/make_w_ed_scan.py --out-dir DIR \
-      [--direction 100] [--e-min 40] [--e-max 140] [--e-step 10] \
-      [--cells 7] [--matrix-T 300] [--seed 1]
+  uv run python hpc/neimeng/scripts/make_w_ed_scan.py --out-dir DIR
 """
 
 from __future__ import annotations

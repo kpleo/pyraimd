@@ -1,4 +1,4 @@
-"""Build a PKA-initialized bcc W configuration (flagship B self-proof (a), design-m3.md v2).
+"""Build a bcc tungsten configuration with a primary knock-on atom.
 
 One central W atom is kicked along a cubic direction family (<100>/<110>/<111>)
 with a prescribed kinetic energy — 200-300 eV for the PKA-vs-spike validation

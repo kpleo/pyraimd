@@ -1,7 +1,7 @@
-"""Finite-size convergence series of thermal-spike surrogates (self-proof (b), design-m3.md v2).
+"""Build a finite-size series of tungsten thermal-spike configurations.
 
 Builds the 4^3/5^3/7^3 bcc W supercells (128/250/686 atoms) at a unified core
-energy density (default 1.0 eV per core atom, the ~8000 K flagship regime).
+energy density (default 1.0 eV per core atom, an approximately 8000 K core).
 The core temperature is rescaled per size via
 ``core_temperature_for_energy_density`` (momentum-zeroing DOF corrected) and
 recorded in each sidecar, so the expected deposited energy per core atom is

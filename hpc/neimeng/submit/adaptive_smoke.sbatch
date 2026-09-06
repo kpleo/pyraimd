@@ -9,7 +9,7 @@
 #SBATCH --output=slurm_%x_%j.out
 #SBATCH --error=slurm_%x_%j.err
 
-# pyraimd2 M3: remote adaptive-loop smoke test on the 106-atom mini box.
+# Pyramid: remote adaptive-loop smoke test on the 106-atom mini box.
 # Whole node for one python driver; QE labels run via mpirun inside the same
 # allocation (sequential phases: torch predicts, pw.x labels).
 # Neimeng A "normal" contract: 28 CPU/node, --mem=120G, no GPU.

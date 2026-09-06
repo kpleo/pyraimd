@@ -1,5 +1,5 @@
 """ConformalSwitch: quantile edge cases, cold start, identical members, and
-exchangeable-stream coverage (design-m2.md §5).
+exchangeable-stream coverage.
 
 The statistical tests use fixed seeds and generous margins: they guard the
 machinery (quantile, bound, routing), not a particular random draw.

@@ -1,10 +1,7 @@
-"""Unit tests for the flagship-B W irradiation builders (pyraimd2.builders).
+"""Tests for the tungsten irradiation builders.
 
-Hermetic: ASE + NumPy only — no mace/torch, no QE. Covers the four mandated
-guarantees of the structure-generation scaffold (design-m3.md, flagship B
-self-proofs): exact PKA kinetic-energy bookkeeping, size-independent
-energy-density conversion, bitwise seeded determinism, and complete JSON
-sidecars.
+ASE and NumPy tests cover PKA kinetic-energy bookkeeping, size-independent
+energy-density conversion, seeded determinism and complete JSON sidecars.
 """
 
 from __future__ import annotations

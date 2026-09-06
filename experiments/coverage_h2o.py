@@ -1,4 +1,4 @@
-"""M2 acceptance gate: conformal coverage on H2O NVE (design-m2.md §4), CPU only.
+"""Empirical evaluation of conformal switching on H2O NVE, CPU only.
 
 Protocol:
 1. Collect a 300-step NVE H2O trajectory at 300 K (dt = 0.5 fs) driven by
@@ -7,7 +7,7 @@ Protocol:
 2. Replay chronologically with a fresh CommitteeSurrogate (K=4 readout
    heads) + ConformalSwitch (alpha=0.05, eps_acc=0.1 eV/A, window=64,
    w_min=16, delta=1e-3) + OnlineUpdater (fine-tune every 8 labels).
-3. Gate (design-m2.md §8, one-sided safety): alpha_hat over accepted frames
+3. Empirical comparison: alpha_hat over accepted frames
    must not exceed alpha + 0.03. Zero-acceptance runs are CORRECT-REFUSAL iff
    no frame meets the budget. Tightness and oracle overhead are reported as
    efficiency metrics, not gated.
@@ -64,7 +64,7 @@ def collect(store: Store) -> int:
     from mace.calculators import mace_mp  # local import: torch is heavy
 
     atoms = molecule("H2O")
-    atoms.positions[1, 0] += 0.10  # same distorted start as the M1 examples
+    atoms.positions[1, 0] += 0.10  # same distorted start as the molecular examples
     thermalize_momenta(atoms, TEMPERATURE_K, rng=np.random.default_rng(SEED))
     atoms.calc = mace_mp(model="small", device="cpu", default_dtype="float64")
     engine = PyscfEngine()
@@ -181,15 +181,15 @@ def main() -> int:
                        "accepted — switch is over-conservative")
             exit_code = 1
     else:
-        # One-sided safety gate (design-m2.md §8): conformal promises marginal
-        # coverage >= 1 - alpha, i.e. alpha_hat must not exceed alpha + tol.
+        # Empirical acceptance criterion for this correlated MD trajectory.
+        # This tolerance does not establish conditional coverage.
         # Tightness and oracle overhead are efficiency metrics, not gates.
         safe = summary_c.alpha_hat <= ALPHA + GATE_TOL
         verdict = (f"{'PASS' if safe else 'FAIL'}: alpha_hat = {summary_c.alpha_hat:.4f} "
-                   f"vs one-sided safety bound {ALPHA + GATE_TOL:.2f}")
+                   f"vs empirical tolerance {ALPHA + GATE_TOL:.2f}")
         exit_code = 0 if safe else 1
 
-    print("\n=== PYRAIMD-2 M2 coverage experiment: H2O NVE @ 300 K ===")
+    print("\n=== Pyramid empirical coverage experiment: H2O NVE @ 300 K ===")
     print(f"store:            {outdir / 'coverage_h2o.db'}")
     print(f"decision logs:    {outdir}/decision_log_{{conformal,scheduled}}.json")
     print(f"trajectory:       {MD_STEPS} steps x {TIMESTEP_FS} fs "

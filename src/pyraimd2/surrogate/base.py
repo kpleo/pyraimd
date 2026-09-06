@@ -1,7 +1,7 @@
-"""Surrogate protocol: the foundation-model slot (design doc §4.1).
+"""Surrogate protocol: the foundation-model slot.
 
-The surrogate is model-agnostic; Phase A will host a learned energy functional
-behind this same interface (design doc §11).
+The surrogate interface accepts different models that supply compatible energies
+and forces.
 """
 
 from __future__ import annotations
@@ -66,8 +66,7 @@ class TrainReport:
 
 
 class TrainableSurrogate(Surrogate, Protocol):
-    """A surrogate that can be fine-tuned online on accumulated labels
-    (design doc §4.1: ``finetune(batch) -> TrainReport``)."""
+    """A surrogate that can be fine-tuned online on accumulated labels."""
 
     def finetune(self, labels: Iterable[tuple[Atoms, EngineResult]]) -> TrainReport:
         """Fine-tune on ``labels`` = (atoms, engine result) pairs; raise on

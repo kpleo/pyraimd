@@ -1,8 +1,7 @@
-"""MACE-MP-0 surrogate: frozen foundation model, CPU-first (design doc §8).
+"""MACE-MP-0 surrogate: frozen foundation model, CPU-first.
 
 A single frozen model has no committee and therefore no honest uncertainty
-estimate: ``uncertainty`` is all-NaN by design (design doc §3 — be honest
-about what the model cannot provide).
+estimate: ``uncertainty`` is all-NaN by design.
 """
 
 from __future__ import annotations

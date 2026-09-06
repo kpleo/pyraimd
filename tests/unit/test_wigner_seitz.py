@@ -1,6 +1,5 @@
 """Wigner-Seitz defect counting: perfect lattice, vacancy, Frenkel pair,
-thermal jitter, crowdion, and non-cubic periodic cells (design-m3.md;
-Nordlund et al., PRB 57, 7556 (1998)).
+thermal jitter, crowdion, and non-cubic periodic cells (Nordlund et al., PRB 57, 7556 (1998)).
 
 Geometries are built straight from the site generator, so the reference is
 exact and every expected count is analytic.  No torch, no mace.

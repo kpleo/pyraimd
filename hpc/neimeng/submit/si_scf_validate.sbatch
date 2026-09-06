@@ -10,7 +10,7 @@
 #SBATCH --error=slurm_%x_%j.err
 
 # pyraimd2 QE validation: Si bulk SCF, Neimeng A-zone "normal" partition.
-# Contract per docs/hpc.md: normal = 28 CPU/node, --mem=120G, no GPU.
+# Example allocation: normal = 28 CPU/node, --mem=120G, no GPU.
 # Small validation job by design (provider skill: validate launcher with a
 # tiny job before production shapes).
 

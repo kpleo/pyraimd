@@ -63,7 +63,7 @@ def test_route_counts(tmp_path, cluster) -> None:
     assert summary.force_max_ev_a >= summary.force_mae_ev_a
     assert np.isfinite(summary.wall_time_s) and summary.wall_time_s >= 0.0
 
-    # DFT labels accumulated in the store (design doc §4.2).
+    # DFT labels accumulated in the store.
     assert len(list(store.iter_labels("a"))) == 4
 
 

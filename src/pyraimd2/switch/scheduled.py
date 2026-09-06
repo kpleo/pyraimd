@@ -1,8 +1,7 @@
-"""Scheduled switch: the M1 stand-in for the calibrated switch (M2).
+"""Scheduled switching at a fixed reference-calculation interval.
 
-Routes to the engine on a fixed period so the closed loop accumulates DFT
-labels at a controlled rate.  No statistics here — committee + conformal
-arrive in M2 (design doc §9).
+Collects reference labels at a controlled rate and provides a baseline for
+adaptive switching policies.
 """
 
 from __future__ import annotations

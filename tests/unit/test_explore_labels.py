@@ -1,13 +1,13 @@
-"""Exploration-label protocol tests (referee §2.4; pre-registered knob).
+"""Exploration-label protocol tests.
 
 The knob: on an ACCEPTED ("ml") step, with probability ``explore_frac`` the
 engine label is computed anyway (shadow label).  It enters the calibration
 window/updater like any label — that is its purpose — but the step still
-propagates with the surrogate forces, so the certified trajectory is
-bit-identical to ``explore_frac = 0``.  Rows keep ``route="ml"`` with
+propagates with the selected surrogate forces. Labels can affect later
+decisions and model updates. Rows keep ``route="ml"`` with
 "explore-label" in the reason.
 
-Streak invariant asserted here (T4d): an explore label does NOT reset the
+Streak invariant: an explore label does NOT reset the
 conformal streak.  The streak lives in the decision path
 (``ConformalSwitch.assess`` increments on an "ml" decision, resets on a
 "dft" decision); ``observe`` is pure window ingestion.  Live, resumed
@@ -116,7 +116,7 @@ def test_explore_one_labels_every_accepted_step(tmp_path, cluster) -> None:
             assert route == "dft"
             assert "explore-label" not in row.data["reason"]
 
-    # Certified trajectory unchanged: bit-equal to the explore-off run, and
+    # With this fixture and no model updates, the trajectory is bit-equal, and
     # the stored driving forces on explore rows are the surrogate's.
     runner_b, _store_b, *_ = _build(tmp_path, cluster, "x0", db_name="x0.db")
     runner_b.run(10)

@@ -1,57 +1,22 @@
-"""Committee surrogate: K readout heads on frozen MACE backbone(s) (M2 §1).
+"""Committee surrogate with trainable readout heads on frozen MACE backbones.
 
-Each member is a full copy of a foundation model with parameters frozen
-except those selected by ``trainable_filters`` (name substrings; default
-``("readout",)`` = the readout-only recipe; if introspection finds no match,
-construction raises — we never silently train nothing).  The backbone spec is either one model (deep-copied to K members)
-or an explicit per-member list for a **mixed-backbone committee** (e.g.
-MACE-MP-0b3 + MACE-MPA-0); mixed backbones must share the exact data
-interface (z_table/head/r_max/keys/units), checked at load.  Mixed
-backbones decorrelate member errors far beyond readout perturbation of one
-backbone — on the 7615191 smoke labels the cross-backbone ratio r = e/(s+δ)
-is ~2.2 vs ~65 for a same-backbone readout committee (docs/hpc.md,
-2026-08-21), i.e. the conformal bound B(s) = q̂·(s+δ) stops being pinned at
-~65× the spread and acceptance becomes reachable.
+Each member copies a foundation model and trains only parameters selected by
+``trainable_filters``. Members can share a backbone or use compatible backbones
+with the same data interface, units and element mapping. Readouts start from
+seeded perturbations and are reset before each bootstrap fit.
 
-Members of one backbone differ only through their readout weights: at load
-time member 0 keeps the clean foundation head and members 1..K−1 get a
-seeded perturbation of it (scale-aware, same recipe as the fine-tune
-reset), so σ > 0 from the very first prediction; every :meth:`finetune`
-then re-initializes member k's readout from its own backbone's frozen
-snapshot plus a fresh seeded perturbation and trains it on a seeded
-bootstrap resample (sample with replacement, |D_k| = |D|) of the labels.
+The prediction is the member mean. Per-atom uncertainty is the population RMS
+of force-vector deviations from that mean, rather than the standard deviation
+of their norms. The scalar switching score is the largest per-atom spread.
 
-Prediction is the committee mean; the honest per-atom spread is
-σ_i = sqrt(mean_k |F_{i,k} − F̄_i|²) (population RMS of the deviation
-vectors — the standard committee-UQ estimator; NOT std of the deviation
-norms, which vanishes identically at K=2 and understates the spread at any
-K) and the scalar committee score is s = max_i σ_i (conservative max-atom).  The load-time
-perturbation matters for the switch, not just cosmetics: with identical
-members σ ≡ 0 and the conformal ratio r = e/(s+δ) degenerates to e/δ —
-one cold-start window of such ratios pins q̂ at its maximum for a full
-window (observed in smoke 7615191: q̂ = 1000·e_max).
+Fine-tuning uses Adam and shuffled minibatches of eight configurations. The
+loss combines squared energy error per atom with weighted mean squared force
+error. A constant energy offset is fitted for each member to align the reference
+energy conventions. It is applied to energies during training and prediction;
+forces and their gradients are unchanged. Results are deterministic for fixed
+seeds and labels, subject to the numerical backend.
 
-Fine-tuning mechanics: Adam lr = 1e-3, 50 epochs, loss per configuration =
-(ΔE)²/N + 10·MSE(F), forces by autograd through positions exactly as MACE
-does internally (``training=True`` gives differentiable forces).  One epoch =
-one shuffled pass over the bootstrap set in minibatches of 8 configurations
-(implementation choice — the spec fixes epochs/lr/loss, not the batching;
-full-batch Adam at 50 epochs is measurably undertrained on this system:
-held-out max-force-error 0.19 vs 0.03 eV/Å with minibatches).  Deterministic
-given (seed, labels).
-
-Energy referencing (documented deviation from the letter of M2 §1): MACE-MP-0
-raw total energies sit ~2060 eV above PySCF total energies for H2O (different
-atomic references), which would make the MSE(E) term swamp 10·MSE(F) by ~6
-orders of magnitude.  Each member therefore gets a scalar energy offset,
-fitted by least squares on its bootstrap set before training (the standard
-E0-refit step of MLIP fine-tuning); the offset is applied at predict time and
-inside the loss, so the trained term remains exactly MSE(E)/N + 10·MSE(F) on
-the offset-corrected energies.  The offset is a constant: it changes no
-forces and no gradients.
-
-Scope: energies and forces only; committee stress is an M2 non-goal
-(design doc §10) and ``stress`` is therefore always None.
+This adapter returns energies and forces; committee stress is unavailable.
 """
 
 from __future__ import annotations
@@ -100,12 +65,7 @@ class CommitteeSurrogate:
             raise ValueError(
                 f"trainable_filters must be non-empty substrings, got {trainable_filters}"
             )
-        # Backbone spec: one model (deep-copied to K members) or an explicit
-        # per-member list — a mixed-backbone committee (e.g. MACE-MP-0b3 +
-        # MACE-MPA-0) decorrelates member errors far beyond what readout
-        # perturbation of one backbone can do: on the 7615191 smoke labels
-        # the cross-backbone ratio r = e/(s+δ) is ~2.2 vs ~65 for the
-        # same-backbone committee (docs/hpc.md, 2026-08-21).
+        # Use one backbone for all members or supply compatible backbones.
         if isinstance(model, (str, os.PathLike)):
             self._model_specs = [str(model)] * n_members
         else:
@@ -122,10 +82,7 @@ class CommitteeSurrogate:
         self.epochs = epochs
         self.lr = lr
         self.force_weight = force_weight
-        # Parameter-name substrings selecting the trainable tensors.  Default
-        # ("readout",) is the readout-only recipe (2192 params on 0b3-medium);
-        # deeper probes add "products" (+1.35M) / "interactions" (+7.7M) —
-        # smoke 7615761 showed readout-only accuracy plateauing (docs/hpc.md).
+        # Parameter-name substrings select tensors to train.
         self.trainable_filters = tuple(trainable_filters)
         self._calc: Any = None  # batch-building machinery + unit conversions
         self._models: list[Any] = []  # the K members (built lazily with _calc)
@@ -262,14 +219,13 @@ class CommitteeSurrogate:
         # deviation *norms* instead is wrong: for K=2 the norms from the mean
         # are equal by construction so sigma == 0 identically, and for larger
         # K it reports only the asymmetry of the norms, badly understating
-        # the spread (this bug sat behind the r ~ 65 overconfidence of smoke
-        # 7615281; docs/hpc.md 2026-08-21).
+        # the spread.
         deviation_sq = (force_k - mean_force).norm(dim=2) ** 2  # (K, N)
         sigma = deviation_sq.mean(dim=0).sqrt()  # (N,)
         return SurrogatePrediction(
             energy=float(energy_k.mean()) * e_conv,
             forces=mean_force.numpy() * f_conv,
-            stress=None,  # committee stress is an M2 non-goal (design doc §10)
+            stress=None,  # committee stress is not implemented
             uncertainty=sigma.numpy() * f_conv,
         )
 

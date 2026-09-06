@@ -1,4 +1,4 @@
-"""Hermetic fakes driving all loop/switch/store unit logic (design doc §7).
+"""Hermetic fakes driving all loop/switch/store unit logic.
 
 No quantum code, no torch, no RNG: the fakes are deterministic analytic
 potentials, so restart equality can be asserted with atol=0.

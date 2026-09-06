@@ -1,4 +1,4 @@
-"""Offline replay end-to-end with the fake committee (design-m2.md §5)."""
+"""Offline replay end-to-end with the fake committee."""
 
 from __future__ import annotations
 

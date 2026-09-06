@@ -1,6 +1,6 @@
-"""Chronological offline replay over an all-labeled trajectory (M2 §4).
+"""Chronological offline replay over an all-labeled trajectory.
 
-The replay harness is the M2 measurement instrument: given a stored
+Given a stored
 trajectory where every frame carries engine truth, a fresh committee, and a
 switch, it iterates the frames in order — committee.predict → switch.assess
 → on "dft": reveal the stored label, hand it to the online updater (window

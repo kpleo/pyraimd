@@ -10,10 +10,10 @@
 #SBATCH --output=slurm_%x_%A_%a.out
 #SBATCH --error=slurm_%x_%A_%a.err
 
-# pyraimd2 M3 (flagship B): ecut convergence series for the bcc W bulk box
+# Pyramid: ecut convergence series for the bcc W bulk box
 # (128 atoms, Gamma, PBE, mv smearing). One array element per ecutwfc value.
 # %2: shares the 4-node account cap with the electrolyte campaigns.
-# Neimeng A "normal" contract: 28 CPU/node, --mem=120G, no GPU (docs/hpc.md).
+# Neimeng A "normal" contract: 28 CPU/node, --mem=120G, no GPU.
 
 set -euo pipefail
 ECUTS=(40 50 60 70 80 90)
