@@ -25,6 +25,7 @@ from pyraimd2.engines.base import EngineResult
 from pyraimd2.surrogate.base import Surrogate
 from pyraimd2.switch.base import LabelObservation, Route, Switch
 from pyraimd2.switch.conformal import ConformalSwitch
+from pyraimd2.switch.threshold import ThresholdSwitch
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,10 @@ def replay(
             decision = switch.assess(atoms, step, prediction=prediction)
             qhat = switch.qhat()
             bound = float(decision.score)
+        elif isinstance(switch, ThresholdSwitch):
+            decision = switch.assess(atoms, step, prediction=prediction)
+            qhat = float("nan")
+            bound = float("nan")
         else:
             decision = switch.assess(atoms, step)
             qhat = float("nan")

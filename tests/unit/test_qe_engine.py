@@ -132,3 +132,29 @@ def test_compute_engine_error_on_timeout(tmp_path: Path) -> None:
     )
     with pytest.raises(EngineError, match="timed out"):
         engine.compute(_water_box(), label="hang")
+
+
+def test_compute_startpot_retry_after_failure(tmp_path: Path) -> None:
+    """A failed chained-density attempt must wipe tmp/ and retry from scratch.
+
+    Regression: the wipe path crashed with NameError (missing shutil import)
+    in production (W bootstrap labels, 2026-09-03), masking the real error.
+    """
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        'if [ "$n" -eq 1 ]; then echo garbage; exit 3; fi\n'
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                 startpot_file=True),
+        run_root=tmp_path / "runs",
+    )
+    si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]],
+               cell=[5.43] * 3, pbc=True)
+    result = engine.compute(si, label="retry")
+    assert result.energy == pytest.approx(SI_ENERGY_RY * units.Hartree / 2.0,
+                                          abs=1e-6)
+    assert counter.read_text().strip() == "2"

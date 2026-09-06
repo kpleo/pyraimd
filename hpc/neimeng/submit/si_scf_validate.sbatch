@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=120G
 #SBATCH --time=00:30:00
-#SBATCH --output=/data/home/df103967/df103967/cloud_projects/pyraimd2/logs/slurm_%x_%j.out
-#SBATCH --error=/data/home/df103967/df103967/cloud_projects/pyraimd2/logs/slurm_%x_%j.err
+#SBATCH --output=slurm_%x_%j.out
+#SBATCH --error=slurm_%x_%j.err
 
 # pyraimd2 QE validation: Si bulk SCF, Neimeng A-zone "normal" partition.
 # Contract per docs/hpc.md: normal = 28 CPU/node, --mem=120G, no GPU.

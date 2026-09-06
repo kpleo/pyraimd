@@ -1,17 +1,16 @@
-# Python-generated files
 __pycache__/
 *.py[oc]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
 build/
 dist/
 wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-
-# Analysis artifacts (large binaries stay out of git)
-analysis/**/*.db
-analysis/*model*
-
-# macOS
+results/
+*.db
+*.model
+*.pt
+slurm_*.out
+slurm_*.err
 .DS_Store

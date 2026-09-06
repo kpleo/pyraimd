@@ -135,3 +135,31 @@ def test_stored_positions_match_fixture_exactly(tmp_path, cluster) -> None:
     assert step == 0
     np.testing.assert_array_equal(restored.get_positions(), CLUSTER_POSITIONS)
     np.testing.assert_array_equal(restored.get_momenta(), CLUSTER_MOMENTA)
+
+
+def test_iter_observations_replays_switch_stream(tmp_path, cluster) -> None:
+    """(step, s, e) rebuilt from stored payloads must equal what the switch
+    observed live: s = max per-atom spread, e = max per-atom |ΔF|."""
+    store = Store(tmp_path / "run.db")
+    n = len(cluster)
+    cases = [(0.05, 0.10, 0.12), (0.07, 0.20, 0.26)]
+    for step, (spread, f_sur, f_eng) in enumerate(cases):
+        sur = SurrogatePrediction(
+            energy=1.0,
+            forces=np.full((n, 3), f_sur),
+            stress=None,
+            uncertainty=np.full(n, spread),
+        )
+        eng = EngineResult(
+            energy=0.0,
+            forces=np.full((n, 3), f_eng),
+            stress=None,
+            wall_time_s=0.1,
+        )
+        store.append("r1", step, cluster, "dft", surrogate=sur, engine=eng)
+
+    obs = list(store.iter_observations("r1"))
+    assert [o[0] for o in obs] == [0, 1]
+    for (_, s, e), (spread, f_sur, f_eng) in zip(obs, cases):
+        assert s == pytest.approx(spread)
+        assert e == pytest.approx(np.sqrt(3.0) * abs(f_eng - f_sur))

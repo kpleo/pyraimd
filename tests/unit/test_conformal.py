@@ -62,7 +62,12 @@ def test_constructor_validation() -> None:
     with pytest.raises(ValueError, match="alpha"):
         ConformalSwitch(surrogate, alpha=1.5)
     with pytest.raises(ValueError, match="eps_acc"):
-        ConformalSwitch(surrogate, eps_acc=0.0)
+        ConformalSwitch(surrogate, eps_acc=-0.5)
+    # eps_acc = 0 is the refuse-everything sentinel (pure-engine control runs)
+    switch0 = ConformalSwitch(surrogate, eps_acc=0.0, w_min=2)
+    switch0.observe(0.01, 0.05)
+    switch0.observe(0.01, 0.05)
+    assert _assess(switch0, 2, spread=0.01).route == "dft"
     with pytest.raises(ValueError, match="window"):
         ConformalSwitch(surrogate, window=0)
     with pytest.raises(ValueError, match="w_min"):
@@ -205,3 +210,60 @@ def test_accepted_miscoverage_within_tolerance_on_exchangeable_stream() -> None:
     assert n_accepted > 1000  # the switch actually accepts most steps
     alpha_hat = n_violations / n_accepted
     assert 0.005 < alpha_hat < 0.10
+
+
+# -- streak inflation (streak-drift finding, audit 7617790) -------------------
+
+
+def _primed_switch(streak_rho: float, **kw) -> ConformalSwitch:
+    """Window primed with two (s=1, e=3) pairs -> qhat = 3/1.001 ~ 2.997."""
+    sw = ConformalSwitch(
+        FakeCommittee(CLUSTER_R0), alpha=0.05, eps_acc=1.0, w_min=2, window=8,
+        streak_rho=streak_rho, **kw,
+    )
+    sw.observe(1.0, 3.0)
+    sw.observe(1.0, 3.0)
+    return sw
+
+
+def test_streak_inflation_flips_at_predicted_k() -> None:
+    sw = _primed_switch(0.05)
+    routes = [_assess(sw, step, 0.3).route for step in range(4)]
+    # k=0..2: 2.997*0.301*(1+0.05k) = 0.902/0.947/0.992 <= 1.0 -> ml
+    # k=3: 1.037 > 1.0 -> dft, and a dft route also resets the streak.
+    assert routes == ["ml", "ml", "ml", "dft"]
+
+
+def test_streak_inflation_zero_recovers_plain_bound() -> None:
+    sw = _primed_switch(0.0)
+    routes = [_assess(sw, step, 0.3).route for step in range(6)]
+    assert routes == ["ml"] * 6  # 2.997*0.301 = 0.902 < 1.0 forever
+
+
+def test_dft_route_resets_streak_and_observe_is_replay_safe() -> None:
+    sw = _primed_switch(0.05)
+    for step in range(3):
+        _assess(sw, step, 0.3)  # streak grows to 3
+    assert _assess(sw, 3, 10.0).route == "dft"  # over budget -> resets streak
+    d = _assess(sw, 4, 0.3)
+    assert d.route == "ml"
+    assert d.score == pytest.approx(sw.qhat() * 0.301)  # k back to 0
+    # observe() must be replay-safe: it ingests the window pair without
+    # clobbering the live streak (resume rebuilds the window from pairs).
+    sw2 = _primed_switch(0.05)
+    for step in range(2):
+        _assess(sw2, step, 0.3)  # streak 2
+    sw2.observe(1.0, 3.0)
+    d2 = _assess(sw2, 2, 0.3)
+    assert d2.route == "ml"
+    assert d2.score == pytest.approx(sw2.qhat() * 0.301 * 1.10)  # k=2 survived
+    assert "streak k=2" in d2.reason
+
+
+def test_initial_streak_and_validation() -> None:
+    sw = _primed_switch(0.05, initial_streak=3)
+    assert _assess(sw, 0, 0.3).route == "dft"  # resumes at k=3: over budget
+    with pytest.raises(ValueError, match="streak_rho"):
+        ConformalSwitch(FakeCommittee(CLUSTER_R0), streak_rho=-0.1)
+    with pytest.raises(ValueError, match="initial_streak"):
+        ConformalSwitch(FakeCommittee(CLUSTER_R0), initial_streak=-1)

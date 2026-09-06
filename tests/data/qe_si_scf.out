@@ -71,7 +71,7 @@
 
 
      PseudoPot. # 1 for Si read from file:
-     /data/home/df103967/df103967/cloud_projects/pyraimd2/inputs/Si.pbe-n-kjpaw_psl.1.0.0.UPF
+     pseudopotentials/Si.pbe-n-kjpaw_psl.1.0.0.UPF
      MD5 check sum: c39c59da582df4a0d9f10159256ea34e
      Pseudo is Projector augmented-wave + core cor, Zval =  4.0
      Generated using &quot;atomic&quot; code by A. Dal Corso  v.6.3

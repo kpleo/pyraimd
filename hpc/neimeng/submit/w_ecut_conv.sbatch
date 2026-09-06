@@ -7,8 +7,8 @@
 #SBATCH --mem=120G
 #SBATCH --time=04:00:00
 #SBATCH --array=0-3%2
-#SBATCH --output=/data/home/df103967/df103967/cloud_projects/pyraimd2/logs/slurm_%x_%A_%a.out
-#SBATCH --error=/data/home/df103967/df103967/cloud_projects/pyraimd2/logs/slurm_%x_%A_%a.err
+#SBATCH --output=slurm_%x_%A_%a.out
+#SBATCH --error=slurm_%x_%A_%a.err
 
 # pyraimd2 M3 (flagship B): ecut convergence series for the bcc W bulk box
 # (128 atoms, Gamma, PBE, mv smearing). One array element per ecutwfc value.
@@ -18,7 +18,7 @@
 set -euo pipefail
 ECUTS=(40 50 60 70 80 90)
 ECUT=${ECUTS[$SLURM_ARRAY_TASK_ID]}
-PROJECT=/data/home/df103967/df103967/cloud_projects/pyraimd2
+PROJECT="${PYRAMID_PROJECT:?Set PYRAMID_PROJECT to the remote project directory}"
 
 source /data/hzwtech/profile/Miniforge3.env
 source "$(conda info --base)/etc/profile.d/conda.sh"

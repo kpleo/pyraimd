@@ -42,6 +42,25 @@ def test_finetune_fires_every_n_labels() -> None:
     assert len(observed) == 10  # every label reached the window
 
 
+def test_checkpoint_hook_fires_after_each_finetune() -> None:
+    """Restart safety: the checkpoint callback fires exactly once per
+    fine-tune, after the report is recorded."""
+    committee = FakeCommittee(CLUSTER_R0)
+    checkpoints: list[int] = []
+    updater = OnlineUpdater(
+        committee,
+        observe=lambda s, e: None,
+        n_label=2,
+        checkpoint=lambda: checkpoints.append(1),
+    )
+    for step in range(5):
+        updater(_observation(step, FRAME))
+
+    assert committee.finetune_calls == 2  # at labels 2 and 4
+    assert len(checkpoints) == 2
+    assert updater.n_finetunes == 2
+
+
 def test_observe_receives_correct_s_and_e() -> None:
     committee = FakeCommittee(CLUSTER_R0)
     observed: list[tuple[float, float]] = []

@@ -11,6 +11,8 @@ Usage:  uv run python hpc/neimeng/scripts/make_w_ecut_series.py
 
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 from ase.build import bulk
@@ -22,7 +24,7 @@ OUT = HERE / "inputs" / "generated"
 A0 = 3.165  # bcc W lattice constant, Angstrom
 ECUTS = [40.0, 50.0, 60.0, 70.0]
 NBND = 896 + 50  # 128 atoms x 14 valence / 2 = 896 occupied, +50 empty (§3.1)
-PSEUDO_DIR = "/data/home/df103967/df103967/cloud_projects/pyraimd2/inputs"
+PSEUDO_DIR = os.environ.get("PYRAMID_PSEUDO_DIR", "pseudopotentials")
 
 
 def main() -> None:

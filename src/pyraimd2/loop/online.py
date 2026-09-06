@@ -36,6 +36,9 @@ class OnlineUpdater:
             (e.g. ``lambda: store.iter_labels(run_id)``).  When None, the
             updater accumulates (atoms, label) pairs from the observations
             themselves — equivalent, and the only option under replay.
+        checkpoint: Optional callback invoked after every fine-tune (e.g.
+            persisting the committee for restart-safe campaigns).  Exceptions
+            propagate — a campaign that cannot checkpoint is not restart-safe.
     """
 
     def __init__(
@@ -44,6 +47,7 @@ class OnlineUpdater:
         observe: Callable[[float, float], None],
         n_label: int = 8,
         label_source: Callable[[], Iterable[tuple[Atoms, EngineResult]]] | None = None,
+        checkpoint: Callable[[], None] | None = None,
     ) -> None:
         if n_label < 1:
             raise ValueError(f"n_label must be >= 1, got {n_label}")
@@ -51,6 +55,7 @@ class OnlineUpdater:
         self.observe = observe
         self.n_label = n_label
         self.label_source = label_source
+        self.checkpoint = checkpoint
         self.labels: list[tuple[Atoms, EngineResult]] = []
         self.reports: list[TrainReport] = []
         self.n_observations = 0
@@ -79,4 +84,6 @@ class OnlineUpdater:
         report = self.committee.finetune(labels)
         self.reports.append(report)
         self.n_finetunes += 1
+        if self.checkpoint is not None:
+            self.checkpoint()
         return report

@@ -1,5 +1,6 @@
 """Trajectory analysis tools (design-m3.md)."""
 
+from pyraimd2.analysis.split import parse_boundaries, segment_held_out
 from pyraimd2.analysis.wigner_seitz import (
     DefectCount,
     count_defects,
@@ -9,5 +10,7 @@ from pyraimd2.analysis.wigner_seitz import (
 __all__ = [
     "DefectCount",
     "count_defects",
+    "parse_boundaries",
     "reference_sites_bcc",
+    "segment_held_out",
 ]

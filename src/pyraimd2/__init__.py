@@ -1,7 +1,9 @@
-"""PYRAIMD-2: on-the-fly adaptive learning on foundation interatomic potentials."""
+"""Pyramid: Python wrapped Ab initio Molecular Dynamics."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def main() -> None:
-    print(f"pyraimd2 {__version__} — M2 calibrated switching. See docs/design-phase-b.md.")
+    print(f"Pyramid {__version__} — Python wrapped Ab initio Molecular Dynamics")
+    print("Energetic force-error prediction, reference checks and extensible MD.")
+    print("See README.md and examples/energetic_loop.py to get started.")

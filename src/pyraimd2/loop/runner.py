@@ -65,15 +65,28 @@ class Runner:
         timestep_fs: float = 0.5,
         temperature_K: float = 300.0,
         on_label: Callable[[LabelObservation], None] | None = None,
+        explore_frac: float = 0.0,
+        explore_rng: np.random.Generator | None = None,
+        explore_seed: int | None = None,
     ) -> None:
         # Momenta are thermalized exactly once here; a resume restores them
         # from the Store, so thermalization is skipped when they already exist.
         if "momenta" not in atoms.arrays:
             thermalize_momenta(atoms, temperature_K)
+        else:
+            # Input-carried momenta take precedence over --temperature;
+            # say so loudly (a silent skip once turned a "700 K control"
+            # into a replica of the 300 K one).
+            t_inst = atoms.get_kinetic_energy() / (1.5 * len(atoms) * units.kB)
+            print(f"runner: input momenta found, thermalization skipped "
+                  f"(T_inst={t_inst:.1f} K; --temperature {temperature_K} "
+                  f"not applied)", flush=True)
         self.atoms = atoms
         self.timestep_fs = timestep_fs
         self.calc = SwitchingCalculator(
-            surrogate, engine, switch, store, run_id, on_label=on_label
+            surrogate, engine, switch, store, run_id, on_label=on_label,
+            explore_frac=explore_frac, explore_rng=explore_rng,
+            explore_seed=explore_seed,
         )
         atoms.calc = self.calc
         self.dyn = VelocityVerlet(atoms, timestep_fs * units.fs)
@@ -112,6 +125,9 @@ class Runner:
         switch: Switch,
         timestep_fs: float = 0.5,
         on_label: Callable[[LabelObservation], None] | None = None,
+        explore_frac: float = 0.0,
+        explore_rng: np.random.Generator | None = None,
+        explore_seed: int | None = None,
     ) -> Runner:
         """Resume ``run_id`` from the Store so the run continues bit-for-bit.
 
@@ -121,6 +137,12 @@ class Runner:
         consulted for the resume point itself.
         """
         atoms, last_step = store.latest_state(run_id)
+        row = store._row_at_step(run_id, last_step)
+        if row.data.get("metadata", {}).get("method") == "energetic_force_error":
+            raise NotImplementedError(
+                "Energetic trajectories require their own calibration and check state; "
+                "legacy Runner.resume cannot restore them"
+            )
         energy, forces = store.driving_label(run_id, last_step)
         # Logged momenta are the half-step momenta; reconstruct the on-step
         # momenta exactly as the integrator computed them (p += 0.5*dt*F).
@@ -136,6 +158,9 @@ class Runner:
             run_id=run_id,
             timestep_fs=timestep_fs,
             on_label=on_label,
+            explore_frac=explore_frac,
+            explore_rng=explore_rng,
+            explore_seed=explore_seed,
         )
         runner.calc.step = last_step + 1
         # Prime the ASE result cache with the stored label: the integrator's

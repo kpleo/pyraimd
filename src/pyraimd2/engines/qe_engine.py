@@ -22,6 +22,7 @@ then.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -55,6 +56,16 @@ _FORCE_RE = re.compile(
 )
 
 
+def valence_from_upf(path: Path) -> float:
+    """z_valence from a UPF pseudopotential (PP_HEADER attribute; sits well
+    past the lengthy PP_INFO/PP_INPUTFILE preamble, so read generously)."""
+    text = path.read_text(errors="ignore")[:300_000]
+    m = re.search(r'z_valence\s*=\s*"([0-9.eE+-]+)"', text)
+    if m:
+        return float(m.group(1))
+    raise ValueError(f"z_valence not found in {path}")
+
+
 @dataclass(frozen=True)
 class QeConfig:
     """Everything a QeEngine call needs; immutable, explicit (no globals)."""
@@ -66,6 +77,7 @@ class QeConfig:
     kpts: tuple[int, int, int] | None = None  # None -> Gamma only
     nbnd: int | None = None  # None -> QE default (nelec/2): fragile Davidson, set extras!
     metallic: bool = False  # adds Marzari-Vanderbilt smearing
+    smearing: str = "mv"  # when metallic; "fd" (Fermi-Dirac) is cleaner for true metals
     degauss: float = 0.02  # Ry, smearing width when metallic
     conv_thr: float = 1e-8  # Ry, total-energy accuracy; 1e-9 never converges at ~1k electrons
     mixing_beta: float = 0.3
@@ -107,7 +119,9 @@ def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
         lines.append(f"  nbnd = {cfg.nbnd}\n")
     lines.append("  vdw_corr = 'grimme-d3'\n")
     if cfg.metallic:
-        lines.append(f"  occupations = 'smearing'\n  smearing = 'mv'\n  degauss = {cfg.degauss}\n")
+        lines.append(
+            f"  occupations = 'smearing'\n  smearing = '{cfg.smearing}'\n  degauss = {cfg.degauss}\n"
+        )
     lines.append("/\n")
     lines.append("&ELECTRONS\n")
     lines.append(f"  conv_thr = {cfg.conv_thr:.1e}\n  mixing_beta = {cfg.mixing_beta}\n")
@@ -182,6 +196,24 @@ class QeEngine:
     def compute(self, atoms: Atoms, label: str = "step") -> EngineResult:
         run_dir = self.run_root / label
         run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            return self._attempt(atoms, run_dir)
+        except EngineError:
+            if not self.config.startpot_file:
+                raise
+            # Chained-density restart failed (stale/corrupt .save after a
+            # killed run, or a frame too far from the last converged one):
+            # wipe the saved density and retry once from scratch — the same
+            # wipe-on-failure semantics as the bootstrap labeling chain.
+            shutil.rmtree(run_dir / "tmp", ignore_errors=True)
+            print(
+                f"startpot chain failed in {run_dir}; density wiped, "
+                "retrying from scratch",
+                flush=True,
+            )
+            return self._attempt(atoms, run_dir)
+
+    def _attempt(self, atoms: Atoms, run_dir: Path) -> EngineResult:
         in_path = run_dir / "pw.in"
         out_path = run_dir / "pw.out"
         write_qe_input(in_path, atoms, self.config)

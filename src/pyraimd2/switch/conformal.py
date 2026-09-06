@@ -1,22 +1,15 @@
-"""Online conformal switch (M2 §2): the calibrated routing decision.
+"""Empirical committee-spread routing retained for existing workflows.
 
-A sliding window W of the ``w`` most recent DFT-labeled ``(s, e)`` pairs
-calibrates the committee spread against actually observed errors:
+Recent labeled pairs calibrate the maximum atomic committee spread ``s``
+against the realized maximum atomic force error ``e`` through ``e/(s+delta)``.
+The rolling quantile is clipped to the sample maximum when its requested
+rank exceeds the sample size. An optional streak factor increases the score
+between reference labels.
 
-- ``s``: committee score (max per-atom force spread, eV/Å),
-- ``e``: realized max per-atom force error of the shadow prediction (eV/Å),
-- normalized nonconformity ``r_j = e_j / (s_j + δ)`` with spread floor δ,
-- quantile with finite-sample correction: q̂ = the ⌈(n+1)(1−α)⌉-th order
-  statistic of {r_j} (clamped to the n-th when the index exceeds n, i.e.
-  the running max — strict split-conformal would return +∞ there),
-- predicted error bound ``B(s) = q̂ · (s + δ)``.
-
-Route "dft" iff ``B(s) > ε_acc`` (predicted error over budget) or
-``|W| < w_min`` (cold start: the window is too thin to say anything).
-The property being tested, not assumed: under approximate exchangeability
-of the window, the long-run fraction of accepted steps with true error
-> ε_acc should be ≈ α (M2 §2 — MD drift violates exchangeability; M2
-measures the gap).
+This score is an empirical admission rule for an evolving trajectory. It
+is not a split-conformal guarantee conditional on acceptance. Use the
+independent-check protocol to measure accepted-force violations, or the
+energetic loop to include directional response and signed residual work.
 """
 
 from __future__ import annotations
@@ -51,7 +44,7 @@ def conformal_quantile(nonconformities: Sequence[float], alpha: float) -> float:
 
 
 class ConformalSwitch:
-    """Routes by the conformal error bound on the committee spread.
+    """Routes by the empirical calibrated score on committee spread.
 
     Holds a reference to the surrogate so the live loop can call the
     protocol method ``assess(atoms, step)``; callers that already evaluated
@@ -67,23 +60,34 @@ class ConformalSwitch:
         window: int = 64,
         w_min: int = 16,
         delta: float = 1e-3,
+        streak_rho: float = 0.0,
+        initial_streak: int = 0,
     ) -> None:
         if not 0.0 < alpha < 1.0:
             raise ValueError(f"alpha must be in (0, 1), got {alpha}")
-        if eps_acc <= 0.0:
-            raise ValueError(f"eps_acc must be > 0, got {eps_acc}")
+        if eps_acc < 0.0:
+            raise ValueError(f"eps_acc must be >= 0, got {eps_acc}")
+        # eps_acc = 0 is the deliberate refuse-everything sentinel (pure-engine
+        # control runs): with qhat > 0 and s + delta > 0 the bound is strictly
+        # positive, so every step routes to the engine.
         if window < 1:
             raise ValueError(f"window must be >= 1, got {window}")
         if not 1 <= w_min <= window:
             raise ValueError(f"w_min must be in [1, window], got {w_min} (window {window})")
         if delta <= 0.0:
             raise ValueError(f"delta must be > 0, got {delta}")
+        if streak_rho < 0.0:
+            raise ValueError(f"streak_rho must be >= 0, got {streak_rho}")
+        if initial_streak < 0:
+            raise ValueError(f"initial_streak must be >= 0, got {initial_streak}")
         self.surrogate = surrogate
         self.alpha = alpha
         self.eps_acc = eps_acc
         self.window = window
         self.w_min = w_min
         self.delta = delta
+        self.streak_rho = streak_rho
+        self._streak = initial_streak  # consecutive ml steps since last label
         self._pairs: deque[tuple[float, float]] = deque(maxlen=window)
 
     @property
@@ -102,7 +106,10 @@ class ConformalSwitch:
 
     def observe(self, s: float, e: float) -> None:
         """Ingest one DFT-labeled observation; the oldest pair is evicted
-        once the window is full."""
+        once the window is full.  Pure window ingestion — replay-safe: the
+        acceptance streak is NOT touched here (it belongs to the live
+        decision path, ``assess``), so a resume replaying stored (s, e)
+        pairs does not clobber the trailing-streak count."""
         if not np.isfinite(s) or s < 0.0:
             raise ValueError(f"spread s must be finite and >= 0, got {s}")
         if not np.isfinite(e) or e < 0.0:
@@ -123,17 +130,22 @@ class ConformalSwitch:
             )
         n = len(self._pairs)
         qhat = self.qhat()
-        bound = qhat * (s + self.delta)
+        k = self._streak
+        bound = qhat * (s + self.delta) * (1.0 + self.streak_rho * k)
         route = "dft" if (n < self.w_min or bound > self.eps_acc) else "ml"
+        streak_note = (
+            f" streak k={k} rho={self.streak_rho}" if self.streak_rho > 0.0 else ""
+        )
         why = (
             f"|W|={n} < w_min={self.w_min} (cold start)"
             if n < self.w_min
             else (
-                f"B(s)={bound:.4f} > eps_acc={self.eps_acc} (over budget)"
+                f"B(s)={bound:.4f} > eps_acc={self.eps_acc} (over budget{streak_note})"
                 if bound > self.eps_acc
-                else f"B(s)={bound:.4f} <= eps_acc={self.eps_acc} (within budget)"
+                else f"B(s)={bound:.4f} <= eps_acc={self.eps_acc} (within budget{streak_note})"
             )
         )
+        self._streak = 0 if route == "dft" else k + 1
         return Decision(
             route=route,
             score=bound,

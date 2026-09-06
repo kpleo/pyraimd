@@ -1,7 +1,7 @@
 &CONTROL
   calculation = 'scf'
   prefix = 'si_bulk'
-  pseudo_dir = '/data/home/df103967/df103967/cloud_projects/pyraimd2/inputs'
+  pseudo_dir = './pseudopotentials'
   outdir = './tmp'
   tprnfor = .true.
   tstress = .true.

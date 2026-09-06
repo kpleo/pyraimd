@@ -1152,33 +1152,56 @@ wheels = [
 
 [[package]]
 name = "pyraimd2"
-version = "0.1.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "ase" },
+    { name = "numpy" },
+]
+
+[package.optional-dependencies]
+all = [
     { name = "mace-torch" },
+    { name = "pyscf" },
+]
+builders = [
+    { name = "rdkit" },
+]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+mace = [
+    { name = "mace-torch" },
+]
+pyscf = [
     { name = "pyscf" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
-    { name = "rdkit" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "ase", specifier = ">=3.29.0" },
-    { name = "mace-torch", specifier = ">=0.3.16" },
-    { name = "pyscf", specifier = ">=2.14.0" },
+    { name = "mace-torch", marker = "extra == 'all'", specifier = ">=0.3.16" },
+    { name = "mace-torch", marker = "extra == 'mace'", specifier = ">=0.3.16" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "pyscf", marker = "extra == 'all'", specifier = ">=2.6" },
+    { name = "pyscf", marker = "extra == 'pyscf'", specifier = ">=2.6" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
+    { name = "rdkit", marker = "extra == 'builders'", specifier = ">=2024.3" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11" },
 ]
+provides-extras = ["mace", "pyscf", "all", "dev", "builders"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "rdkit", specifier = ">=2026.3.5" },
-    { name = "ruff", specifier = ">=0.16.3" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.11" },
 ]
 
 [[package]]

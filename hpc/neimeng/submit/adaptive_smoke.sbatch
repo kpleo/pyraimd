@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=28
 #SBATCH --mem=120G
 #SBATCH --time=12:00:00
-#SBATCH --output=/data/home/df103967/df103967/cloud_projects/pyraimd2/logs/slurm_%x_%j.out
-#SBATCH --error=/data/home/df103967/df103967/cloud_projects/pyraimd2/logs/slurm_%x_%j.err
+#SBATCH --output=slurm_%x_%j.out
+#SBATCH --error=slurm_%x_%j.err
 
 # pyraimd2 M3: remote adaptive-loop smoke test on the 106-atom mini box.
 # Whole node for one python driver; QE labels run via mpirun inside the same
@@ -18,7 +18,7 @@
 # reachable around step ~20-30 if post-fine-tune errors land near 0.2 eV/A.
 
 set -euo pipefail
-PROJECT=/data/home/df103967/df103967/cloud_projects/pyraimd2
+PROJECT="${PYRAMID_PROJECT:?Set PYRAMID_PROJECT to the remote project directory}"
 
 source /data/hzwtech/profile/Miniforge3.env
 source "$(conda info --base)/etc/profile.d/conda.sh"

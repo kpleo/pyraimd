@@ -16,6 +16,8 @@ plateaued at ~1e-2 Ry density residual after 200 iterations (energy stable to
 
 from __future__ import annotations
 
+import os
+
 import sys
 from pathlib import Path
 
@@ -47,7 +49,7 @@ NBND = 486 + 50
 # 7615064) — the occupation response at the Fermi level is the stiff mode.
 # Cold smearing damps it; energy bias at this width is sub-meV/atom.
 CONV_THR = 1e-6
-PSEUDO_DIR = "/data/home/df103967/df103967/cloud_projects/pyraimd2/inputs"
+PSEUDO_DIR = os.environ.get("PYRAMID_PSEUDO_DIR", "pseudopotentials")
 
 
 def make_cfg(ecut: float, restart: bool) -> QeConfig:

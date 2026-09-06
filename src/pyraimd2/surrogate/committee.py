@@ -1,9 +1,9 @@
 """Committee surrogate: K readout heads on frozen MACE backbone(s) (M2 §1).
 
-Each member is a full copy of a foundation model with all parameters frozen
-except the readout heads (parameter names containing ``"readout"``; if
-introspection finds none, construction raises — we never silently train
-nothing).  The backbone spec is either one model (deep-copied to K members)
+Each member is a full copy of a foundation model with parameters frozen
+except those selected by ``trainable_filters`` (name substrings; default
+``("readout",)`` = the readout-only recipe; if introspection finds no match,
+construction raises — we never silently train nothing).  The backbone spec is either one model (deep-copied to K members)
 or an explicit per-member list for a **mixed-backbone committee** (e.g.
 MACE-MP-0b3 + MACE-MPA-0); mixed backbones must share the exact data
 interface (z_table/head/r_max/keys/units), checked at load.  Mixed
@@ -68,8 +68,6 @@ from ase import Atoms
 from pyraimd2.engines.base import EngineResult
 from pyraimd2.surrogate.base import SurrogatePrediction, TrainReport
 
-READOUT_NAME_FILTER = "readout"
-
 # Configurations per optimizer step within one epoch (see module docstring).
 MINIBATCH_CONFIGS = 8
 
@@ -88,6 +86,7 @@ class CommitteeSurrogate:
         epochs: int = 50,
         lr: float = 1e-3,
         force_weight: float = 10.0,
+        trainable_filters: tuple[str, ...] = ("readout",),
     ) -> None:
         if n_members < 1:
             raise ValueError(f"n_members must be >= 1, got {n_members}")
@@ -97,6 +96,10 @@ class CommitteeSurrogate:
             raise ValueError(f"lr must be > 0, got {lr}")
         if perturbation < 0.0:
             raise ValueError(f"perturbation must be >= 0, got {perturbation}")
+        if not trainable_filters or not all(trainable_filters):
+            raise ValueError(
+                f"trainable_filters must be non-empty substrings, got {trainable_filters}"
+            )
         # Backbone spec: one model (deep-copied to K members) or an explicit
         # per-member list — a mixed-backbone committee (e.g. MACE-MP-0b3 +
         # MACE-MPA-0) decorrelates member errors far beyond what readout
@@ -119,6 +122,11 @@ class CommitteeSurrogate:
         self.epochs = epochs
         self.lr = lr
         self.force_weight = force_weight
+        # Parameter-name substrings selecting the trainable tensors.  Default
+        # ("readout",) is the readout-only recipe (2192 params on 0b3-medium);
+        # deeper probes add "products" (+1.35M) / "interactions" (+7.7M) —
+        # smoke 7615761 showed readout-only accuracy plateauing (docs/hpc.md).
+        self.trainable_filters = tuple(trainable_filters)
         self._calc: Any = None  # batch-building machinery + unit conversions
         self._models: list[Any] = []  # the K members (built lazily with _calc)
         self._foundation_readouts: list[dict[str, Any]] = []  # per-member heads
@@ -163,11 +171,11 @@ class CommitteeSurrogate:
         for member in self._models:
             n_trainable = 0
             for name, param in member.named_parameters():
-                param.requires_grad_(READOUT_NAME_FILTER in name)
+                param.requires_grad_(any(f in name for f in self.trainable_filters))
                 n_trainable += int(param.requires_grad)
             if n_trainable == 0:
                 raise RuntimeError(
-                    f"no parameters with {READOUT_NAME_FILTER!r} in their name found "
+                    f"no parameters matching {self.trainable_filters!r} found "
                     "in the MACE model — refusing to fine-tune an empty parameter set"
                 )
         # Per-member snapshots of the foundation heads: the fixed starting
@@ -322,14 +330,27 @@ class CommitteeSurrogate:
             force_b = [force_true[i] for i in bootstrap]  # bootstrap order
             # Energy referencing: least-squares constant offset for this member
             # (see module docstring).  A constant changes no forces/gradients.
-            full_batch = torch_geometric.Batch.from_data_list(data_b)
-            out0, _ = self._forward(member, full_batch, training=False)
+            # Forward the bootstrap sample in minibatches — per-config
+            # energies are independent, so this equals one full-batch forward
+            # without materializing it (a single 52x474-atom batch needs a
+            # ~29 GB TP intermediate and OOMed stage-3 jobs 7616839/7616847/
+            # 7616868; MINIBATCH_CONFIGS chunks stay ~4.5 GB).
+            e_ref_chunks: list[Any] = []
+            for start in range(0, n_labels, MINIBATCH_CONFIGS):
+                mb = torch_geometric.Batch.from_data_list(
+                    data_b[start : start + MINIBATCH_CONFIGS]
+                )
+                out_c, _ = self._forward(member, mb, training=False)
+                e_ref_chunks.append(out_c["energy"].detach())
             energy_all = torch.stack(energy_b)
-            self._energy_shifts[k] = float((energy_all - out0["energy"].detach()).mean())
+            self._energy_shifts[k] = float(
+                (energy_all - torch.cat(e_ref_chunks)).mean()
+            )
 
             shuffle = np.random.default_rng([self.seed, k, 1])  # epoch order stream
             for epoch in range(self.epochs):
                 order = shuffle.permutation(n_labels)
+                epoch_losses: list[float] = []
                 for start in range(0, n_labels, MINIBATCH_CONFIGS):
                     idx = order[start : start + MINIBATCH_CONFIGS]
                     batch = torch_geometric.Batch.from_data_list([data_b[i] for i in idx])
@@ -350,10 +371,19 @@ class CommitteeSurrogate:
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
+                    epoch_losses.append(float(loss.detach()))
                     if epoch == 0 and start == 0:
                         initial_losses.append(float(loss.detach()))  # pre-update
                     if epoch == self.epochs - 1 and start + MINIBATCH_CONFIGS >= n_labels:
                         final_losses.append(float(loss.detach()))  # last step
+                # Progress line per (member, epoch): fine-tunes are the wall-time
+                # dominator — this is what separates "slow" from "hung" on the
+                # cluster and enables rational epoch-budget choices.
+                print(
+                    f"finetune member={k} epoch={epoch}/{self.epochs} "
+                    f"loss={np.mean(epoch_losses):.6f}",
+                    flush=True,
+                )
 
         return TrainReport(
             n_labels=n_labels,
@@ -363,3 +393,42 @@ class CommitteeSurrogate:
             member_losses=tuple(final_losses),
             wall_time_s=time.perf_counter() - t0,
         )
+
+    # -- checkpointing ------------------------------------------------------
+
+    def state_dict(self) -> dict:
+        """Full committee state for restart-safe campaigns: member weights,
+        energy shifts, and the recipe echo for identity validation."""
+        self._ensure_loaded()
+        return {
+            "model_specs": list(self._model_specs),
+            "n_members": self.n_members,
+            "seed": self.seed,
+            "perturbation": self.perturbation,
+            "epochs": self.epochs,
+            "lr": self.lr,
+            "force_weight": self.force_weight,
+            "trainable_filters": self.trainable_filters,
+            "member_state_dicts": [
+                {k: v.detach().cpu().clone() for k, v in m.state_dict().items()}
+                for m in self._models
+            ],
+            "energy_shifts": list(self._energy_shifts),
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore a :meth:`state_dict` snapshot.  Raises on any recipe or
+        backbone mismatch — a resumed run must never silently continue with
+        a different surrogate than the one that produced the stored labels."""
+        self._ensure_loaded()
+        if list(state["model_specs"]) != list(self._model_specs):
+            raise ValueError(
+                f"checkpoint backbones {state['model_specs']!r} != {self._model_specs!r}"
+            )
+        if int(state["n_members"]) != self.n_members:
+            raise ValueError(
+                f"checkpoint n_members {state['n_members']} != {self.n_members}"
+            )
+        for member, member_state in zip(self._models, state["member_state_dicts"]):
+            member.load_state_dict(member_state)
+        self._energy_shifts = list(state["energy_shifts"])
