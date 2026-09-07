@@ -1,0 +1,831 @@
+{
+  "algorithm": "SHA256",
+  "records": [
+    {
+      "source_id": "velocity_reference:velocity_reference_attempts.jsonl",
+      "sha256": "a050743d448a472496f2703dea2a850097ce1ccd907193f9a584b6e7ad9bdcdf",
+      "bytes": 70072
+    },
+    {
+      "source_id": "velocity:velocity_2026090501_0.5_steps.json",
+      "sha256": "b40a642ce65a9e5d30e3c7efc2967f9dd2c57bf4b813b5c5fa28d42cd005154b",
+      "bytes": 28998
+    },
+    {
+      "source_id": "velocity:velocity_2026090501_0.5_prediction.json",
+      "sha256": "f97ad42380292c0037259f46dea0c5cc25a6003501560c87fd8915cb4aaa176e",
+      "bytes": 650
+    },
+    {
+      "source_id": "velocity:velocity_2026090501_1_steps.json",
+      "sha256": "ef3824eba064178ae5b629476eae6e9678b80942dece8ebf1a47fe22163bd882",
+      "bytes": 28835
+    },
+    {
+      "source_id": "velocity:velocity_2026090501_1_prediction.json",
+      "sha256": "59367196ed04e6d28b28ca9c73b6c73382fb49b861b0789f0ad9a5f4ae5d77f2",
+      "bytes": 418
+    },
+    {
+      "source_id": "velocity:velocity_2026090501_2_steps.json",
+      "sha256": "2409fe03bdacd069c920ac6442bf56c5cb0ab3914e95dcdf1a67ee12acc5385b",
+      "bytes": 28635
+    },
+    {
+      "source_id": "velocity:velocity_2026090501_2_prediction.json",
+      "sha256": "c9bafd7aacd7c048643dc46e130d4289bb11105b2953308ed7bc004c34b8cb6b",
+      "bytes": 339
+    },
+    {
+      "source_id": "velocity:velocity_2026090502_0.5_steps.json",
+      "sha256": "5c6bcd6982f7aa72c8994df175436377d83ec0ef8eebb400d313134872e3b949",
+      "bytes": 28763
+    },
+    {
+      "source_id": "velocity:velocity_2026090502_0.5_prediction.json",
+      "sha256": "39524ef948ded0c3ee33b8246dc57345ac0d6660cf509bfdfddf52605f2f61a6",
+      "bytes": 495
+    },
+    {
+      "source_id": "velocity:velocity_2026090502_1_steps.json",
+      "sha256": "e7cae76dac6f6a402292ece81050956ad1f933e5acf4456ed670c18803fd3d85",
+      "bytes": 28732
+    },
+    {
+      "source_id": "velocity:velocity_2026090502_1_prediction.json",
+      "sha256": "99eb9d297783ddf9a5e477cf647accbdc6140d46f7ddd3a8b7bfff89b0d06e67",
+      "bytes": 419
+    },
+    {
+      "source_id": "velocity:velocity_2026090502_2_steps.json",
+      "sha256": "c1b75575457c012f5a62d09e64c1a05ee868a67a84b38b18373f465e6025f61c",
+      "bytes": 28612
+    },
+    {
+      "source_id": "velocity:velocity_2026090502_2_prediction.json",
+      "sha256": "fc6d721f937c1af8c927e6a1937a55bf1695452806606e3b2349ce829ea0586e",
+      "bytes": 340
+    },
+    {
+      "source_id": "velocity_derived:motion_cases.csv",
+      "sha256": "8fbe51e4037e8212583a26b6f8b42f9f5d1a6f52bbcd9771207dda4a3221b44a",
+      "bytes": 1588
+    },
+    {
+      "source_id": "velocity_derived:motion_points.csv",
+      "sha256": "1b2a8687eebd2d7e5d157522684f13b88d27938ec9e1d1a9c268610c515a0bfb",
+      "bytes": 18325
+    },
+    {
+      "source_id": "velocity_derived:motion_forecasts.csv",
+      "sha256": "2873f93688ae8c3c25e2625bc595c0f8405bfdf79a9571f7c9365a9320a1d2d0",
+      "bytes": 1318
+    },
+    {
+      "source_id": "velocity_derived:motion_directional_probes.csv",
+      "sha256": "73e473dad8b071495be41d49ecbf7cbe7987a69bc73f6e2fa0e20a4b9869afc3",
+      "bytes": 398
+    },
+    {
+      "source_id": "velocity_probe:velocity_2026090501_directional_probe.json",
+      "sha256": "30bdce4f47dfb7b875f13d47409ccc2ed5b8ead7e8186dbf0fdb0f351f307123",
+      "bytes": 835
+    },
+    {
+      "source_id": "velocity_probe:velocity_2026090502_directional_probe.json",
+      "sha256": "21adb284926a74259472e78fb24e9c0dfd290d3ee805ff896a97f50eecd0f25f",
+      "bytes": 823
+    },
+    {
+      "source_id": "velocity_protocol:locked_protocol.json",
+      "sha256": "dffbc501006143631642d643648ddf05ad90db367d5d9e64ba15be9a575a425a",
+      "bytes": 8186
+    },
+    {
+      "source_id": "molecular_comparison_protocol:locked_protocol.json",
+      "sha256": "5436772f50278dd5e4bc2d305cc6226332a8a6df7df52f033eeb09f5831fd8b1",
+      "bytes": 10228
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:pilot_metrics.csv",
+      "sha256": "deb8bc754e208c39a8f86012e8b594590de2cf815d70d71b28c2152899ea48b4",
+      "bytes": 4206
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:reference_2026090541_steps.jsonl",
+      "sha256": "eebafa5b7e7b0de9a2c7967cdecacfe88f9114f9018ecd3c101878d48f24f59f",
+      "bytes": 63167
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:reference_2026090541_proposals.jsonl",
+      "sha256": "1bb97a58d4c2d3116c49e9a24f8ef72c665c848882cacddd8e0338bdabc03f30",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:periodic_2026090541_steps.jsonl",
+      "sha256": "3247aa27f5b8e7d2444d4d5e22f2bbcce908e45e2d1e7d210801ab8da3a2de09",
+      "bytes": 75940
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:periodic_2026090541_proposals.jsonl",
+      "sha256": "a74d7cd7aafed6335d91b3e55adf71bc83246533d0bc39883eeefef42d7b8db1",
+      "bytes": 22153
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:calibrated_2026090541_steps.jsonl",
+      "sha256": "10de8e00340a1ff22ac4d171c3b47fbb08bd279e3067e274fb5996239984324a",
+      "bytes": 75832
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:calibrated_2026090541_proposals.jsonl",
+      "sha256": "563dc30d8c90aa4af53473e9ab3e0888c2aa8a1b4fd435e1fead502726c1264f",
+      "bytes": 22149
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090541_steps.jsonl",
+      "sha256": "4e962ad453716b59139139318cf0792fdc45b7aacfded3f51f960437e1d2248a",
+      "bytes": 76315
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090541_proposals.jsonl",
+      "sha256": "f6b17ffee2320384d8fc70ff5a62951ea4f449fbdc1e5871c9431cdc64551aeb",
+      "bytes": 22917
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090541_anchors.jsonl",
+      "sha256": "4a75f050711575d775987bf63cc6fcdaed3c48dc235845625d15095ab21b2fd8",
+      "bytes": 6174
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:reference_2026090542_steps.jsonl",
+      "sha256": "506fc83548ccfbfc1c9ddcef37d0abf9d70a49c9a85c2b513e4ded3b8926f869",
+      "bytes": 62761
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:reference_2026090542_proposals.jsonl",
+      "sha256": "c3ec4df0f150622a4f164469d101830623b3e9a10909a3a47aa40dfe816742b7",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:periodic_2026090542_steps.jsonl",
+      "sha256": "59df6813bf05b4ea6beb9fa501afa526571bba5f5c7616ae392d854856650373",
+      "bytes": 75129
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:periodic_2026090542_proposals.jsonl",
+      "sha256": "1c06d3f20508d056ebba91536cb44aa70a0306a562521e6f50af0b231e9828fa",
+      "bytes": 21925
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:calibrated_2026090542_steps.jsonl",
+      "sha256": "0b96c11443b5cedd144b9ff40be93170e203510c422ddf7c380ed0d0f4eb7ad5",
+      "bytes": 74789
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:calibrated_2026090542_proposals.jsonl",
+      "sha256": "9b293bf0120ebd558df5c82ae5d9dd37c4cadc25fa3c5b2ef1c849a2e22453f3",
+      "bytes": 21973
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090542_steps.jsonl",
+      "sha256": "43277c075da61d8916de9b15fc48c38bfd4bb2dba2323ab90df62cdaf9101b1a",
+      "bytes": 75222
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090542_proposals.jsonl",
+      "sha256": "b86b6a7469dbdfc796a07f053b18550b857ebd3f6348cebd05df56cef94cafb1",
+      "bytes": 22687
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090542_anchors.jsonl",
+      "sha256": "481193082a1b68038dea2886a7af039db1b3d51ed5e67607a6a5d8faedce873e",
+      "bytes": 7586
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:reference_2026090543_steps.jsonl",
+      "sha256": "776bcd605ec1729229e4ed214ab9b4cd74a2ee60b42950e24650eca616054f4a",
+      "bytes": 63221
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:reference_2026090543_proposals.jsonl",
+      "sha256": "b7a2caae742fb009277138fd5447b20d206b174eed1a0af08275b8fc4d308c8d",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:periodic_2026090543_steps.jsonl",
+      "sha256": "b3ef881ad16e130f2f85978a5e935667da1ae6d2165e5c60fb5660aacb37b721",
+      "bytes": 75867
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:periodic_2026090543_proposals.jsonl",
+      "sha256": "6771486bd6903d44eb0642865fee657861eeb435937bde0b84f8403561697014",
+      "bytes": 22159
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:calibrated_2026090543_steps.jsonl",
+      "sha256": "2ab96ba40132a45bdcc562b768684167791167e8ac0f5538ded4ea733bf95247",
+      "bytes": 76040
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:calibrated_2026090543_proposals.jsonl",
+      "sha256": "66db462add4e7c805538b5bd6352089101299edf5c122f73f20fe01911cdbe59",
+      "bytes": 22157
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090543_steps.jsonl",
+      "sha256": "14603354f20d3110ad96cf11bdb1fc22f5194d92debc5c5f6bf906a9aba1259c",
+      "bytes": 76482
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090543_proposals.jsonl",
+      "sha256": "b4ec744195a721302b7eb9ae7e35387a54fa56f277e03a9875d40cee1e2a84d1",
+      "bytes": 22884
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090543_anchors.jsonl",
+      "sha256": "94abea6d4a701d2a2febedcf04dd81af6e30409a6263e9323d8e2976682025a9",
+      "bytes": 4997
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:reference_2026090544_steps.jsonl",
+      "sha256": "949f8d398ddf7226cc66428374fbe6f2ae58521d2cc0c7fa696108c6e83bbb41",
+      "bytes": 62841
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:reference_2026090544_proposals.jsonl",
+      "sha256": "9dbf5e315286e207df26eaa85d211a1d4b0930ee971324d33e47137f5ecee621",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:periodic_2026090544_steps.jsonl",
+      "sha256": "c34be399891a9715de150532aa8a1607f825f02ddea2d0bd09ecbb70be895063",
+      "bytes": 75311
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:periodic_2026090544_proposals.jsonl",
+      "sha256": "87233ab12cb14d8e09ce1771cac612a122e6c0786f2fe5e9f7b1bf11a0745ee4",
+      "bytes": 21975
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:calibrated_2026090544_steps.jsonl",
+      "sha256": "b561c6ea93d701fb60c775af7369d81a0ccbd665f93f0f392643b0cd19f4b904",
+      "bytes": 75374
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:calibrated_2026090544_proposals.jsonl",
+      "sha256": "51e05873f13503ea9e7b21b93411a1cbd02fa7baf60bd1b3660f195a235be32d",
+      "bytes": 21980
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090544_steps.jsonl",
+      "sha256": "2b9ed6affc49b2c73b61c563192d4d22278a8672e7386d3c831b3f5e0fdcf9a0",
+      "bytes": 75652
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090544_proposals.jsonl",
+      "sha256": "47735c5215402d931096c62c978fb6fc1f1efeb69803debfaf95e17ed7e9cfb9",
+      "bytes": 22721
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_300:horizon_2026090544_anchors.jsonl",
+      "sha256": "a2867e55ff84b6cd36a2b7c2e818a9cfa20bb5db4d185997b797d922c8301526",
+      "bytes": 6910
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:pilot_metrics.csv",
+      "sha256": "3b386d49d05797f33ec097880849205515947f91d64d68b152be1a0bdb06207a",
+      "bytes": 4154
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:reference_2026090541_steps.jsonl",
+      "sha256": "3a30e42ea05afd33d0091b3df8a9ab8fc30eace9e35fb77a9f31685c8c1483f0",
+      "bytes": 62964
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:reference_2026090541_proposals.jsonl",
+      "sha256": "0459bcd0a71eb50618966fb1169b7ebaf52b24a8762ba54fe86ff2f6ecce9c91",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:periodic_2026090541_steps.jsonl",
+      "sha256": "3a17ec596f27a1e1c197eb4c010eef7ec9e468e4e6f896cd12ee5f65e28a365f",
+      "bytes": 75548
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:periodic_2026090541_proposals.jsonl",
+      "sha256": "4f60c1840bf2eda81fec548ff2193f0a6f2d81635c75c4700a0368928e69eac8",
+      "bytes": 22096
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:calibrated_2026090541_steps.jsonl",
+      "sha256": "85631df665053380218b75333234c201ce5b1fc3b16d25bbc12c7031bd76432f",
+      "bytes": 75201
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:calibrated_2026090541_proposals.jsonl",
+      "sha256": "9050a76bcf1cfcb4fedc535ab8cc83f3e3a285b45a2ae8e946116675e2581c44",
+      "bytes": 22084
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090541_steps.jsonl",
+      "sha256": "d5d2c2272146852433f476a4702f56afb67146f53499477f372e5147f83b8b58",
+      "bytes": 75708
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090541_proposals.jsonl",
+      "sha256": "091f49988ebb472832c41cccd8a95499d312493ac2a1facebe4920f0f5bc5d93",
+      "bytes": 22823
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090541_anchors.jsonl",
+      "sha256": "e4c4cbe8a09b011e5743a272c7e036564ec9e1487e87912a8e97379b37b3b182",
+      "bytes": 7931
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:reference_2026090542_steps.jsonl",
+      "sha256": "fbb47dad5841bfd417cd5363c61e02ea2c3da13416e2da2cdc84a44051013bd3",
+      "bytes": 62588
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:reference_2026090542_proposals.jsonl",
+      "sha256": "ce47a9f2f8061330de73592893c2c54189bbb6b761339d662b4bf2463924e23e",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:periodic_2026090542_steps.jsonl",
+      "sha256": "caea3fe2b83878e4216ae3889ba10dbdd725ea05b4db646cd99a5a7e2d43bf7d",
+      "bytes": 74896
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:periodic_2026090542_proposals.jsonl",
+      "sha256": "351d69f87dabc264a5aadfe4e2bb3db6466a0e8e843d29f496de339623b61eb6",
+      "bytes": 21885
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:calibrated_2026090542_steps.jsonl",
+      "sha256": "5e973ddc61204962849c6b6fe7ab86cb9236c5182f236804df916e892f70cc55",
+      "bytes": 74409
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:calibrated_2026090542_proposals.jsonl",
+      "sha256": "d6a2377d35b552869075fcd405a76d7856ce0dfa1743b8578a90edf669381ee6",
+      "bytes": 21929
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090542_steps.jsonl",
+      "sha256": "0e03658c697cc07861e35e2b52e2b58786cc2e95b27824d9ce45195aa7ad0d0d",
+      "bytes": 75045
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090542_proposals.jsonl",
+      "sha256": "c479d286cebacec3b64159e3e7e470ae5f1fd5af637bbc14296534ae41f10a1e",
+      "bytes": 22655
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090542_anchors.jsonl",
+      "sha256": "74032ae1c1ef67deda00f2692457f2d6a12f2b438dab6f4f80c8a2138ff6a81d",
+      "bytes": 7143
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:reference_2026090543_steps.jsonl",
+      "sha256": "389dd8ea026b9421bb7a7070c4199916c14c844351de25c4a5a305d059ef43f5",
+      "bytes": 62912
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:reference_2026090543_proposals.jsonl",
+      "sha256": "4e54726d1c395bc0385d831ca3ef36ded4251c137de464bf958e4251b70f45b7",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:periodic_2026090543_steps.jsonl",
+      "sha256": "d7aa960aba745eeb521ab7276e5fba3e2a66669a2103f31486f7fe50232cd59f",
+      "bytes": 75518
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:periodic_2026090543_proposals.jsonl",
+      "sha256": "73d2a99b62ff54a8a3e047c382570d26872ad5fa96c49a359891b0d112d84ba7",
+      "bytes": 22066
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:calibrated_2026090543_steps.jsonl",
+      "sha256": "fca8e6e3617e5ef7b65bbe88eaf95923bde2811a631f16e3992028a34b031480",
+      "bytes": 75590
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:calibrated_2026090543_proposals.jsonl",
+      "sha256": "4fe392f1dde8a981a74bddffb5b519d369e07d05580897d03e7ee54cd77d0c30",
+      "bytes": 22078
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090543_steps.jsonl",
+      "sha256": "7800516d60038d987145831ada0058e1246cdd22edcdfd1156cbbe546342d4f7",
+      "bytes": 75924
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090543_proposals.jsonl",
+      "sha256": "09b9d784361faf0f110c2af5b40c61a423b3154ec549f01ba94127ba7d3405d3",
+      "bytes": 22804
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090543_anchors.jsonl",
+      "sha256": "f5c54b73cd12c84ebd158b59b13379a49f6c617a948e3b266f1f4a01f0066c85",
+      "bytes": 6422
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:reference_2026090544_steps.jsonl",
+      "sha256": "86b5dbf91d11d46a187dcb18eeb93362d0bb7ca3e9063d01dc3d5dadfa39ec01",
+      "bytes": 62765
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:reference_2026090544_proposals.jsonl",
+      "sha256": "4caa7d3b772e6adee43b8d48b8728b9fc43d4125910ef84174382a8d8b0cb441",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:periodic_2026090544_steps.jsonl",
+      "sha256": "5a76e737ca4728af1c8673f0813f9c4159dc221b785b946d82e25cb21e5aaf34",
+      "bytes": 75202
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:periodic_2026090544_proposals.jsonl",
+      "sha256": "4037a4a315eb02bacfe04f1e6bcf65e4be125399b9e8388d64bde84471994c00",
+      "bytes": 21946
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:calibrated_2026090544_steps.jsonl",
+      "sha256": "58c77a75c886101984a35444d2a63313b69013b789cf33e16be0076d0f227058",
+      "bytes": 75035
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:calibrated_2026090544_proposals.jsonl",
+      "sha256": "2a8b1840b5254632c2c642fec8469d14f6833f7737cdae5d213e6f2149a29dff",
+      "bytes": 21966
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090544_steps.jsonl",
+      "sha256": "55a1266d08194b65372806c8d2864c84b062892975d9e5b9ffb7f8d70191288d",
+      "bytes": 75415
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090544_proposals.jsonl",
+      "sha256": "8bc29b5626428c06748ad9c6dedaf50a2c0c8f8023ceec26612a2f980c934dd1",
+      "bytes": 22703
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_600:horizon_2026090544_anchors.jsonl",
+      "sha256": "0050460c8ca56b2b0085f6338748da386fcddbbe0bca3cdd41af89c14b50d550",
+      "bytes": 7920
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:pilot_metrics.csv",
+      "sha256": "46332384bc866283728562e395b9f9bd21345513f47e083c9c7a5be30c24b927",
+      "bytes": 4096
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:reference_2026090541_steps.jsonl",
+      "sha256": "6f54696c23d701e8b7c7228e739c0398bc6837afed4b55eb89c9cd90e9fd1220",
+      "bytes": 62704
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:reference_2026090541_proposals.jsonl",
+      "sha256": "c2583a58c2c27d1228a5f45ee1ea805387e57877c19226458039163c48ff493e",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:periodic_2026090541_steps.jsonl",
+      "sha256": "c39d703b8d85ab54673dab7ceea7fb431fead3c33b34ce453d96d47c089443b5",
+      "bytes": 75112
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:periodic_2026090541_proposals.jsonl",
+      "sha256": "06d532880b6958c60e3aeefe8a6f24558372ae54f52fe8d40bae5d81ce65dc9c",
+      "bytes": 21984
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:calibrated_2026090541_steps.jsonl",
+      "sha256": "264c0a92aa87851b50b763dad419cc3be19e4c7bc0a0e1fb37025be8943511a2",
+      "bytes": 74591
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:calibrated_2026090541_proposals.jsonl",
+      "sha256": "7d47be47654c6f6e2745747b74a44e394cdad1f5132fe5bf898f85c78b4f3328",
+      "bytes": 21997
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090541_steps.jsonl",
+      "sha256": "725d5c7e85c08c434526a737508027052607e9e78ebbe1f1328c8548ca09acea",
+      "bytes": 75258
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090541_proposals.jsonl",
+      "sha256": "3481b453d98ccbb4b691080b2773b9dfe12b93236c80279cd79b6c837eb2407f",
+      "bytes": 22746
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090541_anchors.jsonl",
+      "sha256": "43f83103b0a12ed3d84a7188e1b3cc838ec6a3bfaadecc90c083649a9eda39e6",
+      "bytes": 8121
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:reference_2026090542_steps.jsonl",
+      "sha256": "b96956e7484ad797b9af88bd86bf03ba6872eb8c491a0396463dc56c81b57dc4",
+      "bytes": 62442
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:reference_2026090542_proposals.jsonl",
+      "sha256": "1857de463f117d75c8a42b822997500852e47c0c40a639e78943bf7a8e679783",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:periodic_2026090542_steps.jsonl",
+      "sha256": "5713e42dadcf672970462430841f5c78e096265bc6646b299c3cddfa60bddcd0",
+      "bytes": 74672
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:periodic_2026090542_proposals.jsonl",
+      "sha256": "f7e7dfc4339832a2e081e80814597fad521cfe8c15bae341aeef3b66c4225af2",
+      "bytes": 21829
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:calibrated_2026090542_steps.jsonl",
+      "sha256": "cf0d4807ee9d721726f80e617b6bd505caf9d111587101373d60e2458bc67696",
+      "bytes": 74126
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:calibrated_2026090542_proposals.jsonl",
+      "sha256": "d752328ac9a88be7c7448b931ec486c7d448c2dbdb6e9d24a742081c20bcdc31",
+      "bytes": 21879
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090542_steps.jsonl",
+      "sha256": "e226998c83b2f0e8b3ac49d1f187ef14fe1f6cb858efc81e7aed2fe0dbca79fc",
+      "bytes": 74821
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090542_proposals.jsonl",
+      "sha256": "38e46a4af1b876cc5dc69828c3e9270848bd440dee713b1e38311e51fc21c9b0",
+      "bytes": 22588
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090542_anchors.jsonl",
+      "sha256": "ba0ab33071820287ae29a3505e962a2f5cb96670d464bb6087e29346ded74687",
+      "bytes": 6861
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:reference_2026090543_steps.jsonl",
+      "sha256": "325af1c5f7542b3728e8344ec9f6374af6ad62783940f4c1143e6c120f0f53c9",
+      "bytes": 62659
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:reference_2026090543_proposals.jsonl",
+      "sha256": "8cb188be06df5a6367983b1ce773d49c0334d32c1246a50aaf7c62925ce50b68",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:periodic_2026090543_steps.jsonl",
+      "sha256": "fc745311588aaa9d0cd355e5d88be7bb48ef77c7c7efcab0564f1657a8cadf29",
+      "bytes": 75162
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:periodic_2026090543_proposals.jsonl",
+      "sha256": "fc71a26e48116d67b4e354ecd1f2e8a5edb60ad157075363483b2386f5db5073",
+      "bytes": 21983
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:calibrated_2026090543_steps.jsonl",
+      "sha256": "865ce2c620379624b677ae5390417d1cc26e291e7968f6541300a1c27be9cab1",
+      "bytes": 74800
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:calibrated_2026090543_proposals.jsonl",
+      "sha256": "8731cbe0f040505b6071b334fe5949fd9ee2d8f95a5020ab2fb3b3a4793cd30c",
+      "bytes": 22000
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090543_steps.jsonl",
+      "sha256": "dffc6380c04d91de7daafc0fb8bb4f9e6ae90615467b15434de503dd749e3640",
+      "bytes": 75377
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090543_proposals.jsonl",
+      "sha256": "5da97b9809a0b2521e94a90d16e51fe5d5af29686c23e13a705a3f048de8a8c9",
+      "bytes": 22739
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090543_anchors.jsonl",
+      "sha256": "7b901622f51e4c0df2ecb866aee71cfe9ab4f6f8a8c826e12868da374ce6e058",
+      "bytes": 7849
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:reference_2026090544_steps.jsonl",
+      "sha256": "5f52bd131215c7fceda1cc70d701defa7fc12cceb5e93d416773f20bf9b444ea",
+      "bytes": 62511
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:reference_2026090544_proposals.jsonl",
+      "sha256": "8139fafac322444f67c49c3532e6335d73417fc5a249121697652092087c70de",
+      "bytes": 11840
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:periodic_2026090544_steps.jsonl",
+      "sha256": "f7bb09976f1cb59ba25e853e94e36b454eb97b36a20ccf803f9c6587faef4645",
+      "bytes": 74976
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:periodic_2026090544_proposals.jsonl",
+      "sha256": "2cb577645cc10789b6c4b115e8f8fb57a4a1ecf3eb6461d1e0745053cd47eb44",
+      "bytes": 21886
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:calibrated_2026090544_steps.jsonl",
+      "sha256": "945fd39690e7cbf4dd968f44c488474c2414d286a17290b82e75c11572c082dc",
+      "bytes": 74597
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:calibrated_2026090544_proposals.jsonl",
+      "sha256": "af06d720066d29e26de91f15d005b7fae85eb21b7139997ce9b46322386d8ae1",
+      "bytes": 21923
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090544_steps.jsonl",
+      "sha256": "4abde695e078b636a0622c979610afa657378cdf2005029b40b6f753d75fb12b",
+      "bytes": 75050
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090544_proposals.jsonl",
+      "sha256": "1ab8f0104a5bbfe08234c1822d476e7acccb4661bf9a9697d384cb7bd30ce9dc",
+      "bytes": 22632
+    },
+    {
+      "source_id": "molecular_comparison_kinetic_1200:horizon_2026090544_anchors.jsonl",
+      "sha256": "e6993c3bc50ae1fa360f5a1ff0282dfd5ac104c2183a297c2295be1cef402ec8",
+      "bytes": 7686
+    },
+    {
+      "source_id": "hot_forward_protocol:locked_protocol.json",
+      "sha256": "a668e98d6b27844f352a9bbe6f82793781de770471aab46f9e4887f549b1ebdf",
+      "bytes": 5272
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:pilot_metrics.csv",
+      "sha256": "f7238efcf6876901b56b76f3bcc0faa871407690d69cce1967710f1b9ac13285",
+      "bytes": 2195
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:reference_2026090521_steps.jsonl",
+      "sha256": "ba0ada0ed2f9e57d91295e217aea6d274c89770a21c8c027d29e4b5e470ae09d",
+      "bytes": 50158
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:reference_2026090521_proposals.jsonl",
+      "sha256": "0c23f548be5e8cd61d63d8c75a0598059d85c35d352c50492f0500a68aeccf8f",
+      "bytes": 9470
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:periodic_2026090521_steps.jsonl",
+      "sha256": "75a605904bfdac2b90f48bed9c4975f1a637fc957bbbe06c94fd46dc84f6e16d",
+      "bytes": 60084
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:periodic_2026090521_proposals.jsonl",
+      "sha256": "4fb4a9f6f08d1ea6906bbed2b3f9061b6476f27b59381b3cf80813a63632754e",
+      "bytes": 17516
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:calibrated_2026090521_steps.jsonl",
+      "sha256": "2fc8139a04460bbaba49f783a54670a284d7f27ab7a80b470fc6b331abde4c0f",
+      "bytes": 59681
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:calibrated_2026090521_proposals.jsonl",
+      "sha256": "4d670e350725041e359261e419934d8722b6767ebf2ba0a542839ec8b2b9cb9d",
+      "bytes": 17585
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:horizon_2026090521_steps.jsonl",
+      "sha256": "78d7d8b1cdf08b2469b5a934c8f351977556d353fc4cfe31fbf168c9a10049d7",
+      "bytes": 60141
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:horizon_2026090521_proposals.jsonl",
+      "sha256": "7c303362c4ee0d7461f14d95da760757e4043245416d56cc397eeba175bc1301",
+      "bytes": 18136
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:horizon_2026090521_anchors.jsonl",
+      "sha256": "5014d6d09aac73115341424b15ab56bba99f635da908c45d20af83b2dbc9edf2",
+      "bytes": 5078
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:reference_2026090522_steps.jsonl",
+      "sha256": "27a78510cf2d3cfaea18a543d91ac265cab2063c1ed5a9909c1af33a3e03e4da",
+      "bytes": 50204
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:reference_2026090522_proposals.jsonl",
+      "sha256": "a189d7b3e1312d4a8f67e5acd8d0e304300b0841e1aa6c2c4e102186ac2f1929",
+      "bytes": 9470
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:periodic_2026090522_steps.jsonl",
+      "sha256": "75901b4173b24d52cbd1aacad130a16a1e615dbcc2d4e701f5d3aa0e6cce9f83",
+      "bytes": 60172
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:periodic_2026090522_proposals.jsonl",
+      "sha256": "d1f9b940a576ff8b26192eea96ef38542853024e42d2d133480a61c8f9741e52",
+      "bytes": 17570
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:calibrated_2026090522_steps.jsonl",
+      "sha256": "0726408ee745e207b629b2e59ed31e06339442db262c4c1dfa937add6c2ea99e",
+      "bytes": 59635
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:calibrated_2026090522_proposals.jsonl",
+      "sha256": "b792f74d4b96169ad7af91fddfe286d237e72de242a66ceb5ab28cbafaaacaff",
+      "bytes": 17595
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:horizon_2026090522_steps.jsonl",
+      "sha256": "8f3ee34dbcabd24a43031644e85ecf596c26c8d99788d2b352dcad6ce995f30c",
+      "bytes": 60216
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:horizon_2026090522_proposals.jsonl",
+      "sha256": "59f1f13b300e2c1cd8ff79a3595d1bf89b076ca66bd19bd5dfdfac712b371b06",
+      "bytes": 18164
+    },
+    {
+      "source_id": "hot_forward_kinetic_1200:horizon_2026090522_anchors.jsonl",
+      "sha256": "9d1b8d053a27cf574e051a73285d8c6a5097967de891a370dd12a889a2366b94",
+      "bytes": 5250
+    },
+    {
+      "source_id": "oscillator:trajectories.csv",
+      "sha256": "109faf4718b49014c19b168eb29163035ee513a5acc82d2beb075766a51edfaf",
+      "bytes": 45076
+    },
+    {
+      "source_id": "oscillator:steps.csv",
+      "sha256": "5ad1d27db34f74292582e741e004eae39771d7b40f5c8f8be41d3e3adff00b53",
+      "bytes": 68437618
+    },
+    {
+      "source_id": "oscillator_work:oscillator_trajectory_work.csv",
+      "sha256": "3d1b0d6db631a75969ef68426bec124c8d5981b31df6abbee003c7f6334c4564",
+      "bytes": 30126
+    },
+    {
+      "source_id": "oscillator_work:oscillator_segment_mechanism.csv",
+      "sha256": "4e433c21635f495318d0e7fe5ead8f0e0693a369c02600fe89de266d97574712",
+      "bytes": 2467498
+    },
+    {
+      "source_id": "velocity_derived:oscillator_work_components.csv",
+      "sha256": "4b661bb40d5cf373685ed29d27271240484c12d08d01e247c04060eb38394000",
+      "bytes": 1645
+    },
+    {
+      "source_id": "oscillator_work:bregman_closed_form_results.json",
+      "sha256": "2476460f0dbee246c32f9b8749c076fbd5f133467a3c4599cf927cfd2957de38",
+      "bytes": 10932
+    },
+    {
+      "source_id": "verification:replicates.csv",
+      "sha256": "c82985664d671cebee869ae1660664c6e9b9ddbdac98c781d50d6b8eb58a8760",
+      "bytes": 2175331
+    },
+    {
+      "source_id": "verification:traces_first_four.csv",
+      "sha256": "f90477e97684946bcf339d3a65448351149490417407bfdcc9ed322511dedcdf",
+      "bytes": 502861
+    },
+    {
+      "source_id": "verification:results.json",
+      "sha256": "2fa36efbead84af2d7e4a46ab9ab3f49278d58587a2d13da55a863204cfcfd20",
+      "bytes": 4891
+    },
+    {
+      "source_id": "verification:deterministic_probability.json",
+      "sha256": "9af5fd20db8c4d53f44e0730c1fa4aee076a3e5f83535b959092d23c6a9750bf",
+      "bytes": 4488
+    },
+    {
+      "source_id": "oscillator:summary.json",
+      "sha256": "4ea883616e7ef6291124926c9db20b1cbf47a76c0573c898a1f3d5232a0fe3d3",
+      "bytes": 35908
+    },
+    {
+      "source_id": "tungsten_identity:frozen_plan.json",
+      "sha256": "0b42b8898026a316fd152ff4d8078034fd8edd6322c3e95318957d32bc12f364",
+      "bytes": 21477
+    },
+    {
+      "source_id": "tungsten_identity:summary.json",
+      "sha256": "83e1742e103c80bea84d7c20188c4dd1cdd1d010666eda6c979ea3dbf4af58c0",
+      "bytes": 30409
+    }
+  ],
+  "scope": "Identifiers and byte digests of retained source records used for the v1.2.0 extracts. Source IDs are portable collection names plus original basenames; original machine paths and runtime records are excluded."
+}

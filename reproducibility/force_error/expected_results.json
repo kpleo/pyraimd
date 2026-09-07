@@ -29,5 +29,83 @@
   "carbon": {
     "atom_index": 157,
     "force_integral_eV": 0.0006441686530815945
+  },
+  "package_version": "1.2.0",
+  "supplementary_records": {
+    "water_velocity": {
+      "paths": 6,
+      "states": 120,
+      "signed_reference_probes": 8,
+      "horizons_fs": [
+        2.0,
+        0.5,
+        0.0,
+        1.0,
+        0.5,
+        0.0
+      ],
+      "first_observed_crossing_fs": [
+        null,
+        null,
+        2.5,
+        null,
+        null,
+        8.0
+      ]
+    },
+    "molecular_comparison": {
+      "paths": 48,
+      "states": 2400,
+      "new_reference_evaluations": 2352,
+      "zero_acceptance_paths": 15,
+      "screening_by_policy_and_temperature": {
+        "horizon_300": false,
+        "horizon_600": false,
+        "horizon_1200": false,
+        "calibrated_300": true
+      }
+    },
+    "hot_forward": {
+      "paths": 8,
+      "states": 320,
+      "new_reference_evaluations": 312,
+      "zero_acceptance_paths": 4
+    },
+    "controlled": {
+      "oscillator_trajectories": 80,
+      "oscillator_intervals": 160000,
+      "oscillator_segments": 10518,
+      "heldout_mean_anchor_work_over_H0": 0.154209422508043,
+      "heldout_mean_curvature_work_over_H0": 0.36513137934334783,
+      "verification_repetitions": 20000,
+      "primary_events": 682,
+      "zero_detection_events": 1012,
+      "zero_detection_comparator": 0.047101286972462485,
+      "posthoc_binomial_upper_tail": 0.010794521964852751,
+      "oscillator_counts": {
+        "heldout/class_horizon": {
+          "references": 2353,
+          "unreferenced_intervals": 29647,
+          "violations": 0
+        },
+        "heldout/fixed_streak": {
+          "references": 2031,
+          "unreferenced_intervals": 29969,
+          "violations": 1849
+        },
+        "heldout/empirical_horizon": {
+          "references": 1507,
+          "unreferenced_intervals": 30493,
+          "violations": 4974
+        }
+      }
+    },
+    "tungsten": {
+      "geometries": 24,
+      "reference_records": 27,
+      "pooled_vector_RMS_eV_A": 0.5105440743473774,
+      "maximum_residual_eV_A": 2.343553762940624,
+      "model_identity_records": 2
+    }
   }
 }

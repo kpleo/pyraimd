@@ -1,6 +1,6 @@
 {
   "status": "passed",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "runtime": {
     "python": "3.12.14",
     "implementation": "CPython",
@@ -36,8 +36,8 @@
     "force_integral_eV": 0.0006441686530815945
   },
   "elapsed_seconds": {
-    "controlled": 0.268,
-    "interface": 0.176,
-    "total": 0.448
+    "controlled": 0.255,
+    "interface": 0.161,
+    "total": 0.422
   }
 }

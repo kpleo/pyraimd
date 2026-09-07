@@ -1,9 +1,49 @@
 # Force-error reproducibility: data and code
 
-Version **1.1.0** identifies this combined data-and-code package. The Pyramid
-framework remains at **0.3.0**; installing Pyramid is not required here.
-The three analysis scripts are distributed unchanged, with a demonstration
-runner, expected outputs and the numerical source data in `data/`.
+Version **1.2.0** identifies this combined data-and-code package,
+with tag `force-error-repro-v1.2.0`. The Pyramid framework remains at
+**0.3.0**; installing Pyramid is not required here.
+The three original analysis scripts and demonstration remain available. The new
+`supplementary_records.py` checks the additional source records using arithmetic
+only, without regenerating any trajectory.
+
+## Check the saved records
+
+With Python 3.10+ and NumPy installed, run from this directory:
+
+```sh
+python supplementary_records.py
+```
+
+This read-only command checks the NPZ/CSV schemas and reconstructs the Fig. 3
+velocity/probe/forecast quantities, all 48 molecular comparison paths in Fig. A2,
+the eight hot-forward paths, and the stored oscillator work and verification
+results. It also checks the tungsten force arrays and model-identity metadata.
+It prints `"status": "passed"` plus per-path counts and numerical comparisons;
+[records_output.json](records_output.json) is the checked v1.2.0 example.
+No model inference, training, electronic calculation, random sampling or new
+trajectory is performed. Original scalar results are retained independently in
+the CSVs, JSON summaries and [expected_results.json](expected_results.json).
+
+The data additions comprise:
+
+- `data/water_velocity/`: six 20-state paths, paired forces, full-step momenta,
+  four retained directional derivative vectors, eight signed reference probes,
+  and all 14 saved forecast values.
+- `data/molecular_comparison/`: 48 complete 50-state paths, frozen proposals,
+  checks and reference requests, paired structural metrics, and anchor forecasts.
+- `data/hot_forward/`: eight complete 40-state paths and the corresponding
+  hot-forward table values.
+- `data/controlled/`: 80 oscillator summaries, 160,000 recorded intervals,
+  10,518 work segments, 16 work-component bars, 20,000 original statistical
+  outcomes and four complete retained statistical histories.
+- `data/tungsten/model_identity.json`: authoritative file hashes, effective
+  evaluation tensor hashes and stock-control tensor hashes.
+
+Signed-probe surrogate forces and historical residual vectors
+used to estimate water growth coefficients were not retained. Their recorded
+derivatives and coefficients are supplied without claiming an independent refit.
+See [data/README.md](data/README.md) for masks, units, indices and all limitations.
 
 The controlled demonstration recomputes an analytical harmonic oscillator using
 the Python standard library. The optional material demonstration reconstructs
@@ -19,12 +59,12 @@ All inputs used by the documented reconstructions are included in this folder.
 No separate data download or repository is needed. Obtain the fixed version with:
 
 ```sh
-git clone --depth 1 --branch force-error-repro-v1.1.0 https://github.com/kpleo/pyraimd.git
+git clone --depth 1 --branch force-error-repro-v1.2.0 https://github.com/kpleo/pyraimd.git
 cd pyraimd/reproducibility/force_error
 ```
 
-The [versioned directory](https://github.com/kpleo/pyraimd/tree/force-error-repro-v1.1.0/reproducibility/force_error) is the entry point for code, data and instructions.
-GitHub's **Code → Download ZIP** also provides a complete checkout.
+The [versioned directory](https://github.com/kpleo/pyraimd/tree/force-error-repro-v1.2.0/reproducibility/force_error) contains the data, code and instructions.
+GitHub's **Code → Download ZIP** provides a complete checkout of the selected ref.
 
 - `data/interface/`: four 474-atom paths, two probe origins, paired forces and
   energies, all 40 future endpoints, and electronic-convergence/timestep checks.
@@ -36,8 +76,10 @@ GitHub's **Code → Download ZIP** also provides a complete checkout.
   reconstruction supported by each collection.
 - `controlled_dynamics.py`, `directional_response.py`, `residual_work.py`:
   analysis programs; `run_demo.py`: compact reproduction command.
-- `expected_results.json` and `demo_output.json`: reference values and an example
-  checked run. `SHA256SUMS` covers the complete folder except itself.
+- `expected_results.json`, `records_output.json` and `release_metadata.json`:
+  numerical targets, the v1.2.0 saved-record check, and release status.
+- `demo_output.json`: the checked v1.2.0 controlled and material demonstration.
+  `SHA256SUMS` covers the complete folder except itself.
 
 ## Installation and requirements
 
@@ -67,14 +109,20 @@ Installation is estimated at 1–3 minutes with Python already installed, a comp
 NumPy wheel and a typical broadband connection. The estimate excludes Python
 installation and checkout download.
 
-The example in [demo_output.json](demo_output.json) ran on
-Darwin 26.6.2 (arm64)
-in **0.448 seconds**: 0.268 seconds for the controlled
-calculation and 0.176 seconds for the material-array reconstruction.
+The v1.2.0 example in [demo_output.json](demo_output.json) ran on
+macOS 26.6.2 (Darwin, arm64)
+in **0.422 seconds**: 0.255 seconds for the controlled
+calculation and 0.161 seconds for the material-array reconstruction.
+The saved-record checker passed 4,000 checks in **0.200 seconds**, including
+Python startup, in the same Python 3.12.14 / NumPy 2.3.5 environment.
 The timing includes subprocess startup and temporary JSON I/O; it excludes
 installation and download. Runtime varies with CPU, storage and system load.
 
 ## Demonstration and expected results
+
+The commands in this section recompute the analytical oscillator and the
+material-array example. Both passed the v1.2.0 check against unchanged
+numerical targets. Use `supplementary_records.py` above to check saved records.
 
 `run_demo.py` invokes the unchanged scripts, compares selected scalars with
 [expected_results.json](expected_results.json), and prints compact JSON with
@@ -212,4 +260,6 @@ Copyright (c) 2026 Kang Peng.
 
 The original code and data deposits remain recorded in `data/metadata.json` as
 archival identifiers. The files and commands above are all available in this
-GitHub checkout. The dataset metadata does not specify a separate data license.
+GitHub checkout. The existing DOIs identify earlier deposits, not these new
+v1.2.0 additions. The code remains MIT; `data_license` remains `null` because
+a separate dataset license has not been established.

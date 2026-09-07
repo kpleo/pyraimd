@@ -1,0 +1,60 @@
+{
+  "force_budget_eV_A": 0.1,
+  "dt_fs": 0.5,
+  "forecast_cap_fs": 8.0,
+  "model_sha256": "2ddb079cee0e131eaaf6912ba581b394551ead283e95c99cfe78c605d10b5736",
+  "checkpoint_sha256": "4ccae88097a2a76f7037893a480354df678034ff7628c9bf5fa0798172bdb8bb",
+  "recorded_initial_predictions": [
+    {
+      "path_index": 0,
+      "e0_eV_A": 0.035841534303408445,
+      "kappa_eV_A2": 1.9503827156757572,
+      "horizon_fs": 2.0
+    },
+    {
+      "path_index": 1,
+      "e0_eV_A": 0.035841534303408445,
+      "kappa_eV_A2": 1.9503827156757572,
+      "horizon_fs": 0.5
+    },
+    {
+      "path_index": 2,
+      "e0_eV_A": 0.035841534303408445,
+      "kappa_eV_A2": 1.9503827156757572,
+      "horizon_fs": 0.0
+    },
+    {
+      "path_index": 3,
+      "e0_eV_A": 0.059079925261051595,
+      "kappa_eV_A2": 1.9503827156757572,
+      "horizon_fs": 1.0
+    },
+    {
+      "path_index": 4,
+      "e0_eV_A": 0.059079925261051595,
+      "kappa_eV_A2": 1.9503827156757572,
+      "horizon_fs": 0.5
+    },
+    {
+      "path_index": 5,
+      "e0_eV_A": 0.059079925261051595,
+      "kappa_eV_A2": 1.9503827156757572,
+      "horizon_fs": 0.0
+    }
+  ],
+  "new_reference_evaluations": 122,
+  "future_reference_evaluations": 114,
+  "signed_probe_evaluations": 8,
+  "reused_initial_labels": 6,
+  "conversions": {
+    "ase_fs_in_internal_time": 0.09822694788464063,
+    "bohr_A": 0.5291772105638411,
+    "kB_eV_K": 8.617330337217213e-05
+  },
+  "limitations": [
+    "Historical same-model residual vectors used to fit kappa were not retained; kappa is a recorded empirical value, not independently refitted.",
+    "Individual surrogate forces at the signed probes were not retained; derivative vectors support norms and two-spacing stability, not full independent central-force reconstruction.",
+    "Predictions agree with later path coordinates and source ordering; retained records lack an independently timestamped pre-reference commitment.",
+    "Discrete records do not certify force errors between saved times."
+  ]
+}

@@ -1,13 +1,13 @@
 {
   "title": "Force-error, residual-work and numerical source data",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "data_doi": "10.5281/zenodo.22537317",
   "data_license": null,
   "related_software": {
-    "source": "https://github.com/kpleo/pyraimd/tree/force-error-repro-v1.1.0/reproducibility/force_error",
+    "source": "https://github.com/kpleo/pyraimd/tree/main/reproducibility/force_error",
     "existing_code_doi": "10.5281/zenodo.22537316",
     "bundled_directory": "..",
-    "package_version": "1.1.0"
+    "package_version": "1.2.0"
   },
   "symbols": {
     "1": "H",
@@ -224,7 +224,8 @@
       46,
       48
     ],
-    "initial_velocities": "Not retained in this 24-geometry export; no trajectory replay claimed."
+    "initial_velocities": "Not retained in this 24-geometry export; no trajectory replay claimed.",
+    "model_identity": "tungsten/model_identity.json"
   },
   "coverage": {
     "initial_kinetic_energy_max_difference_eV": 7.105427357601002e-15,
@@ -272,7 +273,19 @@
     "tungsten_labels": 27,
     "tungsten_predictions_rechecked": 24,
     "tungsten_stock_and_D3_control_geometries": 2,
-    "maximum_probe_rounding_A": 9.882422580155396e-09
+    "maximum_probe_rounding_A": 9.882422580155396e-09,
+    "velocity_paths": 6,
+    "velocity_states": 120,
+    "velocity_probe_reference_geometries": 8,
+    "molecular_comparison_paths": 48,
+    "molecular_comparison_states": 2400,
+    "hot_forward_paths": 8,
+    "hot_forward_states": 320,
+    "oscillator_intervals": 160000,
+    "oscillator_work_segments": 10518,
+    "statistical_replicates": 20000,
+    "statistical_trace_steps": 4096,
+    "tungsten_model_identity_records": 2
   },
   "array_storage": "Compressed NPZ, numeric and boolean arrays only; load with allow_pickle=False.",
   "units": {
@@ -287,10 +300,44 @@
     "work_coefficient": "angstrom^2/eV"
   },
   "exclusions": [
-    "Full trajectories and electronic outputs outside the stated selections",
-    "Weights, executable programs and pseudopotential files",
-    "Water decision-time force vectors and historical fit states",
-    "Independent random-check event sequence",
+    "Full electronic outputs and trajectories outside the stated selections",
+    "Model weights, engine executables and pseudopotential files",
+    "302-frame water replay decision-time force vectors and historical fit states",
+    "Individual surrogate forces at the eight Fig. 3 signed water probes",
+    "Historical residual vectors used to estimate empirical water growth coefficients",
+    "Full 1024-step histories for statistical repetitions beyond the four retained traces",
     "Tungsten 686-atom data and later reference-only records 42 and 44"
-  ]
+  ],
+  "release_status": "versioned GitHub release",
+  "intended_tag": "force-error-repro-v1.2.0",
+  "archival_deposit_scope": "Existing DOIs identify earlier deposits; they do not establish deposition of these v1.2.0 additions.",
+  "water_velocity": {
+    "paths": 6,
+    "states_per_path": 20,
+    "probe_reference_evaluations": 8,
+    "derived_directional_vectors": 4,
+    "settings": "water_velocity/settings.json"
+  },
+  "molecular_comparison": {
+    "paths": 48,
+    "states_per_path": 50,
+    "independent_velocity_directions": 4,
+    "new_reference_evaluations": 2352,
+    "settings": "molecular_comparison/settings.json"
+  },
+  "hot_forward": {
+    "paths": 8,
+    "states_per_path": 40,
+    "independent_velocity_directions": 2,
+    "new_reference_evaluations": 312,
+    "settings": "hot_forward/settings.json"
+  },
+  "controlled": {
+    "oscillator_trajectories": 80,
+    "oscillator_intervals": 160000,
+    "oscillator_segments": 10518,
+    "verification_repetitions": 20000,
+    "complete_statistical_histories": 4,
+    "settings": "controlled/settings.json"
+  }
 }
