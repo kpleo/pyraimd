@@ -1,0 +1,63 @@
+{
+  "paired_scf": {
+    "delta_work_fixed_c_eV": 0.0,
+    "delta_anchor_projection_eV": -3.437896034472461e-05,
+    "delta_work_reanchored_eV": -3.437896034472461e-05,
+    "origin_force_change_eV_A": 0.000629402425171018,
+    "endpoint_force_change_eV_A": 0.000655769373836928
+  },
+  "timestep": [
+    {
+      "path_index": 2,
+      "half_endpoint_work_eV": 0.05278631076812611,
+      "half_minus_primary_endpoint_work_eV": -2.2423527089726614e-05
+    },
+    {
+      "path_index": 0,
+      "half_endpoint_work_eV": 0.03988084426129007,
+      "half_minus_primary_endpoint_work_eV": -8.716405073758149e-06
+    }
+  ],
+  "primary_path_2_at_1_fs": {
+    "time_fs": 1.0,
+    "maximum_force_error_eV_A": 0.12230184406118094,
+    "force_error_vector_rms_eV_A": 0.0322180275279449,
+    "endpoint_work_eV": 0.052808734295215834,
+    "force_integral_eV": 0.0527638285524305,
+    "integral_minus_endpoint_eV": -4.4905742785331104e-05,
+    "observed_2W_over_e2_A2_eV": 7.061057425808051,
+    "reference_hamiltonian_change_eV": 0.05468595175327806,
+    "anchored_hamiltonian_drift_eV": 0.0018772174580622275
+  },
+  "atom_157_force_integral_eV": 0.0006441686530815945,
+  "incomplete_quadrature_grids": [
+    {
+      "path_index": 0,
+      "end_fs": 1.0,
+      "spacing_fs": 0.125,
+      "missing_times_fs": [
+        0.625,
+        0.875
+      ]
+    },
+    {
+      "path_index": 1,
+      "end_fs": 1.0,
+      "spacing_fs": 0.125,
+      "missing_times_fs": [
+        0.625,
+        0.875
+      ]
+    },
+    {
+      "path_index": 3,
+      "end_fs": 1.0,
+      "spacing_fs": 0.125,
+      "missing_times_fs": [
+        0.625,
+        0.875
+      ]
+    }
+  ],
+  "scope": "Operational finite-resolution comparisons, not total error bounds. Zero paired energy difference is at the retained output precision."
+}

@@ -90,7 +90,7 @@ broader dynamical settings are future extension directions.
 
 - [Architecture and backend integration](docs/architecture.md)
 - [Energetic force errors and runtime decisions](docs/energetic_force_error.md)
-- [Standalone force-error reproducibility tools and demo](reproducibility/force_error/README.md)
+- [Force-error reproduction data, code and demonstrations](reproducibility/force_error/README.md)
 - [Changes in version 0.3.0](CHANGELOG.md)
 - `examples/energetic_*.py` — starting points for the energetic method.
 - Other examples and `experiments/` retain scheduled and conformal workflows.

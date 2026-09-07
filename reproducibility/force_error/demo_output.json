@@ -1,0 +1,43 @@
+{
+  "status": "passed",
+  "version": "1.1.0",
+  "runtime": {
+    "python": "3.12.14",
+    "implementation": "CPython",
+    "system": "Darwin",
+    "system_version": "26.6.2",
+    "architecture": "arm64",
+    "numpy": "2.3.5"
+  },
+  "controlled": {
+    "trajectory_count": 80,
+    "fixed_streak_k": 18,
+    "class_horizon": {
+      "n_reference": 2353,
+      "n_unreferenced": 29647,
+      "n_interval_violations": 0
+    },
+    "fixed_streak": {
+      "n_reference": 2031,
+      "n_unreferenced": 29969,
+      "n_interval_violations": 1849
+    }
+  },
+  "interface": {
+    "directional_residual_work_coefficient_A2_eV": 9.137521529045872,
+    "force_accuracy_horizon_fs": 0.25,
+    "time_fs": 1.0,
+    "maximum_force_error_eV_A": 0.12230184406118094,
+    "endpoint_work_eV": 0.052808734295215834,
+    "force_integral_eV": 0.0527638285524305
+  },
+  "carbon": {
+    "atom_index": 157,
+    "force_integral_eV": 0.0006441686530815945
+  },
+  "elapsed_seconds": {
+    "controlled": 0.268,
+    "interface": 0.176,
+    "total": 0.448
+  }
+}

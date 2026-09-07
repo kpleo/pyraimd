@@ -1,9 +1,9 @@
-# Standalone force-error analysis tools
+# Force-error reproducibility: data and code
 
-Version **1.0.0** applies to these standalone analysis tools. The Pyramid
+Version **1.1.0** identifies this combined data-and-code package. The Pyramid
 framework remains at **0.3.0**; installing Pyramid is not required here.
-The three analysis scripts are distributed unchanged, with a small demonstration
-runner and scalar reference results.
+The three analysis scripts are distributed unchanged, with a demonstration
+runner, expected outputs and the numerical source data in `data/`.
 
 The controlled demonstration recomputes an analytical harmonic oscillator using
 the Python standard library. The optional material demonstration reconstructs
@@ -13,10 +13,31 @@ ab-initio simulation.** These scripts do not generate material trajectories,
 train or download models, or invoke electronic-structure software. New ab-initio
 simulations require a separately configured engine, physical inputs and potential.
 
-The existing [code archive](https://doi.org/10.5281/zenodo.22537316) provides the
-software DOI. Material inputs are supplied separately as **Supplementary Data
-1** (the `force_error_data` archive). This GitHub folder contains the analysis
-software and demonstration checks.
+## Get the complete package
+
+All inputs used by the documented reconstructions are included in this folder.
+No separate data download or repository is needed. Obtain the fixed version with:
+
+```sh
+git clone --depth 1 --branch force-error-repro-v1.1.0 https://github.com/kpleo/pyraimd.git
+cd pyraimd/reproducibility/force_error
+```
+
+The [versioned directory](https://github.com/kpleo/pyraimd/tree/force-error-repro-v1.1.0/reproducibility/force_error) is the entry point for code, data and instructions.
+GitHub's **Code → Download ZIP** also provides a complete checkout.
+
+- `data/interface/`: four 474-atom paths, two probe origins, paired forces and
+  energies, all 40 future endpoints, and electronic-convergence/timestep checks.
+- `data/water/`: 302 isolated-molecule reference records and both decision series.
+- `data/tungsten/`: 24 fixed 432-atom configurations, 27 reference labels,
+  stored model predictions, and stock-model and additive-D3 comparisons.
+- [Data README](data/README.md), [metadata](data/metadata.json) and
+  [array schemas](data/schema.json): units, settings, record mapping and the
+  reconstruction supported by each collection.
+- `controlled_dynamics.py`, `directional_response.py`, `residual_work.py`:
+  analysis programs; `run_demo.py`: compact reproduction command.
+- `expected_results.json` and `demo_output.json`: reference values and an example
+  checked run. `SHA256SUMS` covers the complete folder except itself.
 
 ## Installation and requirements
 
@@ -38,21 +59,20 @@ python -m pip install -r requirements.txt
 ```
 
 On Windows, activate with `.venv\Scripts\activate`. The requirement is
-`numpy>=1.24,<3`; keep all three analysis scripts together. For the dependency
-version used in validation, install `numpy==2.5.2` with Python 3.12.13.
-Only Python 3.12.13 and NumPy 2.5.2 were checked for this demonstration.
+`numpy>=1.24,<3`; keep all three analysis scripts together. The combined-package
+example was checked with **Python 3.12.14 and NumPy 2.3.5**.
+To use that dependency version, install `numpy==2.3.5`.
 
-Installation time is **estimated at 1–3 minutes** with Python already installed,
-a compatible NumPy wheel and a typical broadband connection. This estimate was
-not measured and excludes Python installation and source-data downloads.
+Installation is estimated at 1–3 minutes with Python already installed, a compatible
+NumPy wheel and a typical broadband connection. The estimate excludes Python
+installation and checkout download.
 
-One demonstration run on 7 September 2026 used **CPython 3.12.13, NumPy 2.5.2,
-macOS 26.6.2, arm64, Apple M3 Max**. Measured elapsed time was **0.428 seconds**
-in total: 0.256 seconds for the controlled calculation and scalar validation,
-and 0.169 seconds for the optional material-array analysis and validation. These
-are timings from one run in an existing environment, including subprocess
-startup and temporary JSON I/O; they exclude installation and data download.
-Runtime varies with CPU, storage and system load.
+The example in [demo_output.json](demo_output.json) ran on
+Darwin 26.6.2 (arm64)
+in **0.448 seconds**: 0.268 seconds for the controlled
+calculation and 0.176 seconds for the material-array reconstruction.
+The timing includes subprocess startup and temporary JSON I/O; it excludes
+installation and download. Runtime varies with CPU, storage and system load.
 
 ## Demonstration and expected results
 
@@ -80,13 +100,15 @@ its held-out force errors are measured. Violations count complete unreferenced
 intervals, including interior extrema. These controlled-oscillator results do
 not establish a guarantee for a material trajectory.
 
-For the optional demonstration, download and extract the source data **outside
-the code checkout**. Replace `PATH` below with either the extracted
-`force_error_data` directory or its `interface` subdirectory:
+Run the controlled and material demonstrations together using the bundled data:
 
 ```sh
-python run_demo.py --data PATH
+python run_demo.py --data data
 ```
+
+A successful run prints `"status": "passed"`. Compare the numerical results with
+[the example output](demo_output.json); elapsed times vary between runs. To use
+a separate compatible collection, pass its directory to `--data`.
 
 The data collection contains `interface/probes_0.npz`, `probes_1.npz`,
 `motion_0.npz` through `motion_3.npz`, and `labels_0.npz` through `labels_3.npz`.
@@ -120,10 +142,11 @@ extends beyond the admitted 0.25 fs forecast horizon and is a diagnostic value.
 ## Use the individual scripts
 
 To retain full outputs, choose new output filenames for each run; the individual
-scripts refuse to overwrite existing files. Set `DATA` to your extracted
+scripts refuse to overwrite existing files. Use the bundled
 `interface` directory, then run:
 
 ```sh
+DATA=data/interface
 python controlled_dynamics.py --output results/controlled.json
 python directional_response.py estimate "$DATA/probes_1.npz" --output results/response.json
 python directional_response.py predict "$DATA/motion_2.npz" --response results/response.json --direction 0 --budget 0.25 --floor 0.00025 --time-cap 1 --transverse-cap 0.1 --output results/predictions.json
@@ -175,7 +198,18 @@ be observed. Refused forces cannot be marked checked. Checks must be drawn
 independently after the accepted force is fixed, with the check probability and
 positive tilt chosen in advance. A CSV alone cannot establish that independence.
 
-## License
+## Integrity and license
+
+Before creating local outputs, verify all delivered files:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+```
+
 
 These tools use the repository's [MIT License](LICENSE), copied without changes:
 Copyright (c) 2026 Kang Peng.
+
+The original code and data deposits remain recorded in `data/metadata.json` as
+archival identifiers. The files and commands above are all available in this
+GitHub checkout. The dataset metadata does not specify a separate data license.

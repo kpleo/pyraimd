@@ -1,0 +1,1558 @@
+{
+  "interface/labels_0.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/labels_1.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/labels_2.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          13
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          13,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          13,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          13
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          13
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          13
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          13,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/labels_3.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/motion_0.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          33,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/motion_1.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          33,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/motion_2.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          33,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/motion_3.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          33,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/probes_0.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "origin_positions_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "origin_base_forces_eV_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "origin_reference_forces_eV_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "unit_directions": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "probe_steps_A": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "plus_displacements_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "plus_base_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "plus_reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_displacements_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_base_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/probes_1.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "origin_positions_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "origin_base_forces_eV_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "origin_reference_forces_eV_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "unit_directions": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "probe_steps_A": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "plus_displacements_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "plus_base_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "plus_reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_displacements_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_base_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/metadata/system.npz": {
+    "role": "Fixed atom order, chemical identity, cell and masses; identity permutation to reference force rows.",
+    "arrays": {
+      "atom_index": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "atomic_numbers": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "masses_u": {
+        "shape": [
+          474
+        ],
+        "dtype": "float64"
+      },
+      "cell_A": {
+        "shape": [
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "pbc": {
+        "shape": [
+          3
+        ],
+        "dtype": "bool"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "reference_atom_index": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/metadata/initial_states.npz": {
+    "role": "Stored initial coordinates and momenta; velocities converted from ASE time to angstrom/fs.",
+    "arrays": {
+      "path_index": {
+        "shape": [
+          4
+        ],
+        "dtype": "int64"
+      },
+      "probe_archive_index": {
+        "shape": [
+          4
+        ],
+        "dtype": "int64"
+      },
+      "direction_index": {
+        "shape": [
+          4
+        ],
+        "dtype": "int64"
+      },
+      "initial_positions_A": {
+        "shape": [
+          4,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "initial_velocities_A_fs": {
+        "shape": [
+          4,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "initial_kinetic_energy_eV": {
+        "shape": [
+          4
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/dynamics_energy_0.npz": {
+    "role": "Stored energy series at both timesteps plus derived fixed-c displacement projections; no reference labels implied at intermediate times.",
+    "arrays": {
+      "primary_time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_base_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_kinetic_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_correction_projection_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "half_step_time_fs": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_base_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_kinetic_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_correction_projection_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/dynamics_energy_1.npz": {
+    "role": "Stored energy series at both timesteps plus derived fixed-c displacement projections; no reference labels implied at intermediate times.",
+    "arrays": {
+      "primary_time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_base_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_kinetic_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_correction_projection_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "half_step_time_fs": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_base_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_kinetic_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_correction_projection_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/dynamics_energy_2.npz": {
+    "role": "Stored energy series at both timesteps plus derived fixed-c displacement projections; no reference labels implied at intermediate times.",
+    "arrays": {
+      "primary_time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_base_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_kinetic_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_correction_projection_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "half_step_time_fs": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_base_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_kinetic_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_correction_projection_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/dynamics_energy_3.npz": {
+    "role": "Stored energy series at both timesteps plus derived fixed-c displacement projections; no reference labels implied at intermediate times.",
+    "arrays": {
+      "primary_time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_base_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_kinetic_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_correction_projection_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "half_step_time_fs": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_base_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_kinetic_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_correction_projection_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/timestep_energy_summary.csv": {
+    "role": "Recalculated fixed-c Hamiltonian drift from the supplied scalar energy series.",
+    "rows": 4,
+    "columns": [
+      "path_index",
+      "primary_step_fs",
+      "half_step_fs",
+      "primary_states",
+      "half_step_states",
+      "maximum_primary_drift_eV",
+      "maximum_half_step_drift_at_primary_times_eV",
+      "half_to_primary_drift_ratio"
+    ]
+  },
+  "interface/checks/reference_checks.npz": {
+    "role": "Six stored extra reference calculations with corresponding coordinates and base quantities; kinds 0 origin SCF, 1 endpoint SCF, 2 quadrature, 3 half-timestep endpoint.",
+    "arrays": {
+      "check_index": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64"
+      },
+      "path_index": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64"
+      },
+      "kind_code": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64"
+      },
+      "time_fs": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "integration_step_fs": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "conv_thr_Ry": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "estimated_scf_accuracy_Ry": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          6,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          6,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          6,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/scf_tightened_2.npz": {
+    "role": "Two paired states for the residual-work CLI; integration and convergence scope defined in README.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/checks/half_step_labels_2.npz": {
+    "role": "Two paired states for the residual-work CLI; integration and convergence scope defined in README.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/checks/half_step_labels_0.npz": {
+    "role": "Two paired states for the residual-work CLI; integration and convergence scope defined in README.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/derived/endpoints.csv": {
+    "role": "All 40 future endpoints recalculated from the supplied inputs; no selection by sign, admission or domain.",
+    "rows": 40,
+    "columns": [
+      "path_index",
+      "time_fs",
+      "in_domain",
+      "admitted",
+      "maximum_force_error_eV_A",
+      "endpoint_work_eV",
+      "predicted_work_eV",
+      "envelope_eV_A",
+      "anchored_hamiltonian_drift_eV",
+      "reference_hamiltonian_change_eV"
+    ]
+  },
+  "interface/derived/quadrature.npz": {
+    "role": "All 29 complete signed atomic quadratures recalculated on the specified grids; incomplete grids are listed separately.",
+    "arrays": {
+      "path_index": {
+        "shape": [
+          29
+        ],
+        "dtype": "int64"
+      },
+      "end_fs": {
+        "shape": [
+          29
+        ],
+        "dtype": "float64"
+      },
+      "spacing_fs": {
+        "shape": [
+          29
+        ],
+        "dtype": "float64"
+      },
+      "force_integral_eV": {
+        "shape": [
+          29
+        ],
+        "dtype": "float64"
+      },
+      "endpoint_work_eV": {
+        "shape": [
+          29
+        ],
+        "dtype": "float64"
+      },
+      "atomic_force_integral_eV": {
+        "shape": [
+          29,
+          474
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "water/reference_frames.npz": {
+    "role": "All stored single-molecule coordinates, momenta and reference quantities; time reconstructed from the recorded collection callback convention, including duplicate initial records 0 and 1.",
+    "arrays": {
+      "record_index": {
+        "shape": [
+          302
+        ],
+        "dtype": "int64"
+      },
+      "integration_step": {
+        "shape": [
+          302
+        ],
+        "dtype": "int64"
+      },
+      "time_fs": {
+        "shape": [
+          302
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          302,
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "atomic_numbers": {
+        "shape": [
+          3
+        ],
+        "dtype": "int64"
+      },
+      "masses_u": {
+        "shape": [
+          3
+        ],
+        "dtype": "float64"
+      },
+      "cell_A": {
+        "shape": [
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "pbc": {
+        "shape": [
+          3
+        ],
+        "dtype": "bool"
+      },
+      "atom_index": {
+        "shape": [
+          3
+        ],
+        "dtype": "int64"
+      },
+      "velocities_A_fs": {
+        "shape": [
+          302,
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          302
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          302,
+          3,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "water/decisions_conformal.csv": {
+    "role": "Stored decision-time scalar quantities with explicit nonfinite state codes; no vector forces inferred from scalar errors.",
+    "rows": 302,
+    "columns": [
+      "record_index",
+      "accepted",
+      "force_error_eV_A",
+      "spread_eV_A",
+      "accepted_violation",
+      "updated_after_record",
+      "qhat",
+      "qhat_state",
+      "bound_eV_A",
+      "bound_eV_A_state"
+    ]
+  },
+  "water/decisions_scheduled.csv": {
+    "role": "Stored decision-time scalar quantities with explicit nonfinite state codes; no vector forces inferred from scalar errors.",
+    "rows": 302,
+    "columns": [
+      "record_index",
+      "accepted",
+      "force_error_eV_A",
+      "spread_eV_A",
+      "accepted_violation",
+      "updated_after_record",
+      "qhat",
+      "qhat_state",
+      "bound_eV_A",
+      "bound_eV_A_state"
+    ]
+  },
+  "tungsten/geometries.npz": {
+    "role": "All 24 fixed-comparison geometries; segments are distinct paths, not a single chronological trajectory.",
+    "arrays": {
+      "geometry_index": {
+        "shape": [
+          24
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          24,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "cell_A": {
+        "shape": [
+          24,
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "atomic_numbers": {
+        "shape": [
+          24,
+          432
+        ],
+        "dtype": "int64"
+      },
+      "pbc": {
+        "shape": [
+          24,
+          3
+        ],
+        "dtype": "bool"
+      },
+      "atom_index": {
+        "shape": [
+          432
+        ],
+        "dtype": "int64"
+      },
+      "core_mask": {
+        "shape": [
+          432
+        ],
+        "dtype": "bool"
+      },
+      "representative_record_index": {
+        "shape": [
+          24
+        ],
+        "dtype": "int64"
+      },
+      "time_fs": {
+        "shape": [
+          24
+        ],
+        "dtype": "float64"
+      },
+      "segment_code": {
+        "shape": [
+          24
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "tungsten/reference_labels.npz": {
+    "role": "All 27 stored labels including four distinct evaluations of the shared initial geometry; no averaging.",
+    "arrays": {
+      "record_index": {
+        "shape": [
+          27
+        ],
+        "dtype": "int64"
+      },
+      "geometry_index": {
+        "shape": [
+          27
+        ],
+        "dtype": "int64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          27,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          27
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "tungsten/base_predictions.npz": {
+    "role": "Stored frozen two-member numerical predictions, including the perturbed second member; no weights.",
+    "arrays": {
+      "geometry_index": {
+        "shape": [
+          24
+        ],
+        "dtype": "int64"
+      },
+      "member_forces_eV_A": {
+        "shape": [
+          24,
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "member_energy_eV": {
+        "shape": [
+          24,
+          2
+        ],
+        "dtype": "float64"
+      },
+      "mean_forces_eV_A": {
+        "shape": [
+          24,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "mean_energy_eV": {
+        "shape": [
+          24
+        ],
+        "dtype": "float64"
+      },
+      "spread_eV_A": {
+        "shape": [
+          24,
+          432
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "tungsten/stock_pair.npz": {
+    "role": "Unperturbed MP0b3 and MPA0 stored force/energy predictions at the two fixed geometries.",
+    "arrays": {
+      "geometry_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64"
+      },
+      "member_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "member_energy_eV": {
+        "shape": [
+          2,
+          2
+        ],
+        "dtype": "float64"
+      },
+      "mean_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "spread_eV_A": {
+        "shape": [
+          2,
+          432
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "tungsten/d3_pair.npz": {
+    "role": "Stored additive D3 forces and energies plus derived reference forces after D3 subtraction, not a new self-consistent reference calculation.",
+    "arrays": {
+      "geometry_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64"
+      },
+      "d3_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "d3_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_PBE_D3_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "reference_PBE_without_D3_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/metadata/probe_record_mapping.npz": {
+    "role": "Maps probe archive, local direction and scale to development reference record indices in reference_convergence.csv.",
+    "arrays": {
+      "probe_archive_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64"
+      },
+      "origin_reference_record_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64"
+      },
+      "positive_reference_record_index": {
+        "shape": [
+          2,
+          2,
+          2
+        ],
+        "dtype": "int64"
+      },
+      "negative_reference_record_index": {
+        "shape": [
+          2,
+          2,
+          2
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/metadata/reference_convergence.csv": {
+    "role": "Stored final electronic convergence estimates and printed reference energies for all 64 reference calculations; families 0 development, 1 future, 2 additional check.",
+    "rows": 64,
+    "columns": [
+      "family_code",
+      "reference_record_index",
+      "conv_thr_Ry",
+      "estimated_final_scf_accuracy_Ry",
+      "reference_energy_eV",
+      "completed"
+    ]
+  },
+  "interface/metadata/label_record_mapping.csv": {
+    "role": "Maps every labels archive row to the convergence-table reference record; origins shared across two directions remain present in each archive.",
+    "rows": 46,
+    "columns": [
+      "path_index",
+      "label_row_index",
+      "time_fs",
+      "family_code",
+      "reference_record_index"
+    ]
+  }
+}

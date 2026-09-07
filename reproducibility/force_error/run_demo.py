@@ -82,7 +82,7 @@ def material_demo(folder, data, expected):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, metavar="PATH",
-                        help="extracted force_error_data folder or its interface subfolder")
+                        help="data folder (use --data data for the bundled collection) or its interface subfolder")
     args = parser.parse_args()
     started = time.perf_counter()
     try:
@@ -98,7 +98,7 @@ def main():
                 data = data / "interface"
             for name in ("probes_1.npz", "motion_2.npz", "labels_2.npz"):
                 if not (data / name).is_file():
-                    raise ValueError(f"Missing {name}; supply the extracted data folder")
+                    raise ValueError(f"Missing {name}; supply the bundled data folder")
             runtime["numpy"] = version("numpy")
         summary = {"status": "passed", "version": (HERE / "VERSION").read_text().strip(),
                    "runtime": runtime}
