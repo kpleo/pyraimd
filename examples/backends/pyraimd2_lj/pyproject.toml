@@ -1,0 +1,23 @@
+[project]
+name = "pyraimd2-lj"
+version = "0.1.0"
+description = "Example pyraimd2 backend plugin: periodic Lennard-Jones reference and surrogate"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "ase>=3.29.0",
+    "pyraimd2",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+# Periodic classical backends for the no-external-software CI recipe
+# (examples/periodic_lj): both wrap ASE's LennardJones calculator, the
+# surrogate a few percent softer than the reference so adaptive runs have a
+# nonzero, controllable shadow error. Kind is declared on each factory.
+[project.entry-points."pyraimd2.backends"]
+lj_reference = "pyraimd2_lj:reference_factory"
+lj_surrogate = "pyraimd2_lj:surrogate_factory"

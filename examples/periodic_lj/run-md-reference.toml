@@ -1,0 +1,26 @@
+schema_version = 1
+
+[run]
+id = "lj-reference"
+directory = "runs/lj-reference"
+seed = 42
+
+[task]
+kind = "md"
+mode = "reference"
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 2.0
+steps = 8
+temperature_K = 40.0
+velocity_seed = 7
+
+[reference]
+backend = "lj_reference"
+
+[checkpoint]
+interval_steps = 4

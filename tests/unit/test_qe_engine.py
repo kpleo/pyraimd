@@ -80,6 +80,27 @@ def test_write_input_metallic_smearing(tmp_path: Path) -> None:
     assert "2 2 1 0 0 0" in text
 
 
+def test_write_input_pseudo_inside_pseudo_dir_uses_basename(tmp_path: Path) -> None:
+    """A pseudopotential living inside pseudo_dir must be named by basename:
+    QE parses ATOMIC_SPECIES lines with a limited buffer, and a long
+    absolute path silently truncates into an unreadable filename."""
+    pseudo_dir = tmp_path / "deep" / "nested" / "pseudo" / "library" / "dir"
+    pseudo_dir.mkdir(parents=True)
+    pseudo = pseudo_dir / "Si.pbe-n-kjpaw_psl.1.0.0.UPF"
+    pseudo.write_text("UPF")
+    cfg = QeConfig(pseudo_dir=str(pseudo_dir),
+                   pseudos={"H": str(pseudo), "O": str(pseudo)})
+    out = tmp_path / "pw.in"
+    write_qe_input(out, _water_box(), cfg)
+    lines = out.read_text().splitlines()
+    species_lines = lines[lines.index("ATOMIC_SPECIES") + 1:
+                          lines.index("CELL_PARAMETERS angstrom")]
+    for line in species_lines:
+        assert len(line) <= 80, line
+        assert line.endswith("Si.pbe-n-kjpaw_psl.1.0.0.UPF"), line
+        assert str(pseudo_dir) not in line
+
+
 def _fake_pwx(tmp_path: Path, body: str) -> tuple[str, ...]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     script = tmp_path / "fake_pwx.sh"
@@ -110,6 +131,29 @@ def test_compute_engine_error_on_failure(tmp_path: Path) -> None:
     )
     with pytest.raises(EngineError, match="exited with code 3"):
         engine.compute(_water_box(), label="boom")
+
+
+def test_compute_directory_counter_continues_across_processes(tmp_path: Path) -> None:
+    """A fresh engine on an existing run root (resume) continues directory
+    numbering instead of colliding with earlier attempts."""
+    body = f"#!/bin/bash\ncat {FIXTURE.resolve()}\n"
+    first = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+        run_root=tmp_path / "runs",
+    )
+    si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]], cell=[5.43] * 3,
+               pbc=True)
+    first.compute(si)
+    assert (tmp_path / "runs" / "eval-000000").exists()
+    second = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+        run_root=tmp_path / "runs",
+    )
+    second.compute(si)
+    assert (tmp_path / "runs" / "eval-000001" / "attempt-1" / "pw.in").exists()
+    # Labels do not reset the global numbering either.
+    second.compute(si, label="chain")
+    assert (tmp_path / "runs" / "chain-000002" / "attempt-1" / "pw.in").exists()
 
 
 def test_compute_engine_error_on_nonconvergence(tmp_path: Path) -> None:
@@ -219,7 +263,8 @@ def test_density_start_fallback_keeps_failed_attempt(tmp_path: Path) -> None:
     result = failing.compute(si, label="chain")
     assert result.energy == pytest.approx(SI_ENERGY_RY * units.Hartree / 2.0,
                                           abs=1e-6)
-    run_dir = tmp_path / "runs" / "chain-000000"
+    # A second engine on the same run root continues the global numbering.
+    run_dir = tmp_path / "runs" / "chain-000001"
     attempt_1 = (run_dir / "attempt-1" / "pw.in").read_text()
     attempt_2 = (run_dir / "attempt-2" / "pw.in").read_text()
     assert "startingpot = 'file'" in attempt_1

@@ -1,0 +1,27 @@
+schema_version = 1
+
+[run]
+id = "lj-surrogate"
+directory = "runs/lj-surrogate"
+seed = 42
+
+[task]
+kind = "md"
+mode = "surrogate"
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 2.0
+steps = 8
+temperature_K = 40.0
+velocity_seed = 7
+
+[surrogate]
+backend = "lj_surrogate"
+softening = 0.95
+
+[checkpoint]
+interval_steps = 4

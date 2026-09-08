@@ -245,9 +245,20 @@ def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
         lines.append("  startingpot = 'file'\n")
     lines.append(f"  electron_maxstep = {cfg.electron_maxstep}\n/\n")
     lines.append("ATOMIC_SPECIES\n")
+    pseudo_dir = Path(cfg.pseudo_dir).resolve()
     for sym in species:
         mass = atomic_masses[chemical_symbols.index(sym)]
-        lines.append(f"  {sym} {mass:.4f} {cfg.pseudos[sym]}\n")
+        # Pseudopotentials inside pseudo_dir are named by basename: QE parses
+        # ATOMIC_SPECIES lines with a limited buffer, and a long absolute
+        # path silently truncates into an unreadable pseudo filename.
+        pseudo_path = Path(cfg.pseudos[sym])
+        try:
+            filename = (str(pseudo_path.name)
+                        if pseudo_path.parent.resolve() == pseudo_dir
+                        else str(pseudo_path))
+        except OSError:
+            filename = str(pseudo_path)
+        lines.append(f"  {sym} {mass:.4f} {filename}\n")
     lines.append("CELL_PARAMETERS angstrom\n")
     for row in atoms.cell:
         lines.append(f"  {row[0]:.10f} {row[1]:.10f} {row[2]:.10f}\n")
@@ -454,7 +465,6 @@ class QeEngine:
         self.config = config
         self.run_root = Path(run_root)
         self.run_root.mkdir(parents=True, exist_ok=True)
-        self._call_counter = 0
         self._event_log = event_log
         self._last_density_dir: Path | None = None
         self._io_counter = 0
@@ -483,10 +493,22 @@ class QeEngine:
         digest = _settings_digest(self.config, path_kind="qe-subprocess")
         return f"{self.name}:{digest}"
 
+    def _next_call_index(self) -> int:
+        """Next free ``*-NNNNNN`` index on this run root: a fresh process
+        (resume, a second workflow call) continues the global numbering
+        instead of colliding with earlier attempts sharing the run root."""
+        suffixes = []
+        for path in self.run_root.iterdir():
+            if not path.is_dir():
+                continue
+            head, _, tail = path.name.rpartition("-")
+            if head and tail.isdigit():
+                suffixes.append(int(tail))
+        return max(suffixes, default=-1) + 1
+
     def compute(self, atoms: Atoms, label: str | None = None) -> EngineResult:
         base = "eval" if label is None else str(label).replace("/", "_")
-        run_dir = self.run_root / f"{base}-{self._call_counter:06d}"
-        self._call_counter += 1
+        run_dir = self.run_root / f"{base}-{self._next_call_index():06d}"
         self.last_attempt_records = []
 
         density: DensitySource | None = None
