@@ -1,0 +1,141 @@
+{
+  "route_codes": {
+    "0": "forced_reference",
+    "1": "initial_reference",
+    "2": "random_reference",
+    "3": "unreferenced"
+  },
+  "oscillator_config": {
+    "protocol_version": 1,
+    "status": "fixed_before_first_execution",
+    "dt": 0.01,
+    "n_steps": 2000,
+    "mass": 1.0,
+    "approximate_stiffness": 1.0,
+    "force_tolerance": 0.05,
+    "bias_correction_fraction": 0.8,
+    "class_stiffness_mismatch_bound": 0.2,
+    "random_reference_probability": 0.02,
+    "empirical_calibration_stiffness": 1.1,
+    "empirical_calibration_positions": [
+      -1.0,
+      1.0
+    ],
+    "fixed_streak_candidates": [
+      1,
+      200
+    ],
+    "comparable_label_cost_relative_tolerance": 0.2,
+    "minimum_relative_violation_reduction": 0.5,
+    "minimum_unreferenced_fraction": 0.5,
+    "floating_point_tolerance": 1e-12,
+    "random_seed_offset": 10000000,
+    "calibration": {
+      "stiffness": 1.1,
+      "seeds": [
+        2026090500,
+        2026090501,
+        2026090502,
+        2026090503,
+        2026090504,
+        2026090505,
+        2026090506,
+        2026090507
+      ],
+      "amplitudes": [
+        0.6,
+        0.8,
+        1.2,
+        1.6,
+        0.6,
+        0.8,
+        1.2,
+        1.6
+      ]
+    },
+    "heldout": {
+      "stiffness": 1.18,
+      "seeds": [
+        2026090600,
+        2026090601,
+        2026090602,
+        2026090603,
+        2026090604,
+        2026090605,
+        2026090606,
+        2026090607,
+        2026090608,
+        2026090609,
+        2026090610,
+        2026090611,
+        2026090612,
+        2026090613,
+        2026090614,
+        2026090615
+      ],
+      "amplitudes": [
+        0.65,
+        0.9,
+        1.25,
+        1.55,
+        0.65,
+        0.9,
+        1.25,
+        1.55,
+        0.65,
+        0.9,
+        1.25,
+        1.55,
+        0.65,
+        0.9,
+        1.25,
+        1.55
+      ]
+    },
+    "outside_class": {
+      "stiffness": 1.4,
+      "seeds": [
+        2026090700,
+        2026090701,
+        2026090702,
+        2026090703,
+        2026090704,
+        2026090705,
+        2026090706,
+        2026090707
+      ],
+      "amplitudes": [
+        0.65,
+        0.9,
+        1.25,
+        1.55,
+        0.65,
+        0.9,
+        1.25,
+        1.55
+      ]
+    }
+  },
+  "cost_accounting": {
+    "shared_development_reference_calls": 1015,
+    "heldout_reference_calls_plus_shared_development": {
+      "class_horizon": 3368,
+      "empirical_horizon": 2522,
+      "fixed_streak": 3046
+    },
+    "total_actual_controller_and_calibration_reference_calls_all_runs": 10520,
+    "total_measurement_only_force_calls_all_runs": 480569,
+    "measurement_only_exact_reference_trajectory_points": 160000,
+    "note": "Measurement work is excluded only from the simulated label budget, never from wall time."
+  },
+  "statistical_parameters": {
+    "p": 0.1,
+    "lambda": 0.6931471805599453,
+    "eta": 0.05,
+    "replicates": 20000,
+    "steps_per_replicate": 1024,
+    "seed_entropy": 20260905
+  },
+  "units": "Reduced oscillator units: mass=1, surrogate stiffness=1; dimensionless statistical counts and probabilities.",
+  "scope": "Saved interval, segment and replicate outcomes; the new checker performs arithmetic only."
+}

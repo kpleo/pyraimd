@@ -1,0 +1,3167 @@
+{
+  "interface/labels_0.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/labels_1.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/labels_2.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          13
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          13,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          13,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          13
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          13
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          13
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          13,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/labels_3.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          11
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          11,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/motion_0.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          33,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/motion_1.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          33,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/motion_2.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          33,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/motion_3.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          33,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/probes_0.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "origin_positions_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "origin_base_forces_eV_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "origin_reference_forces_eV_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "unit_directions": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "probe_steps_A": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "plus_displacements_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "plus_base_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "plus_reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_displacements_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_base_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/probes_1.npz": {
+    "role": "Lossless numeric repack of stored coordinates and paired force/energy records.",
+    "arrays": {
+      "origin_positions_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "origin_base_forces_eV_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "origin_reference_forces_eV_A": {
+        "shape": [
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "unit_directions": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "probe_steps_A": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "plus_displacements_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "plus_base_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "plus_reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_displacements_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_base_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "minus_reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/metadata/system.npz": {
+    "role": "Fixed atom order, chemical identity, cell and masses; identity permutation to reference force rows.",
+    "arrays": {
+      "atom_index": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "atomic_numbers": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "masses_u": {
+        "shape": [
+          474
+        ],
+        "dtype": "float64"
+      },
+      "cell_A": {
+        "shape": [
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "pbc": {
+        "shape": [
+          3
+        ],
+        "dtype": "bool"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      },
+      "reference_atom_index": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/metadata/initial_states.npz": {
+    "role": "Stored initial coordinates and momenta; velocities converted from ASE time to angstrom/fs.",
+    "arrays": {
+      "path_index": {
+        "shape": [
+          4
+        ],
+        "dtype": "int64"
+      },
+      "probe_archive_index": {
+        "shape": [
+          4
+        ],
+        "dtype": "int64"
+      },
+      "direction_index": {
+        "shape": [
+          4
+        ],
+        "dtype": "int64"
+      },
+      "initial_positions_A": {
+        "shape": [
+          4,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "initial_velocities_A_fs": {
+        "shape": [
+          4,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "initial_kinetic_energy_eV": {
+        "shape": [
+          4
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/dynamics_energy_0.npz": {
+    "role": "Stored energy series at both timesteps plus derived fixed-c displacement projections; no reference labels implied at intermediate times.",
+    "arrays": {
+      "primary_time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_base_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_kinetic_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_correction_projection_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "half_step_time_fs": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_base_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_kinetic_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_correction_projection_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/dynamics_energy_1.npz": {
+    "role": "Stored energy series at both timesteps plus derived fixed-c displacement projections; no reference labels implied at intermediate times.",
+    "arrays": {
+      "primary_time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_base_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_kinetic_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_correction_projection_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "half_step_time_fs": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_base_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_kinetic_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_correction_projection_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/dynamics_energy_2.npz": {
+    "role": "Stored energy series at both timesteps plus derived fixed-c displacement projections; no reference labels implied at intermediate times.",
+    "arrays": {
+      "primary_time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_base_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_kinetic_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_correction_projection_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "half_step_time_fs": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_base_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_kinetic_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_correction_projection_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/dynamics_energy_3.npz": {
+    "role": "Stored energy series at both timesteps plus derived fixed-c displacement projections; no reference labels implied at intermediate times.",
+    "arrays": {
+      "primary_time_fs": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_base_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_kinetic_energy_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "primary_correction_projection_eV": {
+        "shape": [
+          33
+        ],
+        "dtype": "float64"
+      },
+      "half_step_time_fs": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_base_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_kinetic_energy_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      },
+      "half_step_correction_projection_eV": {
+        "shape": [
+          65
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/timestep_energy_summary.csv": {
+    "role": "Recalculated fixed-c Hamiltonian drift from the supplied scalar energy series.",
+    "rows": 4,
+    "columns": [
+      "path_index",
+      "primary_step_fs",
+      "half_step_fs",
+      "primary_states",
+      "half_step_states",
+      "maximum_primary_drift_eV",
+      "maximum_half_step_drift_at_primary_times_eV",
+      "half_to_primary_drift_ratio"
+    ]
+  },
+  "interface/checks/reference_checks.npz": {
+    "role": "Six stored extra reference calculations with corresponding coordinates and base quantities; kinds 0 origin SCF, 1 endpoint SCF, 2 quadrature, 3 half-timestep endpoint.",
+    "arrays": {
+      "check_index": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64"
+      },
+      "path_index": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64"
+      },
+      "kind_code": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64"
+      },
+      "time_fs": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "integration_step_fs": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "conv_thr_Ry": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "estimated_scf_accuracy_Ry": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          6,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          6,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          6,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/checks/scf_tightened_2.npz": {
+    "role": "Two paired states for the residual-work CLI; integration and convergence scope defined in README.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/checks/half_step_labels_2.npz": {
+    "role": "Two paired states for the residual-work CLI; integration and convergence scope defined in README.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/checks/half_step_labels_0.npz": {
+    "role": "Two paired states for the residual-work CLI; integration and convergence scope defined in README.",
+    "arrays": {
+      "time_fs": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "base_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          474,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "group_ids": {
+        "shape": [
+          474
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/derived/endpoints.csv": {
+    "role": "All 40 future endpoints recalculated from the supplied inputs; no selection by sign, admission or domain.",
+    "rows": 40,
+    "columns": [
+      "path_index",
+      "time_fs",
+      "in_domain",
+      "admitted",
+      "maximum_force_error_eV_A",
+      "endpoint_work_eV",
+      "predicted_work_eV",
+      "envelope_eV_A",
+      "anchored_hamiltonian_drift_eV",
+      "reference_hamiltonian_change_eV"
+    ]
+  },
+  "interface/derived/quadrature.npz": {
+    "role": "All 29 complete signed atomic quadratures recalculated on the specified grids; incomplete grids are listed separately.",
+    "arrays": {
+      "path_index": {
+        "shape": [
+          29
+        ],
+        "dtype": "int64"
+      },
+      "end_fs": {
+        "shape": [
+          29
+        ],
+        "dtype": "float64"
+      },
+      "spacing_fs": {
+        "shape": [
+          29
+        ],
+        "dtype": "float64"
+      },
+      "force_integral_eV": {
+        "shape": [
+          29
+        ],
+        "dtype": "float64"
+      },
+      "endpoint_work_eV": {
+        "shape": [
+          29
+        ],
+        "dtype": "float64"
+      },
+      "atomic_force_integral_eV": {
+        "shape": [
+          29,
+          474
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "water/reference_frames.npz": {
+    "role": "All stored single-molecule coordinates, momenta and reference quantities; time reconstructed from the recorded collection callback convention, including duplicate initial records 0 and 1.",
+    "arrays": {
+      "record_index": {
+        "shape": [
+          302
+        ],
+        "dtype": "int64"
+      },
+      "integration_step": {
+        "shape": [
+          302
+        ],
+        "dtype": "int64"
+      },
+      "time_fs": {
+        "shape": [
+          302
+        ],
+        "dtype": "float64"
+      },
+      "positions_A": {
+        "shape": [
+          302,
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "atomic_numbers": {
+        "shape": [
+          3
+        ],
+        "dtype": "int64"
+      },
+      "masses_u": {
+        "shape": [
+          3
+        ],
+        "dtype": "float64"
+      },
+      "cell_A": {
+        "shape": [
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "pbc": {
+        "shape": [
+          3
+        ],
+        "dtype": "bool"
+      },
+      "atom_index": {
+        "shape": [
+          3
+        ],
+        "dtype": "int64"
+      },
+      "velocities_A_fs": {
+        "shape": [
+          302,
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          302
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          302,
+          3,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "water/decisions_conformal.csv": {
+    "role": "Stored decision-time scalar quantities with explicit nonfinite state codes; no vector forces inferred from scalar errors.",
+    "rows": 302,
+    "columns": [
+      "record_index",
+      "accepted",
+      "force_error_eV_A",
+      "spread_eV_A",
+      "accepted_violation",
+      "updated_after_record",
+      "qhat",
+      "qhat_state",
+      "bound_eV_A",
+      "bound_eV_A_state"
+    ]
+  },
+  "water/decisions_scheduled.csv": {
+    "role": "Stored decision-time scalar quantities with explicit nonfinite state codes; no vector forces inferred from scalar errors.",
+    "rows": 302,
+    "columns": [
+      "record_index",
+      "accepted",
+      "force_error_eV_A",
+      "spread_eV_A",
+      "accepted_violation",
+      "updated_after_record",
+      "qhat",
+      "qhat_state",
+      "bound_eV_A",
+      "bound_eV_A_state"
+    ]
+  },
+  "tungsten/geometries.npz": {
+    "role": "All 24 fixed-comparison geometries; segments are distinct paths, not a single chronological trajectory.",
+    "arrays": {
+      "geometry_index": {
+        "shape": [
+          24
+        ],
+        "dtype": "int64"
+      },
+      "positions_A": {
+        "shape": [
+          24,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "cell_A": {
+        "shape": [
+          24,
+          3,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "atomic_numbers": {
+        "shape": [
+          24,
+          432
+        ],
+        "dtype": "int64"
+      },
+      "pbc": {
+        "shape": [
+          24,
+          3
+        ],
+        "dtype": "bool"
+      },
+      "atom_index": {
+        "shape": [
+          432
+        ],
+        "dtype": "int64"
+      },
+      "core_mask": {
+        "shape": [
+          432
+        ],
+        "dtype": "bool"
+      },
+      "representative_record_index": {
+        "shape": [
+          24
+        ],
+        "dtype": "int64"
+      },
+      "time_fs": {
+        "shape": [
+          24
+        ],
+        "dtype": "float64"
+      },
+      "segment_code": {
+        "shape": [
+          24
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "tungsten/reference_labels.npz": {
+    "role": "All 27 stored labels including four distinct evaluations of the shared initial geometry; no averaging.",
+    "arrays": {
+      "record_index": {
+        "shape": [
+          27
+        ],
+        "dtype": "int64"
+      },
+      "geometry_index": {
+        "shape": [
+          27
+        ],
+        "dtype": "int64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          27,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          27
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "tungsten/base_predictions.npz": {
+    "role": "Stored frozen two-member numerical predictions, including the perturbed second member; no weights.",
+    "arrays": {
+      "geometry_index": {
+        "shape": [
+          24
+        ],
+        "dtype": "int64"
+      },
+      "member_forces_eV_A": {
+        "shape": [
+          24,
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "member_energy_eV": {
+        "shape": [
+          24,
+          2
+        ],
+        "dtype": "float64"
+      },
+      "mean_forces_eV_A": {
+        "shape": [
+          24,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "mean_energy_eV": {
+        "shape": [
+          24
+        ],
+        "dtype": "float64"
+      },
+      "spread_eV_A": {
+        "shape": [
+          24,
+          432
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "tungsten/stock_pair.npz": {
+    "role": "Unperturbed MP0b3 and MPA0 stored force/energy predictions at the two fixed geometries.",
+    "arrays": {
+      "geometry_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64"
+      },
+      "member_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "member_energy_eV": {
+        "shape": [
+          2,
+          2
+        ],
+        "dtype": "float64"
+      },
+      "mean_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "spread_eV_A": {
+        "shape": [
+          2,
+          432
+        ],
+        "dtype": "float64"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "tungsten/d3_pair.npz": {
+    "role": "Stored additive D3 forces and energies plus derived reference forces after D3 subtraction, not a new self-consistent reference calculation.",
+    "arrays": {
+      "geometry_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64"
+      },
+      "d3_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "d3_energy_eV": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64"
+      },
+      "reference_PBE_D3_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      },
+      "reference_PBE_without_D3_forces_eV_A": {
+        "shape": [
+          2,
+          432,
+          3
+        ],
+        "dtype": "float64"
+      }
+    }
+  },
+  "interface/metadata/probe_record_mapping.npz": {
+    "role": "Maps probe archive, local direction and scale to development reference record indices in reference_convergence.csv.",
+    "arrays": {
+      "probe_archive_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64"
+      },
+      "origin_reference_record_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64"
+      },
+      "positive_reference_record_index": {
+        "shape": [
+          2,
+          2,
+          2
+        ],
+        "dtype": "int64"
+      },
+      "negative_reference_record_index": {
+        "shape": [
+          2,
+          2,
+          2
+        ],
+        "dtype": "int64"
+      }
+    }
+  },
+  "interface/metadata/reference_convergence.csv": {
+    "role": "Stored final electronic convergence estimates and printed reference energies for all 64 reference calculations; families 0 development, 1 future, 2 additional check.",
+    "rows": 64,
+    "columns": [
+      "family_code",
+      "reference_record_index",
+      "conv_thr_Ry",
+      "estimated_final_scf_accuracy_Ry",
+      "reference_energy_eV",
+      "completed"
+    ]
+  },
+  "interface/metadata/label_record_mapping.csv": {
+    "role": "Maps every labels archive row to the convergence-table reference record; origins shared across two directions remain present in each archive.",
+    "rows": 46,
+    "columns": [
+      "path_index",
+      "label_row_index",
+      "time_fs",
+      "family_code",
+      "reference_record_index"
+    ]
+  },
+  "water_velocity/trajectories.npz": {
+    "role": "Six retained frozen-model velocity paths; axes path,time,atom,Cartesian component. Velocities are converted from retained full-step momenta; no model evaluation.",
+    "arrays": {
+      "path_index": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "seed": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "initial_record_index": {
+        "shape": [
+          6
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "velocity_factor": {
+        "shape": [
+          6
+        ],
+        "dtype": "float64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "time_fs": {
+        "shape": [
+          20
+        ],
+        "dtype": "float64",
+        "units": "fs"
+      },
+      "atomic_numbers": {
+        "shape": [
+          3
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "masses_u": {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "units": "atomic mass unit"
+      },
+      "positions_A": {
+        "shape": [
+          6,
+          20,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "angstrom"
+      },
+      "momenta_sqrt_u_eV": {
+        "shape": [
+          6,
+          20,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "sqrt(atomic_mass_unit * eV)"
+      },
+      "surrogate_forces_eV_A": {
+        "shape": [
+          6,
+          20,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          6,
+          20,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "recorded_force_error_eV_A": {
+        "shape": [
+          6,
+          20
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "velocities_A_fs": {
+        "shape": [
+          6,
+          20,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "angstrom/fs"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          6,
+          20
+        ],
+        "dtype": "float64",
+        "units": "eV"
+      }
+    }
+  },
+  "water_velocity/motion_cases.csv": {
+    "role": "Retained numerical source values for the six velocity interventions; empty CSV entries denote undefined/censored quantities.",
+    "rows": 6,
+    "columns": [
+      "seed",
+      "anchor",
+      "factor",
+      "initial_error_ev_A",
+      "horizon_fs",
+      "first_observed_crossing_fs",
+      "right_censored",
+      "observation_end_fs",
+      "max_error_ev_A",
+      "exceeding_force_points",
+      "initial_speed_full_norm_A_fs",
+      "kappa_ev_A2",
+      "max_observed_vector_secant_ev_A2",
+      "max_observed_secant_over_kappa",
+      "max_anchor_change_over_kappa_path",
+      "empirical_bound_exceedances",
+      "max_position_identity_error_A",
+      "max_momentum_identity_error_ASE"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "anchor": "dimensionless, index, count, flag or category; see role and data README",
+      "factor": "dimensionless, index, count, flag or category; see role and data README",
+      "initial_error_ev_A": "eV/angstrom",
+      "horizon_fs": "fs",
+      "first_observed_crossing_fs": "fs",
+      "right_censored": "dimensionless, index, count, flag or category; see role and data README",
+      "observation_end_fs": "fs",
+      "max_error_ev_A": "eV/angstrom",
+      "exceeding_force_points": "dimensionless, index, count, flag or category; see role and data README",
+      "initial_speed_full_norm_A_fs": "angstrom/fs",
+      "kappa_ev_A2": "eV/angstrom^2",
+      "max_observed_vector_secant_ev_A2": "eV/angstrom^2",
+      "max_observed_secant_over_kappa": "dimensionless, index, count, flag or category; see role and data README",
+      "max_anchor_change_over_kappa_path": "dimensionless, index, count, flag or category; see role and data README",
+      "empirical_bound_exceedances": "dimensionless, index, count, flag or category; see role and data README",
+      "max_position_identity_error_A": "angstrom",
+      "max_momentum_identity_error_ASE": "sqrt(atomic_mass_unit * eV)"
+    }
+  },
+  "water_velocity/motion_points.csv": {
+    "role": "Retained numerical source values for the six velocity interventions; empty CSV entries denote undefined/censored quantities.",
+    "rows": 120,
+    "columns": [
+      "seed",
+      "anchor",
+      "factor",
+      "step",
+      "time_fs",
+      "error_ev_A",
+      "path_length_A",
+      "residual_change_from_anchor_ev_A",
+      "measured_vector_secant_ev_A2",
+      "empirical_kappa_ev_A2",
+      "empirical_bound_along_saved_path_ev_A",
+      "horizon_fs",
+      "first_observed_crossing_fs",
+      "right_censored"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "anchor": "dimensionless, index, count, flag or category; see role and data README",
+      "factor": "dimensionless, index, count, flag or category; see role and data README",
+      "step": "dimensionless, index, count, flag or category; see role and data README",
+      "time_fs": "fs",
+      "error_ev_A": "eV/angstrom",
+      "path_length_A": "angstrom",
+      "residual_change_from_anchor_ev_A": "eV/angstrom",
+      "measured_vector_secant_ev_A2": "eV/angstrom^2",
+      "empirical_kappa_ev_A2": "eV/angstrom^2",
+      "empirical_bound_along_saved_path_ev_A": "eV/angstrom",
+      "horizon_fs": "fs",
+      "first_observed_crossing_fs": "fs",
+      "right_censored": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "water_velocity/motion_forecasts.csv": {
+    "role": "Retained numerical source values for the six velocity interventions; empty CSV entries denote undefined/censored quantities.",
+    "rows": 14,
+    "columns": [
+      "seed",
+      "factor",
+      "time_fs",
+      "saved_forecast_length_A",
+      "observed_path_length_A",
+      "saved_forecast_bound_ev_A",
+      "inside_budget"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "factor": "dimensionless, index, count, flag or category; see role and data README",
+      "time_fs": "fs",
+      "saved_forecast_length_A": "angstrom",
+      "observed_path_length_A": "angstrom",
+      "saved_forecast_bound_ev_A": "eV/angstrom",
+      "inside_budget": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "water_velocity/motion_directional_probes.csv": {
+    "role": "Retained numerical source values for the six velocity interventions; empty CSV entries denote undefined/censored quantities.",
+    "rows": 4,
+    "columns": [
+      "seed",
+      "anchor",
+      "h_A",
+      "derivative_norm_ev_A2",
+      "empirical_kappa_ev_A2",
+      "max_observed_path_secant_ev_A2"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "anchor": "dimensionless, index, count, flag or category; see role and data README",
+      "h_A": "angstrom",
+      "derivative_norm_ev_A2": "eV/angstrom^2",
+      "empirical_kappa_ev_A2": "eV/angstrom^2",
+      "max_observed_path_secant_ev_A2": "eV/angstrom^2"
+    }
+  },
+  "water_velocity/probes.npz": {
+    "role": "Retained directional derivative vectors and eight reference-force/energy probes. Probe coordinates are reconstructed from anchor, direction and signed displacement, and verified against retained geometry hashes. Individual surrogate forces at signed probes were not retained.",
+    "arrays": {
+      "anchor_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "initial_record_index": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "seed": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "probe_steps_A": {
+        "shape": [
+          2
+        ],
+        "dtype": "float64",
+        "units": "angstrom"
+      },
+      "sign": {
+        "shape": [
+          2
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "origin_positions_A": {
+        "shape": [
+          2,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "angstrom"
+      },
+      "unit_directions": {
+        "shape": [
+          2,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "recorded_residual_derivative_eV_A2": {
+        "shape": [
+          2,
+          2,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom^2"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          2,
+          2,
+          2,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          2,
+          2,
+          2
+        ],
+        "dtype": "float64",
+        "units": "eV"
+      },
+      "reconstructed_positions_A": {
+        "shape": [
+          2,
+          2,
+          2,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "angstrom"
+      }
+    }
+  },
+  "water_velocity/probe_mapping.csv": {
+    "role": "Mapping of eight reference probes to retained reference-record and geometry identifiers.",
+    "rows": 8,
+    "columns": [
+      "anchor_index",
+      "scale_index",
+      "sign_index",
+      "reference_record_index",
+      "geometry_sha256"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "anchor_index": "dimensionless, index, count, flag or category; see role and data README",
+      "scale_index": "dimensionless, index, count, flag or category; see role and data README",
+      "sign_index": "dimensionless, index, count, flag or category; see role and data README",
+      "reference_record_index": "dimensionless, index, count, flag or category; see role and data README",
+      "geometry_sha256": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "water_velocity/settings.json": {
+    "role": "Settings and explicitly retained limitations for the six velocity interventions.",
+    "format": "JSON; keys and units documented in data README and embedded settings."
+  },
+  "molecular_comparison/trajectories.npz": {
+    "role": "Retained complete molecular state records; axes path,time,atom,Cartesian component. Reference-only surrogate/proposal vectors are zero placeholders gated by availability masks; bound state codes: 0 finite, 1 positive infinity, 2 undefined.",
+    "arrays": {
+      "path_index": {
+        "shape": [
+          48
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "time_fs": {
+        "shape": [
+          50
+        ],
+        "dtype": "float64",
+        "units": "fs"
+      },
+      "atomic_numbers": {
+        "shape": [
+          3
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "masses_u": {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "units": "atomic mass unit"
+      },
+      "positions_A": {
+        "shape": [
+          48,
+          50,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "angstrom"
+      },
+      "momenta_sqrt_u_eV": {
+        "shape": [
+          48,
+          50,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "sqrt(atomic_mass_unit * eV)"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          48,
+          50,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "driving_forces_eV_A": {
+        "shape": [
+          48,
+          50,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "float64",
+        "units": "eV"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "float64",
+        "units": "eV"
+      },
+      "recorded_force_error_eV_A": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "anchor_age_fs": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "float64",
+        "units": "fs"
+      },
+      "recorded_horizon_fs": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "float64",
+        "units": "fs"
+      },
+      "spread_eV_A": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "accepted": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "checked": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "reference_requested": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "new_reference": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "accepted_violation": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "surrogate_available": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "surrogate_forces_eV_A": {
+        "shape": [
+          48,
+          50,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "proposal_available": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "proposal_forces_eV_A": {
+        "shape": [
+          48,
+          50,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "proposal_accepted": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "calibrated_bound_eV_A": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "calibrated_bound_eV_A_state": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "int8",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "motion_bound_eV_A": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "motion_bound_eV_A_state": {
+        "shape": [
+          48,
+          50
+        ],
+        "dtype": "int8",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      }
+    }
+  },
+  "molecular_comparison/paths.csv": {
+    "role": "Path identity, policy, paired velocity seed and initial kinetic normalization.",
+    "rows": 48,
+    "columns": [
+      "path_index",
+      "policy",
+      "seed",
+      "initial_record_index",
+      "kinetic_temperature_K",
+      "velocity_factor"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "path_index": "dimensionless, index, count, flag or category; see role and data README",
+      "policy": "dimensionless, index, count, flag or category; see role and data README",
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "initial_record_index": "dimensionless, index, count, flag or category; see role and data README",
+      "kinetic_temperature_K": "K (initial kinetic normalization)",
+      "velocity_factor": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "molecular_comparison/metrics.csv": {
+    "role": "Retained per-path numerical output, independently reconstructible from exported state records; empty values mean undefined.",
+    "rows": 48,
+    "columns": [
+      "path_index",
+      "states",
+      "accepted",
+      "violations",
+      "risk",
+      "audit_detections",
+      "online_requests",
+      "audit_requests",
+      "new_reference_attempts_completed",
+      "sequential_upper",
+      "max_Href_drift_meV",
+      "end_Href_drift_meV",
+      "max_work_balance_residual_meV",
+      "paired_geometry_states",
+      "OH_bond_RMSE_A",
+      "HOH_angle_RMSE_degrees",
+      "max_OH_bond_difference_A",
+      "max_HOH_angle_difference_degrees",
+      "training_updates"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "path_index": "dimensionless, index, count, flag or category; see role and data README",
+      "states": "dimensionless, index, count, flag or category; see role and data README",
+      "accepted": "dimensionless, index, count, flag or category; see role and data README",
+      "violations": "dimensionless, index, count, flag or category; see role and data README",
+      "risk": "dimensionless, index, count, flag or category; see role and data README",
+      "audit_detections": "dimensionless, index, count, flag or category; see role and data README",
+      "online_requests": "dimensionless, index, count, flag or category; see role and data README",
+      "audit_requests": "dimensionless, index, count, flag or category; see role and data README",
+      "new_reference_attempts_completed": "dimensionless, index, count, flag or category; see role and data README",
+      "sequential_upper": "dimensionless, index, count, flag or category; see role and data README",
+      "max_Href_drift_meV": "meV",
+      "end_Href_drift_meV": "meV",
+      "max_work_balance_residual_meV": "meV",
+      "paired_geometry_states": "dimensionless, index, count, flag or category; see role and data README",
+      "OH_bond_RMSE_A": "angstrom",
+      "HOH_angle_RMSE_degrees": "degree",
+      "max_OH_bond_difference_A": "angstrom",
+      "max_HOH_angle_difference_degrees": "degree",
+      "training_updates": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "molecular_comparison/anchors.csv": {
+    "role": "Retained reference-anchor residuals, empirical growth estimates and forecast horizons; not refitted coefficients.",
+    "rows": 503,
+    "columns": [
+      "anchor_index",
+      "path_index",
+      "step",
+      "e0_eV_A",
+      "kappa_eV_A2",
+      "horizon_fs"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "anchor_index": "dimensionless, index, count, flag or category; see role and data README",
+      "path_index": "dimensionless, index, count, flag or category; see role and data README",
+      "step": "dimensionless, index, count, flag or category; see role and data README",
+      "e0_eV_A": "eV/angstrom",
+      "kappa_eV_A2": "eV/angstrom^2",
+      "horizon_fs": "fs"
+    }
+  },
+  "molecular_comparison/forecasts.csv": {
+    "role": "Retained per-anchor forecast times, cumulative displacement lengths and empirical bounds.",
+    "rows": 701,
+    "columns": [
+      "anchor_index",
+      "elapsed_fs",
+      "path_length_A",
+      "bound_eV_A"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "anchor_index": "dimensionless, index, count, flag or category; see role and data README",
+      "elapsed_fs": "fs",
+      "path_length_A": "angstrom",
+      "bound_eV_A": "eV/angstrom"
+    }
+  },
+  "molecular_comparison/settings.json": {
+    "role": "Selected physical/control settings and model-file/checkpoint identifiers, without runtime or machine configuration.",
+    "format": "JSON; keys and units documented in data README and embedded settings."
+  },
+  "hot_forward/trajectories.npz": {
+    "role": "Retained complete molecular state records; axes path,time,atom,Cartesian component. Reference-only surrogate/proposal vectors are zero placeholders gated by availability masks; bound state codes: 0 finite, 1 positive infinity, 2 undefined.",
+    "arrays": {
+      "path_index": {
+        "shape": [
+          8
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "time_fs": {
+        "shape": [
+          40
+        ],
+        "dtype": "float64",
+        "units": "fs"
+      },
+      "atomic_numbers": {
+        "shape": [
+          3
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "masses_u": {
+        "shape": [
+          3
+        ],
+        "dtype": "float64",
+        "units": "atomic mass unit"
+      },
+      "positions_A": {
+        "shape": [
+          8,
+          40,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "angstrom"
+      },
+      "momenta_sqrt_u_eV": {
+        "shape": [
+          8,
+          40,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "sqrt(atomic_mass_unit * eV)"
+      },
+      "reference_forces_eV_A": {
+        "shape": [
+          8,
+          40,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "driving_forces_eV_A": {
+        "shape": [
+          8,
+          40,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "reference_energy_eV": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "float64",
+        "units": "eV"
+      },
+      "kinetic_energy_eV": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "float64",
+        "units": "eV"
+      },
+      "recorded_force_error_eV_A": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "anchor_age_fs": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "float64",
+        "units": "fs"
+      },
+      "recorded_horizon_fs": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "float64",
+        "units": "fs"
+      },
+      "spread_eV_A": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "accepted": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "checked": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "reference_requested": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "new_reference": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "accepted_violation": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "surrogate_available": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "surrogate_forces_eV_A": {
+        "shape": [
+          8,
+          40,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "proposal_available": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "proposal_forces_eV_A": {
+        "shape": [
+          8,
+          40,
+          3,
+          3
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "proposal_accepted": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "calibrated_bound_eV_A": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "calibrated_bound_eV_A_state": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "int8",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "motion_bound_eV_A": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "float64",
+        "units": "eV/angstrom"
+      },
+      "motion_bound_eV_A_state": {
+        "shape": [
+          8,
+          40
+        ],
+        "dtype": "int8",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      }
+    }
+  },
+  "hot_forward/paths.csv": {
+    "role": "Path identity, policy, paired velocity seed and initial kinetic normalization.",
+    "rows": 8,
+    "columns": [
+      "path_index",
+      "policy",
+      "seed",
+      "initial_record_index",
+      "kinetic_temperature_K",
+      "velocity_factor"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "path_index": "dimensionless, index, count, flag or category; see role and data README",
+      "policy": "dimensionless, index, count, flag or category; see role and data README",
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "initial_record_index": "dimensionless, index, count, flag or category; see role and data README",
+      "kinetic_temperature_K": "K (initial kinetic normalization)",
+      "velocity_factor": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "hot_forward/metrics.csv": {
+    "role": "Retained per-path numerical output, independently reconstructible from exported state records; empty values mean undefined.",
+    "rows": 8,
+    "columns": [
+      "path_index",
+      "states",
+      "accepted",
+      "violations",
+      "risk",
+      "audit_detections",
+      "online_requests",
+      "audit_requests",
+      "new_reference_attempts_completed",
+      "sequential_upper",
+      "max_Href_drift_meV",
+      "end_Href_drift_meV",
+      "max_work_balance_residual_meV",
+      "paired_geometry_states",
+      "OH_bond_RMSE_A",
+      "HOH_angle_RMSE_degrees",
+      "max_OH_bond_difference_A",
+      "max_HOH_angle_difference_degrees",
+      "training_updates"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "path_index": "dimensionless, index, count, flag or category; see role and data README",
+      "states": "dimensionless, index, count, flag or category; see role and data README",
+      "accepted": "dimensionless, index, count, flag or category; see role and data README",
+      "violations": "dimensionless, index, count, flag or category; see role and data README",
+      "risk": "dimensionless, index, count, flag or category; see role and data README",
+      "audit_detections": "dimensionless, index, count, flag or category; see role and data README",
+      "online_requests": "dimensionless, index, count, flag or category; see role and data README",
+      "audit_requests": "dimensionless, index, count, flag or category; see role and data README",
+      "new_reference_attempts_completed": "dimensionless, index, count, flag or category; see role and data README",
+      "sequential_upper": "dimensionless, index, count, flag or category; see role and data README",
+      "max_Href_drift_meV": "meV",
+      "end_Href_drift_meV": "meV",
+      "max_work_balance_residual_meV": "meV",
+      "paired_geometry_states": "dimensionless, index, count, flag or category; see role and data README",
+      "OH_bond_RMSE_A": "angstrom",
+      "HOH_angle_RMSE_degrees": "degree",
+      "max_OH_bond_difference_A": "angstrom",
+      "max_HOH_angle_difference_degrees": "degree",
+      "training_updates": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "hot_forward/anchors.csv": {
+    "role": "Retained reference-anchor residuals, empirical growth estimates and forecast horizons; not refitted coefficients.",
+    "rows": 80,
+    "columns": [
+      "anchor_index",
+      "path_index",
+      "step",
+      "e0_eV_A",
+      "kappa_eV_A2",
+      "horizon_fs"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "anchor_index": "dimensionless, index, count, flag or category; see role and data README",
+      "path_index": "dimensionless, index, count, flag or category; see role and data README",
+      "step": "dimensionless, index, count, flag or category; see role and data README",
+      "e0_eV_A": "eV/angstrom",
+      "kappa_eV_A2": "eV/angstrom^2",
+      "horizon_fs": "fs"
+    }
+  },
+  "hot_forward/forecasts.csv": {
+    "role": "Retained per-anchor forecast times, cumulative displacement lengths and empirical bounds.",
+    "rows": 44,
+    "columns": [
+      "anchor_index",
+      "elapsed_fs",
+      "path_length_A",
+      "bound_eV_A"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "anchor_index": "dimensionless, index, count, flag or category; see role and data README",
+      "elapsed_fs": "fs",
+      "path_length_A": "angstrom",
+      "bound_eV_A": "eV/angstrom"
+    }
+  },
+  "hot_forward/settings.json": {
+    "role": "Selected physical/control settings and model-file/checkpoint identifiers, without runtime or machine configuration.",
+    "format": "JSON; keys and units documented in data README and embedded settings."
+  },
+  "controlled/oscillator_trajectories.csv": {
+    "role": "All 80 retained oscillator trajectory summaries and initial conditions; reduced oscillator units.",
+    "rows": 80,
+    "columns": [
+      "split",
+      "seed",
+      "amplitude",
+      "stiffness",
+      "phase",
+      "x0",
+      "v0",
+      "random_check_seed",
+      "policy",
+      "drift_coefficient",
+      "fixed_k",
+      "n_steps",
+      "physical_duration",
+      "n_reference",
+      "n_initial_reference",
+      "n_forced_reference",
+      "n_random_reference",
+      "n_unreferenced",
+      "n_start_violations",
+      "n_interval_violations",
+      "n_envelope_counterexamples",
+      "n_eligible",
+      "n_eligible_start_violations",
+      "n_random_start_violations",
+      "n_full_corrections",
+      "n_measurement_force_calls",
+      "reference_fraction",
+      "unreferenced_physical_duration",
+      "interval_violation_rate",
+      "start_violation_rate",
+      "maximum_unreferenced_streak",
+      "maximum_unreferenced_streak_time",
+      "maximum_unreferenced_force_error",
+      "maximum_positive_envelope_excess",
+      "initial_error_min",
+      "initial_error_mean",
+      "initial_error_max",
+      "margin_min",
+      "margin_mean",
+      "margin_max",
+      "trust_time_min",
+      "trust_time_median",
+      "trust_time_max",
+      "squared_position_error_sum",
+      "squared_velocity_error_sum",
+      "position_rmse",
+      "velocity_rmse",
+      "final_relative_energy_change",
+      "maximum_absolute_relative_energy_change"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "split": "dimensionless, index, count, flag or category; see role and data README",
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "amplitude": "dimensionless, index, count, flag or category; see role and data README",
+      "stiffness": "reduced oscillator units (see data README)",
+      "phase": "dimensionless, index, count, flag or category; see role and data README",
+      "x0": "dimensionless, index, count, flag or category; see role and data README",
+      "v0": "dimensionless, index, count, flag or category; see role and data README",
+      "random_check_seed": "dimensionless, index, count, flag or category; see role and data README",
+      "policy": "dimensionless, index, count, flag or category; see role and data README",
+      "drift_coefficient": "dimensionless, index, count, flag or category; see role and data README",
+      "fixed_k": "dimensionless, index, count, flag or category; see role and data README",
+      "n_steps": "dimensionless, index, count, flag or category; see role and data README",
+      "physical_duration": "dimensionless, index, count, flag or category; see role and data README",
+      "n_reference": "dimensionless, index, count, flag or category; see role and data README",
+      "n_initial_reference": "dimensionless, index, count, flag or category; see role and data README",
+      "n_forced_reference": "dimensionless, index, count, flag or category; see role and data README",
+      "n_random_reference": "dimensionless, index, count, flag or category; see role and data README",
+      "n_unreferenced": "dimensionless, index, count, flag or category; see role and data README",
+      "n_start_violations": "dimensionless, index, count, flag or category; see role and data README",
+      "n_interval_violations": "dimensionless, index, count, flag or category; see role and data README",
+      "n_envelope_counterexamples": "dimensionless, index, count, flag or category; see role and data README",
+      "n_eligible": "dimensionless, index, count, flag or category; see role and data README",
+      "n_eligible_start_violations": "dimensionless, index, count, flag or category; see role and data README",
+      "n_random_start_violations": "dimensionless, index, count, flag or category; see role and data README",
+      "n_full_corrections": "dimensionless, index, count, flag or category; see role and data README",
+      "n_measurement_force_calls": "dimensionless, index, count, flag or category; see role and data README",
+      "reference_fraction": "dimensionless, index, count, flag or category; see role and data README",
+      "unreferenced_physical_duration": "dimensionless, index, count, flag or category; see role and data README",
+      "interval_violation_rate": "dimensionless, index, count, flag or category; see role and data README",
+      "start_violation_rate": "dimensionless, index, count, flag or category; see role and data README",
+      "maximum_unreferenced_streak": "dimensionless, index, count, flag or category; see role and data README",
+      "maximum_unreferenced_streak_time": "dimensionless, index, count, flag or category; see role and data README",
+      "maximum_unreferenced_force_error": "dimensionless, index, count, flag or category; see role and data README",
+      "maximum_positive_envelope_excess": "dimensionless, index, count, flag or category; see role and data README",
+      "initial_error_min": "dimensionless, index, count, flag or category; see role and data README",
+      "initial_error_mean": "dimensionless, index, count, flag or category; see role and data README",
+      "initial_error_max": "dimensionless, index, count, flag or category; see role and data README",
+      "margin_min": "dimensionless, index, count, flag or category; see role and data README",
+      "margin_mean": "dimensionless, index, count, flag or category; see role and data README",
+      "margin_max": "dimensionless, index, count, flag or category; see role and data README",
+      "trust_time_min": "dimensionless, index, count, flag or category; see role and data README",
+      "trust_time_median": "dimensionless, index, count, flag or category; see role and data README",
+      "trust_time_max": "dimensionless, index, count, flag or category; see role and data README",
+      "squared_position_error_sum": "dimensionless, index, count, flag or category; see role and data README",
+      "squared_velocity_error_sum": "dimensionless, index, count, flag or category; see role and data README",
+      "position_rmse": "dimensionless, index, count, flag or category; see role and data README",
+      "velocity_rmse": "dimensionless, index, count, flag or category; see role and data README",
+      "final_relative_energy_change": "dimensionless, index, count, flag or category; see role and data README",
+      "maximum_absolute_relative_energy_change": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "controlled/oscillator_intervals.npz": {
+    "role": "All 160000 retained oscillator intervals. Maximum interval errors include interior extrema; route code identifies unreferenced intervals. Reduced oscillator units.",
+    "arrays": {
+      "trajectory_index": {
+        "shape": [
+          160000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "route_code": {
+        "shape": [
+          160000
+        ],
+        "dtype": "int8",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "step": {
+        "shape": [
+          160000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "time_start": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "reduced time"
+      },
+      "time_end": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "reduced time"
+      },
+      "stiffness": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "x": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "v": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "bias_used": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "interval_max_error": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "interval_violation": {
+        "shape": [
+          160000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "prospective_envelope_at_end": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "envelope_counterexample": {
+        "shape": [
+          160000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "relative_energy_change_at_end": {
+        "shape": [
+          160000
+        ],
+        "dtype": "float64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      }
+    }
+  },
+  "controlled/oscillator_trajectory_work.csv": {
+    "role": "Retained exact-flow work-energy summaries for all 80 trajectories; reduced energy units.",
+    "rows": 80,
+    "columns": [
+      "split",
+      "policy",
+      "seed",
+      "H0",
+      "n_intervals",
+      "n_reference_updates",
+      "W",
+      "W_over_H0",
+      "delta_H",
+      "original_final_relative_energy_change",
+      "jump_sum",
+      "jump_sum_over_H0",
+      "boundary_term",
+      "boundary_over_H0",
+      "telescope_error",
+      "work_energy_error",
+      "max_interval_work_energy_error",
+      "max_stored_relative_energy_error",
+      "positive_net_interval_fraction",
+      "net_over_sum_absolute_interval_work",
+      "unreferenced_work_over_H0",
+      "reference_assisted_work_over_H0",
+      "updates_with_positive_post_power",
+      "updates_with_negative_post_power",
+      "max_nonfull_power_contraction_error"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "split": "dimensionless, index, count, flag or category; see role and data README",
+      "policy": "dimensionless, index, count, flag or category; see role and data README",
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "H0": "dimensionless, index, count, flag or category; see role and data README",
+      "n_intervals": "dimensionless, index, count, flag or category; see role and data README",
+      "n_reference_updates": "dimensionless, index, count, flag or category; see role and data README",
+      "W": "dimensionless, index, count, flag or category; see role and data README",
+      "W_over_H0": "dimensionless, index, count, flag or category; see role and data README",
+      "delta_H": "dimensionless, index, count, flag or category; see role and data README",
+      "original_final_relative_energy_change": "dimensionless, index, count, flag or category; see role and data README",
+      "jump_sum": "dimensionless, index, count, flag or category; see role and data README",
+      "jump_sum_over_H0": "dimensionless, index, count, flag or category; see role and data README",
+      "boundary_term": "dimensionless, index, count, flag or category; see role and data README",
+      "boundary_over_H0": "dimensionless, index, count, flag or category; see role and data README",
+      "telescope_error": "dimensionless, index, count, flag or category; see role and data README",
+      "work_energy_error": "dimensionless, index, count, flag or category; see role and data README",
+      "max_interval_work_energy_error": "dimensionless, index, count, flag or category; see role and data README",
+      "max_stored_relative_energy_error": "dimensionless, index, count, flag or category; see role and data README",
+      "positive_net_interval_fraction": "dimensionless, index, count, flag or category; see role and data README",
+      "net_over_sum_absolute_interval_work": "dimensionless, index, count, flag or category; see role and data README",
+      "unreferenced_work_over_H0": "dimensionless, index, count, flag or category; see role and data README",
+      "reference_assisted_work_over_H0": "dimensionless, index, count, flag or category; see role and data README",
+      "updates_with_positive_post_power": "dimensionless, index, count, flag or category; see role and data README",
+      "updates_with_negative_post_power": "dimensionless, index, count, flag or category; see role and data README",
+      "max_nonfull_power_contraction_error": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "controlled/oscillator_segments.npz": {
+    "role": "10518 retained fixed-model segments: anchor-residual and curvature-work contributions. No new propagation.",
+    "arrays": {
+      "trajectory_index": {
+        "shape": [
+          10518
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "start_step": {
+        "shape": [
+          10518
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "end_step_exclusive": {
+        "shape": [
+          10518
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "bias": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "work": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "work_over_H0": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "x_start": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "x_end": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "residual_at_segment_start": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "anchor_residual_work": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "curvature_growth_work": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      },
+      "decomposition_error": {
+        "shape": [
+          10518
+        ],
+        "dtype": "float64",
+        "units": "reduced oscillator units (see data README)"
+      }
+    }
+  },
+  "controlled/oscillator_work_components.csv": {
+    "role": "Sixteen retained held-out class-horizon work decompositions used in Fig. 3d; trajectory_index is the original one-based display order, not the 80-trajectory array index.",
+    "rows": 16,
+    "columns": [
+      "trajectory_index",
+      "seed",
+      "segments",
+      "anchor_work_over_H0",
+      "curvature_work_over_H0",
+      "total_work_over_H0",
+      "original_W_over_H0"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "trajectory_index": "dimensionless, index, count, flag or category; see role and data README",
+      "seed": "dimensionless, index, count, flag or category; see role and data README",
+      "segments": "dimensionless, index, count, flag or category; see role and data README",
+      "anchor_work_over_H0": "dimensionless, index, count, flag or category; see role and data README",
+      "curvature_work_over_H0": "dimensionless, index, count, flag or category; see role and data README",
+      "total_work_over_H0": "dimensionless, index, count, flag or category; see role and data README",
+      "original_W_over_H0": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "controlled/closed_form_checks.json": {
+    "role": "Retained numerical positive/zero/negative curvature checks; no new simulation.",
+    "format": "JSON; keys and units documented in data README and embedded settings."
+  },
+  "controlled/verification_replicates.npz": {
+    "role": "20000 original independent seeded statistical repetitions; SeedSequence spawn_key=(replicate,). Complete histories retained only for first four repetitions.",
+    "arrays": {
+      "replicate": {
+        "shape": [
+          20000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "seed_entropy": {
+        "shape": [
+          20000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "N": {
+        "shape": [
+          20000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "V": {
+        "shape": [
+          20000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "D": {
+        "shape": [
+          20000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "audit_labels": {
+        "shape": [
+          20000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "first_crossing_step": {
+        "shape": [
+          20000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "first_zero_event_step": {
+        "shape": [
+          20000
+        ],
+        "dtype": "int64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "ever_crossed": {
+        "shape": [
+          20000
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "ever_capped_bound_failed": {
+        "shape": [
+          20000
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "ever_zero_event": {
+        "shape": [
+          20000
+        ],
+        "dtype": "bool",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "max_log_M": {
+        "shape": [
+          20000
+        ],
+        "dtype": "float64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "terminal_log_M": {
+        "shape": [
+          20000
+        ],
+        "dtype": "float64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      },
+      "terminal_capped_bound": {
+        "shape": [
+          20000
+        ],
+        "dtype": "float64",
+        "units": "dimensionless, index, count, flag or category; see role and data README"
+      }
+    }
+  },
+  "controlled/verification_traces.csv": {
+    "role": "All 1024 retained steps of each of the first four statistical repetitions; acceptance, latent error and check outcomes.",
+    "rows": 4096,
+    "columns": [
+      "replicate",
+      "step",
+      "q_before",
+      "trust_before",
+      "cooldown_before",
+      "risk_probability",
+      "acceptance_probability",
+      "A",
+      "Y",
+      "Z",
+      "used_surrogate",
+      "detected_failure",
+      "N",
+      "V",
+      "D",
+      "log_M",
+      "capped_bound"
+    ],
+    "missing_values": "Empty fields denote undefined, unavailable or censored values as specified in the data README.",
+    "column_units": {
+      "replicate": "dimensionless, index, count, flag or category; see role and data README",
+      "step": "dimensionless, index, count, flag or category; see role and data README",
+      "q_before": "dimensionless, index, count, flag or category; see role and data README",
+      "trust_before": "dimensionless, index, count, flag or category; see role and data README",
+      "cooldown_before": "dimensionless, index, count, flag or category; see role and data README",
+      "risk_probability": "dimensionless, index, count, flag or category; see role and data README",
+      "acceptance_probability": "dimensionless, index, count, flag or category; see role and data README",
+      "A": "dimensionless, index, count, flag or category; see role and data README",
+      "Y": "dimensionless, index, count, flag or category; see role and data README",
+      "Z": "dimensionless, index, count, flag or category; see role and data README",
+      "used_surrogate": "dimensionless, index, count, flag or category; see role and data README",
+      "detected_failure": "dimensionless, index, count, flag or category; see role and data README",
+      "N": "dimensionless, index, count, flag or category; see role and data README",
+      "V": "dimensionless, index, count, flag or category; see role and data README",
+      "D": "dimensionless, index, count, flag or category; see role and data README",
+      "log_M": "dimensionless, index, count, flag or category; see role and data README",
+      "capped_bound": "dimensionless, index, count, flag or category; see role and data README"
+    }
+  },
+  "controlled/verification_summary.json": {
+    "role": "Retained statistical results and deterministic finite-time probability bracket; Monte Carlo outcomes are not rerun.",
+    "format": "JSON; keys and units documented in data README and embedded settings."
+  },
+  "controlled/settings.json": {
+    "role": "Controlled-study settings, category definitions and recorded cost accounting.",
+    "format": "JSON; keys and units documented in data README and embedded settings."
+  },
+  "tungsten/model_identity.json": {
+    "role": "Model-file and effective tensor SHA256 identifiers from the original frozen evaluation and unperturbed control records; these are distinct hash definitions.",
+    "format": "JSON; keys and units documented in data README and embedded settings."
+  },
+  "source_records.json": {
+    "role": "Content-hash traceability for numerical extraction and authoritative model identity records.",
+    "format": "JSON; keys and units documented in data README and embedded settings."
+  }
+}

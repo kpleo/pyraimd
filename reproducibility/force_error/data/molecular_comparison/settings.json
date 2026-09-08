@@ -1,0 +1,181 @@
+{
+  "seeds": [
+    2026090541,
+    2026090542,
+    2026090543,
+    2026090544
+  ],
+  "start_indices": [
+    0,
+    151,
+    0,
+    151
+  ],
+  "pilot_evaluation_states": 50,
+  "dt_fs": 0.5,
+  "epsilon_ev_A": 0.1,
+  "audit_p": 0.1,
+  "update_model": false,
+  "growth_gamma": 2.0,
+  "selected": {
+    "periodic": 4,
+    "calibrated": 1.0
+  },
+  "model_sha256": "2ddb079cee0e131eaaf6912ba581b394551ead283e95c99cfe78c605d10b5736",
+  "checkpoint_sha256": "12d92bcb1e0aa5c0161ebb464f7a83d460ebf932fa1889bf6d5bceb1c6296b36",
+  "calibration_pairs": [
+    [
+      0.008023368634579532,
+      0.01865085362935228
+    ],
+    [
+      0.007422460489875369,
+      0.005993409421256476
+    ],
+    [
+      0.006839844881287682,
+      0.008666819751807974
+    ],
+    [
+      0.0063417343745208275,
+      0.01708446244087112
+    ],
+    [
+      0.005954304001463563,
+      0.025063268248182998
+    ],
+    [
+      0.0057333953333527435,
+      0.0321972470325916
+    ],
+    [
+      0.005546633120083244,
+      0.03856303500714768
+    ],
+    [
+      0.005381991738011179,
+      0.04474929146514918
+    ],
+    [
+      0.005265123138711525,
+      0.050778806551038454
+    ],
+    [
+      0.005227628232525547,
+      0.05529705632828329
+    ],
+    [
+      0.005389942497667293,
+      0.056178552877225695
+    ],
+    [
+      0.006222680610729997,
+      0.05278469245459383
+    ],
+    [
+      0.007009991924567882,
+      0.049450404755517235
+    ],
+    [
+      0.007646304007355377,
+      0.048401809300654706
+    ],
+    [
+      0.008051433177169016,
+      0.04900037878878951
+    ],
+    [
+      0.008181042787564754,
+      0.05145950072051675
+    ],
+    [
+      0.008028897330432518,
+      0.05536577871293348
+    ],
+    [
+      0.0076278070420253315,
+      0.059676809789936926
+    ],
+    [
+      0.007050469022484916,
+      0.06292290788493082
+    ],
+    [
+      0.006401638596085034,
+      0.06384807366703053
+    ],
+    [
+      0.005792329333685918,
+      0.062226415238857295
+    ],
+    [
+      0.005299519918906395,
+      0.05980923599736051
+    ],
+    [
+      0.004934256260095841,
+      0.05666240898434432
+    ],
+    [
+      0.005015322965315714,
+      0.05418011132945999
+    ],
+    [
+      0.005135807760325294,
+      0.052829576912832986
+    ],
+    [
+      0.0052836686559513315,
+      0.05160856493766026
+    ],
+    [
+      0.005507308861006086,
+      0.04878301416414515
+    ],
+    [
+      0.005838277243828428,
+      0.0425124709396288
+    ],
+    [
+      0.006262210834665467,
+      0.031753344970444575
+    ],
+    [
+      0.006726781278860255,
+      0.01725181739216055
+    ],
+    [
+      0.007172539342219894,
+      0.002257755116543058
+    ],
+    [
+      0.007687720175901851,
+      0.012597543757649595
+    ]
+  ],
+  "conversions": {
+    "ase_fs_in_internal_time": 0.09822694788464063,
+    "bohr_A": 0.5291772105638411,
+    "kB_eV_K": 8.617330337217213e-05
+  },
+  "new_reference_evaluations": 2352,
+  "reused_initial_labels": 48,
+  "forecast_cap_fs": 8.0,
+  "spread_floor_eV_A": 0.001,
+  "nominal_calibration_alpha": 0.05,
+  "confidence_error_probability": 0.05,
+  "confidence_lambda": 0.6931471805599453,
+  "screening": {
+    "minimum_accepted_fraction": 0.2,
+    "maximum_observed_accepted_violation_fraction": 0.05,
+    "maximum_reference_fraction": 0.9
+  },
+  "independent_velocity_directions": 4,
+  "limitations": [
+    "Velocity seeds are paired across policies and speed levels; complete paths are not independent replicates.",
+    "Stored force proposals and decisions support arithmetic checks; a CSV cannot establish independence or temporal commitment.",
+    "Fitted model weights and historical residual vectors used to estimate growth are not bundled; no model restart or independent refit is claimed.",
+    "Reference-only trajectories have no surrogate proposals; placeholder zeros must be interpreted using availability masks.",
+    "Reference-Hamiltonian drift includes finite-timestep error."
+  ]
+}

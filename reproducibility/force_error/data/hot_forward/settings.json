@@ -1,0 +1,173 @@
+{
+  "seeds": [
+    2026090521,
+    2026090522
+  ],
+  "start_indices": [
+    0,
+    151
+  ],
+  "pilot_evaluation_states": 40,
+  "dt_fs": 0.5,
+  "epsilon_ev_A": 0.1,
+  "audit_p": 0.1,
+  "update_model": false,
+  "growth_gamma": 2.0,
+  "selected": {
+    "periodic": 8,
+    "calibrated": 1.0
+  },
+  "model_sha256": "2ddb079cee0e131eaaf6912ba581b394551ead283e95c99cfe78c605d10b5736",
+  "checkpoint_sha256": "4ccae88097a2a76f7037893a480354df678034ff7628c9bf5fa0798172bdb8bb",
+  "calibration_pairs": [
+    [
+      0.0029098466473363965,
+      0.03800526140112033
+    ],
+    [
+      0.003106103242621656,
+      0.025919856199585777
+    ],
+    [
+      0.0034212708107395503,
+      0.01517338756255072
+    ],
+    [
+      0.003811916606764824,
+      0.0164670121830745
+    ],
+    [
+      0.004198242381470158,
+      0.02130090493853147
+    ],
+    [
+      0.0046927252926254924,
+      0.02193361892809853
+    ],
+    [
+      0.005017830043190148,
+      0.022748067178039136
+    ],
+    [
+      0.005089994780382627,
+      0.029426156855523848
+    ],
+    [
+      0.0049316813857552015,
+      0.036533141525649876
+    ],
+    [
+      0.004629490634745673,
+      0.04383600911062734
+    ],
+    [
+      0.004295983846249395,
+      0.04788873648843879
+    ],
+    [
+      0.004023293302902354,
+      0.0474793500601395
+    ],
+    [
+      0.003911763603052265,
+      0.04637775072406189
+    ],
+    [
+      0.003923670516667768,
+      0.046937007410820415
+    ],
+    [
+      0.004011078990827363,
+      0.048643321435040146
+    ],
+    [
+      0.004173466458107476,
+      0.051672499988994626
+    ],
+    [
+      0.004410687899634229,
+      0.055588927804272284
+    ],
+    [
+      0.0047180537275107425,
+      0.05936697001415681
+    ],
+    [
+      0.005078878422530095,
+      0.06160616155113235
+    ],
+    [
+      0.005457588656957804,
+      0.061169370430923596
+    ],
+    [
+      0.0057973181037648015,
+      0.05798439954566878
+    ],
+    [
+      0.0061876729806742995,
+      0.05338406576824198
+    ],
+    [
+      0.006513367898353491,
+      0.04853159672543937
+    ],
+    [
+      0.006582203688675442,
+      0.04483370653839994
+    ],
+    [
+      0.006323372861862525,
+      0.04185379816803987
+    ],
+    [
+      0.005739040554329237,
+      0.03824442213237382
+    ],
+    [
+      0.004918783151728421,
+      0.033138538628738834
+    ],
+    [
+      0.004030731558249712,
+      0.026338328549686686
+    ],
+    [
+      0.003272064817810754,
+      0.016137863820419682
+    ],
+    [
+      0.0027820110819149323,
+      0.010464687903298145
+    ],
+    [
+      0.0025710691768525947,
+      0.016692478566681226
+    ],
+    [
+      0.002556170901549319,
+      0.028716485811632463
+    ]
+  ],
+  "conversions": {
+    "ase_fs_in_internal_time": 0.09822694788464063,
+    "bohr_A": 0.5291772105638411,
+    "kB_eV_K": 8.617330337217213e-05
+  },
+  "new_reference_evaluations": 312,
+  "reused_initial_labels": 8,
+  "forecast_cap_fs": 8.0,
+  "spread_floor_eV_A": 0.001,
+  "nominal_calibration_alpha": 0.05,
+  "confidence_error_probability": 0.05,
+  "confidence_lambda": 0.6931471805599453,
+  "screening": null,
+  "independent_velocity_directions": 2,
+  "limitations": [
+    "Velocity seeds are paired across policies and speed levels; complete paths are not independent replicates.",
+    "Stored force proposals and decisions support arithmetic checks; a CSV cannot establish independence or temporal commitment.",
+    "Fitted model weights and historical residual vectors used to estimate growth are not bundled; no model restart or independent refit is claimed.",
+    "Reference-only trajectories have no surrogate proposals; placeholder zeros must be interpreted using availability masks.",
+    "Reference-Hamiltonian drift includes finite-timestep error."
+  ]
+}

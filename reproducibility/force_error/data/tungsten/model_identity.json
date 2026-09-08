@@ -1,0 +1,36 @@
+{
+  "members": [
+    {
+      "member_index": 0,
+      "name": "MACE-MP-0b3-medium",
+      "model_file_sha256": "2f2be696351ac9e94fbe01cdfb6f017679acdbd2db7645209ef55fec9826b012",
+      "model_file_bytes": 79472952,
+      "effective_evaluation_tensor_sha256": "325377f2ea8e72bfa555c73b05ed448cc7f604ce6777f602bda0c72c61bdf1a2",
+      "stock_tensor_sha256": "325377f2ea8e72bfa555c73b05ed448cc7f604ce6777f602bda0c72c61bdf1a2",
+      "energy_shift_eV": 0.0
+    },
+    {
+      "member_index": 1,
+      "name": "MACE-MPA-0-medium",
+      "model_file_sha256": "75428afe3a1d7d8062e19bcaabd5c433623cabf308242ec9fb493e38604fb638",
+      "model_file_bytes": 79462305,
+      "effective_evaluation_tensor_sha256": "68f8507a0d0bd350c0f5ece23b3f0b32cb0db376fb451c1538565d41bde6d56c",
+      "stock_tensor_sha256": "0c3b2c8bbf25b73b39cd35b21d863265ca5cfd3b29b4b8ad04741d9a1dafef3f",
+      "energy_shift_eV": 0.0
+    }
+  ],
+  "seed": 20260834,
+  "perturbation": 0.01,
+  "trainable_filters": [
+    "readout",
+    "products"
+  ],
+  "tensor_hash_recipe": "SHA256: iterate state_dict entries sorted by name; append compact JSON [name, str(numpy.dtype), list(shape)] then contiguous array bytes, including parameters and buffers.",
+  "reference_usage": "No tungsten labels used for fitting, calibration or model selection in this frozen evaluation.",
+  "limitations": [
+    "Hashes identify the local files and effective tensors used for the reported 24-geometry evaluation and two-geometry control.",
+    "Remote historical trajectory-generation binary hashes were not retained; identity with those binaries is not claimed.",
+    "Weights are not bundled; tensor hashes are transcribed from authoritative retained identity records, not recomputed by loading models.",
+    "Foundation-pretraining overlap is unknown."
+  ]
+}

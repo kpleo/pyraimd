@@ -1,0 +1,9 @@
+path_index,policy,seed,initial_record_index,kinetic_temperature_K,velocity_factor
+0,reference,2026090521,0,1200,2.0
+1,periodic,2026090521,0,1200,2.0
+2,calibrated,2026090521,0,1200,2.0
+3,horizon,2026090521,0,1200,2.0
+4,reference,2026090522,151,1200,2.0
+5,periodic,2026090522,151,1200,2.0
+6,calibrated,2026090522,151,1200,2.0
+7,horizon,2026090522,151,1200,2.0

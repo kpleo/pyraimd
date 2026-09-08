@@ -1,0 +1,343 @@
+{
+  "title": "Force-error, residual-work and numerical source data",
+  "version": "1.2.0",
+  "data_doi": "10.5281/zenodo.22537317",
+  "data_license": null,
+  "related_software": {
+    "source": "https://github.com/kpleo/pyraimd/tree/main/reproducibility/force_error",
+    "existing_code_doi": "10.5281/zenodo.22537316",
+    "bundled_directory": "..",
+    "package_version": "1.2.0"
+  },
+  "symbols": {
+    "1": "H",
+    "3": "Li",
+    "6": "C",
+    "8": "O",
+    "9": "F",
+    "15": "P",
+    "74": "W"
+  },
+  "interface": {
+    "atom_count": 474,
+    "formula": "C114H186F18Li39O114P3",
+    "groups": {
+      "0": {
+        "name": "initial lithium slab",
+        "atom_range_half_open": [
+          0,
+          36
+        ]
+      },
+      "1": {
+        "name": "initial ethylene carbonate",
+        "atom_range_half_open": [
+          36,
+          246
+        ]
+      },
+      "2": {
+        "name": "initial dimethyl carbonate",
+        "atom_range_half_open": [
+          246,
+          450
+        ]
+      },
+      "3": {
+        "name": "initial salt",
+        "atom_range_half_open": [
+          450,
+          474
+        ]
+      }
+    },
+    "paths": [
+      {
+        "path_index": 0,
+        "probe_archive_index": 0,
+        "direction_index": 0,
+        "horizon_fs": 0.375
+      },
+      {
+        "path_index": 1,
+        "probe_archive_index": 0,
+        "direction_index": 1,
+        "horizon_fs": 0.25
+      },
+      {
+        "path_index": 2,
+        "probe_archive_index": 1,
+        "direction_index": 0,
+        "horizon_fs": 0.25
+      },
+      {
+        "path_index": 3,
+        "probe_archive_index": 1,
+        "direction_index": 1,
+        "horizon_fs": 0.375
+      }
+    ],
+    "base": "Frozen stored two-member MACE committee with a fixed origin force correction; numerical force and energy records are supplied, fitted weights are excluded.",
+    "reference": {
+      "method": "Quantum ESPRESSO PBE + D3, PAW",
+      "energy": "fixed-smearing variational E-TS, consistent with printed forces",
+      "ecutwfc_Ry": 60,
+      "ecutrho_Ry": 600,
+      "kpoints": "Gamma",
+      "nbnd": 942,
+      "smearing": "fd",
+      "degauss_Ry": 0.02,
+      "conv_thr_Ry": 1e-08,
+      "mixing_beta": 0.2,
+      "mixing_ndim": 12,
+      "diago_david_ndim": 8,
+      "diago_full_acc": true,
+      "electron_maxstep": 400
+    },
+    "forecast": {
+      "force_budget_eV_A": 0.25,
+      "floor_eV_A": 0.00025,
+      "time_cap_fs": 1.0,
+      "transverse_fraction_cap": 0.1
+    },
+    "integrator": {
+      "method": "velocity Verlet, fixed cell, unwrapped positions",
+      "primary_step_fs": 0.125,
+      "half_step_fs": 0.0625,
+      "duration_fs": 4.0,
+      "thermostat": false,
+      "constraints": false
+    },
+    "incomplete_quadrature_grids": [
+      {
+        "path_index": 0,
+        "end_fs": 1.0,
+        "spacing_fs": 0.125,
+        "missing_times_fs": [
+          0.625,
+          0.875
+        ]
+      },
+      {
+        "path_index": 1,
+        "end_fs": 1.0,
+        "spacing_fs": 0.125,
+        "missing_times_fs": [
+          0.625,
+          0.875
+        ]
+      },
+      {
+        "path_index": 3,
+        "end_fs": 1.0,
+        "spacing_fs": 0.125,
+        "missing_times_fs": [
+          0.625,
+          0.875
+        ]
+      }
+    ]
+  },
+  "water": {
+    "system": "isolated H2O molecule",
+    "reference": "PySCF restricted Kohn-Sham PBE/def2-SVP, default SCF tolerance 1e-9 from retained collection implementation",
+    "trajectory": "frozen MACE-MP-0 small, velocity Verlet, initial 300 K normalization",
+    "integration_step_fs": 0.5,
+    "duplicate_initial_record_indices": [
+      0,
+      1
+    ],
+    "counts": {
+      "conformal": {
+        "records": 302,
+        "accepted": 227,
+        "violations": 0
+      },
+      "scheduled": {
+        "records": 302,
+        "accepted": 226,
+        "violations": 21
+      }
+    },
+    "policy": {
+      "force_budget_eV_A": 0.25,
+      "alpha": 0.05,
+      "window": 64,
+      "minimum_window": 16,
+      "spread_floor_eV_A": 0.001,
+      "update_label_count": 8,
+      "scheduled_period": 4
+    },
+    "nonfinite_state_codes": {
+      "0": "finite value",
+      "1": "positive infinity; numeric value is placeholder zero",
+      "2": "undefined; numeric value is placeholder zero"
+    }
+  },
+  "tungsten": {
+    "atom_count": 432,
+    "geometry_count": 24,
+    "label_count": 27,
+    "core_atoms": 40,
+    "matrix_atoms": 392,
+    "segment_codes": {
+      "0": "shared initial geometry",
+      "1": "bulk 300 K",
+      "2": "bulk 3000 K",
+      "3": "bulk 6000 K",
+      "4": "localized spike"
+    },
+    "reference": "Stored Quantum ESPRESSO PBE+D3 labels; 3074 bands, Marzari-Vanderbilt smearing 0.01 Ry",
+    "base_members": [
+      "MACE-MP-0b3 medium",
+      "MACE-MPA-0 medium, seeded readout perturbation 0.01"
+    ],
+    "stock_members": [
+      "MACE-MP-0b3 medium",
+      "MACE-MPA-0 medium"
+    ],
+    "force_budget_eV_A": 0.2,
+    "scope": "Fixed 24-geometry comparison, including 27 labels and all duplicate initial labels.",
+    "later_reference_only_records_excluded": [
+      42,
+      44
+    ],
+    "failed_reference_record_indices_at_final_capture": [
+      1,
+      4,
+      6,
+      8,
+      14,
+      16,
+      19,
+      21,
+      23,
+      28,
+      30,
+      32,
+      33,
+      34,
+      37,
+      39,
+      41,
+      43,
+      46,
+      48
+    ],
+    "initial_velocities": "Not retained in this 24-geometry export; no trajectory replay claimed.",
+    "model_identity": "tungsten/model_identity.json"
+  },
+  "coverage": {
+    "initial_kinetic_energy_max_difference_eV": 7.105427357601002e-15,
+    "numeric_archives_repacked_without_value_change": 10,
+    "interface_paths": 4,
+    "atoms_per_interface_path": 474,
+    "development_reference_geometries": 18,
+    "future_endpoints_reproduced": 40,
+    "additional_reference_checks": 6,
+    "labels_per_path": [
+      11,
+      11,
+      13,
+      11
+    ],
+    "motion_states_per_path": [
+      33,
+      33,
+      33,
+      33
+    ],
+    "complete_quadratures_reproduced": 29,
+    "incomplete_quadratures_disclosed": 3,
+    "horizons_fs": [
+      0.375,
+      0.25,
+      0.25,
+      0.375
+    ],
+    "endpoints_in_domain": 22,
+    "admitted_endpoints": 10,
+    "water": {
+      "conformal": {
+        "records": 302,
+        "accepted": 227,
+        "violations": 0
+      },
+      "scheduled": {
+        "records": 302,
+        "accepted": 226,
+        "violations": 21
+      }
+    },
+    "tungsten_geometries": 24,
+    "tungsten_labels": 27,
+    "tungsten_predictions_rechecked": 24,
+    "tungsten_stock_and_D3_control_geometries": 2,
+    "maximum_probe_rounding_A": 9.882422580155396e-09,
+    "velocity_paths": 6,
+    "velocity_states": 120,
+    "velocity_probe_reference_geometries": 8,
+    "molecular_comparison_paths": 48,
+    "molecular_comparison_states": 2400,
+    "hot_forward_paths": 8,
+    "hot_forward_states": 320,
+    "oscillator_intervals": 160000,
+    "oscillator_work_segments": 10518,
+    "statistical_replicates": 20000,
+    "statistical_trace_steps": 4096,
+    "tungsten_model_identity_records": 2
+  },
+  "array_storage": "Compressed NPZ, numeric and boolean arrays only; load with allow_pickle=False.",
+  "units": {
+    "positions": "angstrom",
+    "cell_rows": "angstrom",
+    "velocities": "angstrom/fs",
+    "forces": "eV/angstrom",
+    "energy": "eV",
+    "time": "fs",
+    "mass": "atomic mass unit",
+    "response": "eV/angstrom^2",
+    "work_coefficient": "angstrom^2/eV"
+  },
+  "exclusions": [
+    "Full electronic outputs and trajectories outside the stated selections",
+    "Model weights, engine executables and pseudopotential files",
+    "302-frame water replay decision-time force vectors and historical fit states",
+    "Individual surrogate forces at the eight Fig. 3 signed water probes",
+    "Historical residual vectors used to estimate empirical water growth coefficients",
+    "Full 1024-step histories for statistical repetitions beyond the four retained traces",
+    "Tungsten 686-atom data and later reference-only records 42 and 44"
+  ],
+  "release_status": "versioned GitHub release",
+  "intended_tag": "force-error-repro-v1.2.0",
+  "archival_deposit_scope": "Existing DOIs identify earlier deposits; they do not establish deposition of these v1.2.0 additions.",
+  "water_velocity": {
+    "paths": 6,
+    "states_per_path": 20,
+    "probe_reference_evaluations": 8,
+    "derived_directional_vectors": 4,
+    "settings": "water_velocity/settings.json"
+  },
+  "molecular_comparison": {
+    "paths": 48,
+    "states_per_path": 50,
+    "independent_velocity_directions": 4,
+    "new_reference_evaluations": 2352,
+    "settings": "molecular_comparison/settings.json"
+  },
+  "hot_forward": {
+    "paths": 8,
+    "states_per_path": 40,
+    "independent_velocity_directions": 2,
+    "new_reference_evaluations": 312,
+    "settings": "hot_forward/settings.json"
+  },
+  "controlled": {
+    "oscillator_trajectories": 80,
+    "oscillator_intervals": 160000,
+    "oscillator_segments": 10518,
+    "verification_repetitions": 20000,
+    "complete_statistical_histories": 4,
+    "settings": "controlled/settings.json"
+  }
+}
