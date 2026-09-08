@@ -3,14 +3,19 @@
 The engine is a swappable
 label source behind the ``Engine`` protocol; subprocess exit codes are always
 checked and failures raise :class:`EngineError` — never silently reuse stale
-output. Each call runs in its own directory ``run_root/label`` (no CWD
-coupling, no clobbering of other runs).
+output. Each call gets its own directory ``run_root/<label>-NNNNNN`` and each
+execution a numbered ``attempt-N`` subdirectory, so consecutive evaluations
+never clobber one another and a failed attempt keeps its diagnostics. The
+input path handed to pw.x is absolute — a relative ``run_root`` must not
+become invalid once the subprocess changes its working directory.
 
 Input is written directly (simple, fixed namelist set — PBE + Grimme D3,
 ``ibrav=0`` with explicit cell) rather than through ASE's espresso writer, to
 keep the format under our control. Output is parsed from the pw.x stdout text:
-``! total energy`` (Ry), the ``Forces acting on atoms`` block (Ry/bohr), and
-the 3x3 stress block (Ry/bohr^3).
+the ``! total energy`` (Ry) of the last complete SCF block, the ``Forces
+acting on atoms`` block (Ry/bohr) that follows it, and the 3x3 stress block
+(Ry/bohr^3) after that — energy, forces and stress always come from the same
+block, never mixed across blocks. Fortran ``D`` exponents are converted.
 
 Stress sign: pw.x reports stress with compression-positive convention; we
 convert to the ASE convention (``stress_ase = -stress_qe``) and voigt order
@@ -21,8 +26,8 @@ then.
 
 from __future__ import annotations
 
+import dataclasses
 import re
-import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -49,11 +54,15 @@ DEFAULT_PSEUDOS: dict[str, str] = {
 }
 
 _ENERGY_RE = re.compile(r"^!\s+total energy\s+=\s+([-+0-9.EeDd]+)\s+Ry", re.MULTILINE)
-_FORCE_RE = re.compile(
+_FORCE_LINE_RE = re.compile(
     r"^\s*atom\s+\d+\s+type\s+\d+\s+force\s*=\s*"
-    r"([-+0-9.EeDd]+)\s+([-+0-9.EeDd]+)\s+([-+0-9.EeDd]+)\s*$",
-    re.MULTILINE,
+    r"([-+0-9.EeDd]+)\s+([-+0-9.EeDd]+)\s+([-+0-9.EeDd]+)\s*$"
 )
+
+
+def _to_float(token: str) -> float:
+    """Parse a QE number, accepting Fortran ``D``/``d`` exponents."""
+    return float(token.replace("D", "E").replace("d", "e"))
 
 
 def valence_from_upf(path: Path) -> float:
@@ -151,28 +160,52 @@ def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
 
 
 def parse_qe_output(text: str) -> EngineResult:
-    """Parse pw.x stdout: total energy (Ry), forces (Ry/bohr), stress (Ry/bohr^3)."""
-    energies = _ENERGY_RE.findall(text)
+    """Parse the last complete SCF block of a pw.x stdout.
+
+    Energy, forces and stress are read from the same block: the last
+    ``! total energy`` line (Ry), the force block that follows it (Ry/bohr),
+    and the stress block after that (Ry/bohr^3). Concatenated outputs (e.g.
+    appended restarts) must never mix values across blocks.
+    """
+    energies = list(_ENERGY_RE.finditer(text))
     if not energies:
         raise EngineError("pw.x output has no '! total energy' line (SCF never finished?)")
-    energy_ev = float(energies[-1]) * RY_EV
+    energy_ev = _to_float(energies[-1].group(1)) * RY_EV
+    if not np.isfinite(energy_ev):
+        raise EngineError("pw.x reported a non-finite total energy")
 
-    forces_ry_bohr = np.array([tuple(map(float, m)) for m in _FORCE_RE.findall(text)])
-    if forces_ry_bohr.size == 0:
-        raise EngineError("pw.x output has no force block (tprnfor missing?)")
+    block_start = text.find("Forces acting on atoms", energies[-1].end())
+    if block_start == -1:
+        raise EngineError(
+            "pw.x output has no force block after the last energy (tprnfor missing?)"
+        )
+    rows: list[list[float]] = []
+    for line in text[block_start:].splitlines()[1:]:
+        match = _FORCE_LINE_RE.match(line)
+        if match:
+            rows.append([_to_float(component) for component in match.groups()])
+        elif rows:
+            break  # end of the contiguous atom block
+    if not rows:
+        raise EngineError("pw.x force block after the last energy is empty")
+    forces_ry_bohr = np.array(rows)
+    if not np.isfinite(forces_ry_bohr).all():
+        raise EngineError("pw.x reported non-finite forces")
     forces = forces_ry_bohr * (RY_EV / units.Bohr)
 
     stress = None
     stress_marker = "total   stress  (Ry/bohr**3)"
-    idx = text.find(stress_marker)
+    idx = text.find(stress_marker, block_start)
     if idx != -1:
-        rows: list[list[float]] = []
+        stress_rows: list[list[float]] = []
         for line in text[idx:].splitlines()[1:4]:
             parts = line.split()
             if len(parts) >= 3:
-                rows.append([float(parts[0]), float(parts[1]), float(parts[2])])
-        if len(rows) == 3:
-            s = np.array(rows)  # QE compression-positive, Ry/bohr^3
+                stress_rows.append([_to_float(parts[0]), _to_float(parts[1]), _to_float(parts[2])])
+        if len(stress_rows) == 3:
+            s = np.array(stress_rows)  # QE compression-positive, Ry/bohr^3
+            if not np.isfinite(s).all():
+                raise EngineError("pw.x reported a non-finite stress")
             voigt = -np.array(
                 [s[0, 0], s[1, 1], s[2, 2], s[1, 2], s[0, 2], s[0, 1]]
             )  # -> ASE sign convention
@@ -192,56 +225,61 @@ class QeEngine:
         self.config = config
         self.run_root = Path(run_root)
         self.run_root.mkdir(parents=True, exist_ok=True)
+        self._call_counter = 0
 
-    def compute(self, atoms: Atoms, label: str = "step") -> EngineResult:
-        run_dir = self.run_root / label
-        run_dir.mkdir(parents=True, exist_ok=True)
+    def compute(self, atoms: Atoms, label: str | None = None) -> EngineResult:
+        base = "eval" if label is None else str(label).replace("/", "_")
+        run_dir = self.run_root / f"{base}-{self._call_counter:06d}"
+        self._call_counter += 1
         try:
-            return self._attempt(atoms, run_dir)
+            return self._attempt(atoms, run_dir / "attempt-1", self.config)
         except EngineError:
             if not self.config.startpot_file:
                 raise
-            # Chained-density restart failed (stale/corrupt .save after a
-            # killed run, or a frame too far from the last converged one):
-            # wipe the saved density and retry once from scratch — the same
-            # wipe-on-failure semantics as the bootstrap labeling chain.
-            shutil.rmtree(run_dir / "tmp", ignore_errors=True)
-            print(
-                f"startpot chain failed in {run_dir}; density wiped, "
-                "retrying from scratch",
-                flush=True,
-            )
-            return self._attempt(atoms, run_dir)
+        # Chained-density start failed (stale/corrupt .save after a killed
+        # run, or a frame too far from the last converged one): retry once
+        # with an explicit atomic-start input. The failed attempt keeps its
+        # directory and output for diagnosis — nothing is wiped.
+        atomic_config = dataclasses.replace(self.config, startpot_file=False)
+        print(
+            f"startpot chain failed in {run_dir}/attempt-1; "
+            "retrying with an atomic-start input",
+            flush=True,
+        )
+        return self._attempt(atoms, run_dir / "attempt-2", atomic_config)
 
-    def _attempt(self, atoms: Atoms, run_dir: Path) -> EngineResult:
-        in_path = run_dir / "pw.in"
-        out_path = run_dir / "pw.out"
-        write_qe_input(in_path, atoms, self.config)
+    def _attempt(self, atoms: Atoms, attempt_dir: Path, config: QeConfig) -> EngineResult:
+        attempt_dir.mkdir(parents=True, exist_ok=False)
+        # Absolute paths: the subprocess runs with cwd=attempt_dir, so a
+        # relative run_root would otherwise stop resolving.
+        in_path = (attempt_dir / "pw.in").resolve()
+        out_path = (attempt_dir / "pw.out").resolve()
+        write_qe_input(in_path, atoms, config)
 
         t0 = time.perf_counter()
         try:
             with out_path.open("w") as fh:
                 proc = subprocess.run(
-                    [*self.config.pw_cmd, "-in", str(in_path)],
-                    cwd=run_dir,
+                    [*config.pw_cmd, "-in", str(in_path)],
+                    cwd=attempt_dir,
                     stdout=fh,
                     stderr=subprocess.STDOUT,
-                    timeout=self.config.timeout_s,
+                    timeout=config.timeout_s,
                     check=False,
                 )
         except subprocess.TimeoutExpired as exc:
             raise EngineError(
-                f"pw.x timed out after {self.config.timeout_s:.0f}s in {run_dir}"
+                f"pw.x timed out after {config.timeout_s:.0f}s in {attempt_dir}"
             ) from exc
         wall = time.perf_counter() - t0
         text = out_path.read_text(errors="replace")
         if proc.returncode != 0:
             raise EngineError(
-                f"pw.x exited with code {proc.returncode} in {run_dir}; tail:\n"
+                f"pw.x exited with code {proc.returncode} in {attempt_dir}; tail:\n"
                 + "\n".join(text.splitlines()[-15:])
             )
         if "convergence NOT achieved" in text:
-            raise EngineError(f"pw.x SCF did not converge in {run_dir}")
+            raise EngineError(f"pw.x SCF did not converge in {attempt_dir}")
         result = parse_qe_output(text)
         if result.forces.shape != (len(atoms), 3):
             raise EngineError(

@@ -98,7 +98,7 @@ def test_compute_with_fake_pwx(tmp_path: Path) -> None:
     assert result.energy == pytest.approx(SI_ENERGY_RY * units.Hartree / 2.0, abs=1e-6)
     assert result.forces.shape == (2, 3)
     assert result.wall_time_s >= 0.0
-    assert (tmp_path / "runs" / "t0" / "pw.in").exists()
+    assert (tmp_path / "runs" / "t0-000000" / "attempt-1" / "pw.in").exists()
 
 
 def test_compute_engine_error_on_failure(tmp_path: Path) -> None:
@@ -158,3 +158,93 @@ def test_compute_startpot_retry_after_failure(tmp_path: Path) -> None:
     assert result.energy == pytest.approx(SI_ENERGY_RY * units.Hartree / 2.0,
                                           abs=1e-6)
     assert counter.read_text().strip() == "2"
+
+
+_READ_INPUT = (
+    'in=""; while [ $# -gt 0 ]; do '
+    'if [ "$1" = "-in" ]; then in="$2"; shift 2; else shift; fi; done\n'
+    '[ -f "$in" ] || { echo "missing input: $in"; exit 7; }\n'
+)
+
+
+def test_compute_unique_directories_and_absolute_input(tmp_path: Path, monkeypatch) -> None:
+    """Consecutive calls must not share a work directory, and the input path
+    handed to pw.x must stay readable from inside the run directory even when
+    run_root itself is relative."""
+    body = "#!/bin/bash\n" + _READ_INPUT + f"cat {FIXTURE.resolve()}\n"
+    monkeypatch.chdir(tmp_path)
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+        run_root="runs",  # deliberately relative: catches cwd-coupled paths
+    )
+    si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]], cell=[5.43] * 3, pbc=True)
+    first = engine.compute(si)
+    second = engine.compute(si)
+    assert first.energy == pytest.approx(second.energy)
+    run_dirs = sorted(p.name for p in (tmp_path / "runs").iterdir() if p.is_dir())
+    assert len(run_dirs) == 2
+
+
+def test_startpot_fallback_writes_atomic_start_and_keeps_failed_attempt(tmp_path: Path) -> None:
+    """Density-chain fallback must retry with an explicit atomic-start input
+    (not the same startpot='file' input against a wiped density), and must
+    keep the failed attempt's directory and diagnostics."""
+    body = (
+        "#!/bin/bash\n" + _READ_INPUT
+        + "if grep -q \"startingpot = 'file'\" \"$in\"; then echo 'bad density'; exit 3; fi\n"
+        + f"cat {FIXTURE.resolve()}\n"
+    )
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                 startpot_file=True),
+        run_root=tmp_path / "runs",
+    )
+    si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]],
+               cell=[5.43] * 3, pbc=True)
+    result = engine.compute(si, label="chain")
+    assert result.energy == pytest.approx(SI_ENERGY_RY * units.Hartree / 2.0,
+                                          abs=1e-6)
+    (run_dir,) = [p for p in (tmp_path / "runs").iterdir() if p.is_dir()]
+    attempt_1 = (run_dir / "attempt-1" / "pw.in").read_text()
+    attempt_2 = (run_dir / "attempt-2" / "pw.in").read_text()
+    assert "startingpot = 'file'" in attempt_1
+    assert "startingpot" not in attempt_2
+    # The failed attempt's output stays on disk for diagnosis.
+    assert "bad density" in (run_dir / "attempt-1" / "pw.out").read_text()
+
+
+def test_parse_groups_last_scf_block() -> None:
+    """Energy, forces and stress must come from the same (last complete) SCF
+    block — not last energy + every force line + first stress."""
+    block_a = (
+        "!    total energy              =      -1.00000000 Ry\n"
+        "     Forces acting on atoms (cartesian axes, Ry/au):\n\n"
+        "     atom    1 type  1   force =     0.10000000    0.00000000    0.00000000\n"
+        "     atom    2 type  1   force =    -0.10000000    0.00000000    0.00000000\n\n"
+        "          total   stress  (Ry/bohr**3)                   (kbar)     P=        1.00\n"
+        "   0.00001000   0.00000000   0.00000000            1.00        0.00        0.00\n"
+        "   0.00000000   0.00001000   0.00000000            0.00        1.00        0.00\n"
+        "   0.00000000   0.00000000   0.00001000            0.00        0.00        1.00\n"
+    )
+    block_b = block_a.replace("-1.00000000", "-2.00000000").replace("0.10000000", "0.20000000").replace("0.00001000", "0.00002000")
+    result = parse_qe_output(block_a + "\n" + block_b)
+    assert result.energy == pytest.approx(-2.0 * units.Hartree / 2.0, abs=1e-6)
+    assert result.forces.shape == (2, 3)
+    assert result.forces[0, 0] == pytest.approx(0.2 * (units.Hartree / 2.0) / units.Bohr, rel=1e-6)
+    assert result.stress is not None
+    assert result.stress[0] == pytest.approx(
+        -0.00002 * (units.Hartree / 2.0) / units.Bohr**3, rel=1e-6
+    )
+
+
+def test_parse_fortran_d_exponents() -> None:
+    """pw.x can print Fortran D exponents; they must parse, not crash float()."""
+    text = (
+        "!    total energy              =     -0.93439429D+02 Ry\n"
+        "     Forces acting on atoms (cartesian axes, Ry/au):\n\n"
+        "     atom    1 type  1   force =     0.10000000D+00    0.00000000D+00    0.00000000D+00\n\n"
+    )
+    result = parse_qe_output(text)
+    assert result.energy == pytest.approx(-93.439429 * units.Hartree / 2.0, rel=1e-6)
+    assert result.forces.shape == (1, 3)
+    assert result.forces[0, 0] == pytest.approx(0.1 * (units.Hartree / 2.0) / units.Bohr, rel=1e-6)

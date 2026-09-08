@@ -231,7 +231,13 @@ class EnergeticCalculator(Calculator):
         """Actual successful reference calls, including off-trajectory probes."""
         return sum(self.reference_calls.values())
 
-    def _validate_atoms(self, atoms: Atoms) -> None:
+    def _check_identity(self, atoms: Atoms) -> None:
+        """Reject any change that must never happen mid-run.
+
+        Masses and constraints are not part of ASE's cache-invalidation
+        state, so this check must run before cached properties are served
+        too — not only inside :meth:`calculate`.
+        """
         if not len(atoms) or atoms.constraints:
             raise ValueError("energetic dynamics requires nonempty, unconstrained Atoms")
         for array in (atoms.positions, atoms.cell.array, atoms.get_momenta(), atoms.get_masses(),
@@ -247,10 +253,26 @@ class EnergeticCalculator(Calculator):
             identity.positions = atoms.positions.copy()
             if not _same_state(identity, atoms):
                 raise ValueError("atom identity/order, mass, charge, PBC and fixed cell must not change")
+
+    def _validate_atoms(self, atoms: Atoms) -> None:
+        self._check_identity(atoms)
         if self._expected_positions is not None and not np.allclose(
             atoms.positions, self._expected_positions, rtol=1e-12, atol=1e-12
         ):
             raise ValueError("positions do not match the scheduled unwrapped Verlet step")
+
+    def get_property(self, name, atoms: Atoms | None = None, allow_calculation: bool = True):
+        # ASE skips calculate() entirely when nothing it tracks has changed,
+        # but it does not track masses or constraints: validate the immutable
+        # physical state before serving even a fully cached property. A
+        # rejected evaluation must leave no stale results behind.
+        if atoms is not None and self._identity is not None:
+            try:
+                self._check_identity(atoms)
+            except ValueError:
+                self.results = {}
+                raise
+        return super().get_property(name, atoms, allow_calculation)
 
     def _predict(self, atoms: Atoms) -> SurrogatePrediction:
         work = atoms.copy()

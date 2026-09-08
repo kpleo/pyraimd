@@ -27,6 +27,29 @@ def test_adapter_preserves_raw_forces_and_input():
     assert np.isnan(prediction.uncertainty).all()
 
 
+def test_constraint_with_energy_term_returns_raw_energy_and_forces():
+    """A constraint carrying an energy term must not leak into the backend
+    label: energy and forces must come from the same raw physical surface.
+    The workflow applies constraints itself, exactly once."""
+    from ase.constraints import Hookean
+
+    atoms = Atoms('Ar2', positions=[[0, 0, 0], [1.5, 0, 0]])
+    atoms.set_constraint(Hookean(a1=0, a2=1, k=5.0, rt=1.2))
+    raw = atoms.copy()
+    raw.calc = LennardJones()
+    raw_energy = raw.get_potential_energy(apply_constraint=False)
+    adjusted_energy = raw.get_potential_energy(apply_constraint=True)
+    # The test only means something if this constraint actually has an
+    # energy term (FixAtoms alone cannot expose the mismatch).
+    assert adjusted_energy != pytest.approx(raw_energy)
+    result = AseEngine(LennardJones()).compute(atoms)
+    assert result.energy == pytest.approx(raw_energy)
+    np.testing.assert_allclose(result.forces, raw.get_forces(apply_constraint=False))
+    prediction = AseSurrogate(LennardJones()).predict(atoms)
+    assert prediction.energy == pytest.approx(raw_energy)
+    np.testing.assert_allclose(prediction.forces, result.forces)
+
+
 class EnergyChoice(Calculator):
     implemented_properties = ['energy', 'free_energy', 'forces']
 

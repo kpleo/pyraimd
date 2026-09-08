@@ -309,3 +309,25 @@ def test_callback_failure_cannot_repeat_a_stored_event(tmp_path):
     with pytest.raises(RuntimeError, match="callback failed"):
         atoms.get_forces()
     assert len(rows(store)) == 1
+
+
+def test_mass_change_rejected_even_when_results_cached(tmp_path):
+    """Masses are not part of ASE's cache-invalidation state: changing them
+    alone must still be caught before a cached property is served."""
+    atoms, _, _, _, _ = setup(tmp_path)
+    atoms.get_forces()  # caches energy/forces for this state
+    atoms.set_masses([2.0])
+    with pytest.raises(ValueError, match="mass"):
+        atoms.get_forces()
+
+
+def test_constraint_added_after_caching_rejected(tmp_path):
+    """Adding a constraint must not silently reuse cached unconstrained
+    forces; the energetic calculator only supports unconstrained dynamics."""
+    from ase.constraints import FixAtoms
+
+    atoms, _, _, _, _ = setup(tmp_path)
+    atoms.get_forces()
+    atoms.set_constraint(FixAtoms(indices=[0]))
+    with pytest.raises(ValueError, match="unconstrained"):
+        atoms.get_forces()

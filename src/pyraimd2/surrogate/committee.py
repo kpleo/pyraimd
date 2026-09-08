@@ -65,6 +65,14 @@ class CommitteeSurrogate:
             raise ValueError(
                 f"trainable_filters must be non-empty substrings, got {trainable_filters}"
             )
+        # 0.4 supports the CPU committee data path only: accepting a ``device``
+        # field must not silently imply GPU availability. The single-model GPU
+        # path is MaceSurrogate, declared and tested separately.
+        if device != "cpu":
+            raise ValueError(
+                f"CommitteeSurrogate supports device='cpu' only, got {device!r}; "
+                "use MaceSurrogate for a single-model GPU path"
+            )
         # Use one backbone for all members or supply compatible backbones.
         if isinstance(model, (str, os.PathLike)):
             self._model_specs = [str(model)] * n_members
@@ -375,16 +383,44 @@ class CommitteeSurrogate:
     def load_state_dict(self, state: dict) -> None:
         """Restore a :meth:`state_dict` snapshot.  Raises on any recipe or
         backbone mismatch — a resumed run must never silently continue with
-        a different surrogate than the one that produced the stored labels."""
+        a different surrogate than the one that produced the stored labels.
+
+        Every check runs before any model is loaded or modified: a rejected
+        snapshot leaves this instance untouched.
+        """
+        problems: list[str] = []
+        if list(state.get("model_specs", [])) != list(self._model_specs):
+            problems.append(
+                f"backbones {state.get('model_specs')!r} != {self._model_specs!r}"
+            )
+        if int(state.get("n_members", -1)) != self.n_members:
+            problems.append(
+                f"n_members {state.get('n_members')} != {self.n_members}"
+            )
+        recipe_keys = ("seed", "perturbation", "epochs", "lr", "force_weight")
+        for key in recipe_keys:
+            if key not in state or state[key] != getattr(self, key):
+                problems.append(f"recipe {key} {state.get(key)!r} != {getattr(self, key)!r}")
+        if "trainable_filters" not in state or tuple(state["trainable_filters"]) != self.trainable_filters:
+            problems.append(
+                f"trainable_filters {state.get('trainable_filters')!r} "
+                f"!= {self.trainable_filters!r}"
+            )
+        member_states = state.get("member_state_dicts", [])
+        if len(member_states) != self.n_members:
+            problems.append(
+                f"member_state_dicts has {len(member_states)} entries, "
+                f"expected {self.n_members}"
+            )
+        energy_shifts = state.get("energy_shifts", [])
+        if len(energy_shifts) != self.n_members:
+            problems.append(
+                f"energy_shifts has {len(energy_shifts)} entries, "
+                f"expected {self.n_members}"
+            )
+        if problems:
+            raise ValueError("invalid committee checkpoint: " + "; ".join(problems))
         self._ensure_loaded()
-        if list(state["model_specs"]) != list(self._model_specs):
-            raise ValueError(
-                f"checkpoint backbones {state['model_specs']!r} != {self._model_specs!r}"
-            )
-        if int(state["n_members"]) != self.n_members:
-            raise ValueError(
-                f"checkpoint n_members {state['n_members']} != {self.n_members}"
-            )
-        for member, member_state in zip(self._models, state["member_state_dicts"]):
+        for member, member_state in zip(self._models, member_states):
             member.load_state_dict(member_state)
-        self._energy_shifts = list(state["energy_shifts"])
+        self._energy_shifts = list(energy_shifts)

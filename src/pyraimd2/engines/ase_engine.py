@@ -17,6 +17,11 @@ class AseEngine:
     Set ``force_consistent=True`` for calculators whose forces differentiate
     a free energy instead of their default reported energy. Stress is opt-in.
     Each adapter owns its calculator; use separate instances for separate runs.
+
+    The adapter always reports the raw physical energy/forces/stress: any
+    constraint adjustment (energy terms included) is left to the workflow,
+    which applies constraints exactly once. Mixing a constraint-adjusted
+    energy with unprojected forces would pair values from different surfaces.
     """
 
     def __init__(self, calculator: Calculator, *, force_consistent: bool = False,
@@ -34,7 +39,8 @@ class AseEngine:
         work.calc = self.calculator
         start = time.perf_counter()
         try:
-            energy = float(work.get_potential_energy(force_consistent=self.force_consistent))
+            energy = float(work.get_potential_energy(force_consistent=self.force_consistent,
+                                                     apply_constraint=False))
             forces = np.array(work.get_forces(apply_constraint=False), dtype=float, copy=True)
             stress = (np.array(work.get_stress(apply_constraint=False), dtype=float, copy=True)
                       if self.include_stress else None)

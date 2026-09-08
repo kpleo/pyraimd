@@ -44,9 +44,12 @@ class MaceSurrogate:
         calc = self._get_calc()
         work = atoms.copy()
         work.calc = calc
-        energy = float(work.get_potential_energy())
-        forces = np.asarray(work.get_forces(), dtype=float)
-        stress = np.asarray(work.get_stress(), dtype=float) if np.any(atoms.pbc) else None
+        # Raw physical values, like AseEngine: constraints are applied once
+        # by the workflow, never by both sides of the comparison.
+        energy = float(work.get_potential_energy(apply_constraint=False))
+        forces = np.asarray(work.get_forces(apply_constraint=False), dtype=float)
+        stress = (np.asarray(work.get_stress(apply_constraint=False), dtype=float)
+                  if np.any(atoms.pbc) else None)
         return SurrogatePrediction(
             energy=energy,
             forces=forces,
