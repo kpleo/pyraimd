@@ -7,6 +7,7 @@ from pyraimd2.backends.registry import (
     assert_capabilities_satisfy,
     available_backends,
     backend_capabilities,
+    backend_factory,
     create_backend,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "assert_capabilities_satisfy",
     "available_backends",
     "backend_capabilities",
+    "backend_factory",
     "create_backend",
 ]
