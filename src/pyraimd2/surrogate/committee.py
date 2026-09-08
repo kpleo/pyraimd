@@ -376,7 +376,6 @@ class CommitteeSurrogate:
         """Restore a :meth:`state_dict` snapshot.  Raises on any recipe or
         backbone mismatch — a resumed run must never silently continue with
         a different surrogate than the one that produced the stored labels."""
-        self._ensure_loaded()
         if list(state["model_specs"]) != list(self._model_specs):
             raise ValueError(
                 f"checkpoint backbones {state['model_specs']!r} != {self._model_specs!r}"
@@ -385,6 +384,25 @@ class CommitteeSurrogate:
             raise ValueError(
                 f"checkpoint n_members {state['n_members']} != {self.n_members}"
             )
+        if int(state["seed"]) != self.seed:
+            raise ValueError(f"checkpoint seed {state['seed']} != {self.seed}")
+        if float(state["perturbation"]) != self.perturbation:
+            raise ValueError(
+                f"checkpoint perturbation {state['perturbation']} != {self.perturbation}"
+            )
+        if int(state["epochs"]) != self.epochs:
+            raise ValueError(f"checkpoint epochs {state['epochs']} != {self.epochs}")
+        if float(state["lr"]) != self.lr:
+            raise ValueError(f"checkpoint lr {state['lr']} != {self.lr}")
+        if float(state["force_weight"]) != self.force_weight:
+            raise ValueError(
+                f"checkpoint force_weight {state['force_weight']} != {self.force_weight}"
+            )
+        if tuple(state["trainable_filters"]) != tuple(self.trainable_filters):
+            raise ValueError(
+                f"checkpoint trainable_filters {state['trainable_filters']} != {self.trainable_filters}"
+            )
+        self._ensure_loaded()
         for member, member_state in zip(self._models, state["member_state_dicts"]):
             member.load_state_dict(member_state)
         self._energy_shifts = list(state["energy_shifts"])
