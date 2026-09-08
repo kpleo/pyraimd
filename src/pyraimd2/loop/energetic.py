@@ -62,6 +62,11 @@ from pyraimd2.engines.base import (
     EngineResult,
     engine_capabilities,
 )
+from pyraimd2.loop.constraints import (
+    FORCE_METRICS,
+    FixAtomsProjection,
+    validate_constraints,
+)
 from pyraimd2.runtime import (
     EvaluationContext,
     EvaluationPhase,
@@ -331,9 +336,15 @@ class EnergeticCalculator(Calculator):
         on_label: LabelCallback | None = None,
         event_log: EventLog | None = None,
         label_cache: bool = True,
+        force_metric: str = "active_dofs_max_atom",
         _resume_state: dict | None = None,
     ) -> None:
         super().__init__()
+        if force_metric not in FORCE_METRICS:
+            raise ValueError(f"force_metric must be one of {FORCE_METRICS}, "
+                             f"got {force_metric!r}")
+        self.force_metric = force_metric
+        self._projection: FixAtomsProjection | None = None
         self.force_budget = _positive(force_budget, "force_budget")
         self.timestep_fs = _positive(timestep_fs, "timestep_fs")
         self.numerical_floor = _positive(numerical_floor, "numerical_floor", zero=True)
@@ -388,6 +399,7 @@ class EnergeticCalculator(Calculator):
         self._deferred_record: dict | None = None
         self._evaluation_calls_before: dict | None = None
         self._results_model_generation: int | None = None
+        self._last_committed_positions: np.ndarray | None = None
         # Set once the integrator schedules its first evaluation: afterwards
         # unscheduled property requests are re-reads of committed facts.
         self._integrator_owned = False
@@ -498,7 +510,8 @@ class EnergeticCalculator(Calculator):
                 "check_probability": self.check_probability,
                 "check_seed": self.check_seed,
                 "failure_probability": self.failure_probability,
-                "tilt": self.tilt}
+                "tilt": self.tilt,
+                "force_metric": self.force_metric}
 
     def _checkpoint_payload(self, boundary_atoms: Atoms) -> tuple[dict, dict]:
         """Complete-step state for ``CheckpointManager.write``.
@@ -540,6 +553,8 @@ class EnergeticCalculator(Calculator):
                 "momenta": origin.atoms.get_momenta().tolist(),
                 "label_forces_eV_A": origin.label.forces.tolist(),
             },
+            "constraint": (None if self._projection is None
+                           else self._projection.as_dict()),
             "updater_state": (self.on_label.state_dict()
                               if _is_stateful(self.on_label) else None),
         }
@@ -592,6 +607,10 @@ class EnergeticCalculator(Calculator):
         self._rng.bit_generator.state = state["check_rng"]
         self._anchor = (_anchor_from_record(state["anchor"])
                         if state["anchor"] is not None else None)
+        constraint = state.get("constraint")
+        self._projection = (None if constraint is None else
+                            FixAtomsProjection(len(arrays["numbers"]),
+                                               list(constraint["indices"])))
         self._identity = self._identity_from_arrays(arrays)
         origin = state["deferred_origin"]
         if origin is not None:
@@ -747,10 +766,19 @@ class EnergeticCalculator(Calculator):
 
         Masses and constraints are not part of ASE's cache-invalidation
         state, so this check must run before cached properties are served
-        too — not only inside :meth:`calculate`.
+        too — not only inside :meth:`calculate`.  Constraints are FixAtoms
+        only (everything else is rejected explicitly); the fixed set is
+        frozen for the run's lifetime.
         """
-        if not len(atoms) or atoms.constraints:
-            raise ValueError("energetic dynamics requires nonempty, unconstrained Atoms")
+        if not len(atoms):
+            raise ValueError("energetic dynamics requires nonempty Atoms")
+        projection = validate_constraints(atoms)  # rejects non-FixAtoms kinds
+        if self._identity is None:
+            self._projection = projection
+        elif (None if projection is None else projection.indices) != (
+                None if self._projection is None else self._projection.indices):
+            raise ValueError("constraints must not change mid-run (started "
+                             "unconstrained or with a fixed FixAtoms set)")
         for array in (atoms.positions, atoms.cell.array, atoms.get_momenta(), atoms.get_masses(),
                       atoms.get_initial_charges(), atoms.get_initial_magnetic_moments()):
             if not np.isfinite(array).all():
@@ -898,7 +926,12 @@ class EnergeticCalculator(Calculator):
             return None
         if np.any(lengths == 0):
             raise ValueError("supplied directions cannot mix zero and nonzero vectors")
-        return directions / lengths[:, None, None]
+        directions = directions / lengths[:, None, None]
+        if self._projection is not None:
+            # Fixed DOFs never enter a probe direction (and a probe then
+            # never displaces a fixed atom, on either force path).
+            return self._projection.project_directions(directions)
+        return directions
 
     def _calibrate(self, pending: _Pending) -> _Anchor | None:
         directions = self._directions(pending.atoms)
@@ -957,7 +990,14 @@ class EnergeticCalculator(Calculator):
                             direction=d, step_A=float(h), sign=sign,
                             record=record)
                     displacements[d, h_index] = displacement
-                    residuals[d, h_index] = prediction.forces + correction - label.forces
+                    residual = prediction.forces + correction - label.forces
+                    if (self._projection is not None
+                            and self.force_metric == "active_dofs_max_atom"):
+                        # The budget controls the free coordinates: fixed-DOF
+                        # components leave the error norms (the raw residual
+                        # stays in the probe records as the diagnostic).
+                        residual = self._projection.project_forces(residual)
+                    residuals[d, h_index] = residual
                     records.append(record)
         pending.probe_records = records
         try:
@@ -1059,6 +1099,9 @@ class EnergeticCalculator(Calculator):
         accepted = selected is not None
         # Force and energy are frozen BEFORE the Bernoulli draw and reference.
         forces = prediction.forces + anchor.correction if accepted else None
+        if accepted and self._projection is not None:
+            # The driving force that actually propagates: fixed DOFs zeroed.
+            forces = self._projection.project_forces(forces)
         energy = (prediction.energy - float(np.sum(anchor.correction *
                   (atoms.positions - anchor.positions))) + anchor.label.energy -
                   anchor.prediction.energy) if accepted else None
@@ -1070,17 +1113,41 @@ class EnergeticCalculator(Calculator):
                         context=self._context_for(index),
                         model_generation=self._model_generation)
 
+    def _constraint_record(self, pending: _Pending) -> dict | None:
+        """Raw physical forces, the projected driving force and the actual
+        constrained displacement of one evaluation (FixAtoms runs only)."""
+        if self._projection is None:
+            return None
+        if pending.accepted:
+            raw = pending.prediction.forces + pending.anchor.correction
+        else:
+            raw = pending.label.forces
+        record = self._projection.as_dict()
+        record["force_metric"] = self.force_metric
+        record["raw_forces_eV_A"] = np.asarray(raw, dtype=float).tolist()
+        if self._last_committed_positions is not None:
+            displacement = pending.atoms.positions - self._last_committed_positions
+            record["actual_displacement_A"] = displacement.tolist()
+            record["max_fixed_displacement_A"] = \
+                self._projection.max_fixed_displacement(displacement)
+        return record
+
     def _observed(self, pending: _Pending) -> dict | None:
         anchor, label = pending.anchor, pending.label
         if anchor is None or label is None:
             return None
         residual = pending.prediction.forces + anchor.correction - label.forces
-        error = float(np.linalg.norm(residual, axis=1).max())
+        if self._projection is not None:
+            error = self._projection.metric_norm(residual, self.force_metric)
+        else:
+            error = float(np.linalg.norm(residual, axis=1).max())
         work = residual_work(anchor.positions, pending.atoms.positions,
                              anchor.prediction.energy, pending.prediction.energy,
                              anchor.label.energy, label.energy, anchor.correction)
         return {"segment_id": anchor.segment, "residual_eV_A": residual.tolist(),
-                "max_force_error_eV_A": error, "endpoint_work_eV": float(work),
+                "max_force_error_eV_A": error,
+                "force_metric": self.force_metric,
+                "endpoint_work_eV": float(work),
                 "force_budget_exceeded": error > self.force_budget,
                 "observed_coefficient_A2_eV": 2 * work / error**2 if error > 0 else None}
 
@@ -1116,6 +1183,10 @@ class EnergeticCalculator(Calculator):
         violation = bool(observed["force_budget_exceeded"]) if pending.checked else None
         if not pending.accepted:
             pending.energy, pending.forces = pending.label.energy, pending.label.forces.copy()
+            if self._projection is not None:
+                # The reference route drives with the same constraint
+                # semantics as the surrogate path: fixed DOFs zeroed.
+                pending.forces = self._projection.project_forces(pending.forces)
             if not pending.calibration_done and self.on_label is None:
                 pending.new_anchor = self._calibrate(pending)
                 pending.calibration_done = True
@@ -1153,6 +1224,7 @@ class EnergeticCalculator(Calculator):
             "calibration_after_previous_label": self._deferred_record,
             "calibration_deferred_until_after_callback": not pending.accepted and self.on_label is not None,
             "unusable_probe_records": pending.probe_records if new_anchor is None else [],
+            "constraint": self._constraint_record(pending),
         }
         io_task_id = self._new_task_id()
         io_started = time.time()
@@ -1180,6 +1252,7 @@ class EnergeticCalculator(Calculator):
         self.n_accepted += int(pending.accepted)
         self.n_violations += int(violation is True)
         self.step = pending.index
+        self._last_committed_positions = pending.atoms.positions.copy()
         if pending.accepted:
             anchor.open_prefix = pending.open_prefix
             self._anchor = None if violation else anchor
@@ -1468,6 +1541,11 @@ class _EnergeticVerlet(VelocityVerlet):
             atoms.get_momenta() + 0.5 * self.dt * forces
         ) / atoms.get_masses()[:, None]
         calc = atoms.calc
+        if calc._projection is not None:
+            # Schedule the constrained drift: FixAtoms displacements are
+            # zeroed exactly as ASE's adjust_positions applies them below.
+            next_positions = atoms.positions + calc._projection.project_displacement(
+                next_positions - atoms.positions)
         calc._schedule(self.nsteps + 1, next_positions,
                        physical_time_fs=(self.nsteps + 1) * calc.timestep_fs)
         result = super().step(forces)
@@ -1510,6 +1588,7 @@ class EnergeticRunner:
         failure_probability: float = 0.05, tilt: float = math.log(2.0),
         direction: Direction | None = None, on_label: LabelCallback | None = None,
         temperature_K: float = 300.0, velocity_seed: int = 0,
+        force_metric: str = "active_dofs_max_atom",
         event_log: EventLog | None = None, label_cache: bool = True,
         run_dir: str | Path | None = None, checkpoint_interval_steps: int | None = None,
         handle_sigint: bool = False,
@@ -1526,7 +1605,7 @@ class EnergeticRunner:
             transverse_cap=transverse_cap, check_probability=check_probability,
             check_seed=check_seed, failure_probability=failure_probability, tilt=tilt,
             direction=direction, on_label=on_label, event_log=event_log,
-            label_cache=label_cache,
+            label_cache=label_cache, force_metric=force_metric,
         )
         self.calc._validate_atoms(atoms)
         if "momenta" not in atoms.arrays:
@@ -1707,6 +1786,10 @@ class EnergeticRunner:
         calc._model_publisher = runner._publish_model_artifact
         # Boundary atoms: full-step momenta of the last committed evaluation.
         atoms = calc._identity_from_arrays(arrays)
+        if calc._projection is not None:
+            from ase.constraints import FixAtoms
+
+            atoms.set_constraint(FixAtoms(indices=list(calc._projection.indices)))
         atoms.positions = np.array(arrays["positions"], dtype=float)
         atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
         timestep_ase = calc.timestep_fs * units.fs
@@ -1805,6 +1888,11 @@ class EnergeticRunner:
                       cell=np.array(arrays["cell"]), pbc=np.array(arrays["pbc"]))
         atoms.set_masses(np.array(arrays["masses"]))
         atoms.set_initial_charges(np.array(arrays["initial_charges"]))
+        constraint = state.get("constraint")
+        if constraint is not None:
+            from ase.constraints import FixAtoms
+
+            atoms.set_constraint(FixAtoms(indices=list(constraint["indices"])))
         atoms.set_initial_magnetic_moments(np.array(arrays["initial_magmoms"]))
         atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
         event_log = EventLog(new_run_dir)

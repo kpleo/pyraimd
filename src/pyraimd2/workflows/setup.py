@@ -65,7 +65,13 @@ class WorkflowError(RuntimeError):
 
 
 def load_structure(config: PyramidConfig) -> Atoms:
-    """Read and sanity-check the configured structure."""
+    """Read and sanity-check the configured structure.
+
+    Constraints: the structure may carry FixAtoms and ``[constraints]
+    fix_atoms_indices`` may add more; they merge into one fixed set.  Any
+    other constraint kind is rejected explicitly (WP07 supports FixAtoms
+    only).
+    """
     path = config.structure.file
     if not path.is_file():
         raise WorkflowError(
@@ -87,12 +93,23 @@ def load_structure(config: PyramidConfig) -> Atoms:
     if np.any(atoms.get_masses() <= 0):
         raise WorkflowError(
             f"structure.file {path}: non-positive masses; set explicit masses")
-    if atoms.constraints:
-        kinds = ", ".join(type(c).__name__ for c in atoms.constraints)
-        raise WorkflowError(
-            f"structure.file {path} carries constraints ({kinds}); "
-            "constrained dynamics (FixAtoms) arrives with WP07 — remove the "
-            "constraints from the structure for now")
+    from pyraimd2.loop.constraints import ConstraintError, validate_constraints
+
+    try:
+        projection = validate_constraints(atoms)
+    except ConstraintError as error:
+        raise WorkflowError(f"structure.file {path}: {error}") from error
+    configured = list(config.constraints.fix_atoms_indices)
+    if configured:
+        existing = [] if projection is None else list(projection.indices)
+        merged = sorted(set(existing) | set(configured))
+        if max(merged) >= len(atoms):
+            raise WorkflowError(
+                f"constraints.fix_atoms_indices {configured}: index out of "
+                f"range for the {len(atoms)}-atom structure")
+        from ase.constraints import FixAtoms
+
+        atoms.set_constraint(FixAtoms(indices=merged))
     if "momenta" in atoms.arrays and not np.isfinite(atoms.get_momenta()).all():
         raise WorkflowError(
             f"structure.file {path}: non-finite momenta; fix or remove the "
@@ -257,11 +274,10 @@ def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
     ``probe=True`` each configured backend additionally evaluates the
     structure once as a self-check.
     """
-    if config.task.kind != "md":
+    if config.task.kind not in ("singlepoint", "relax", "md"):
         raise WorkflowError(
-            f"task.kind {config.task.kind!r} is not implemented in this "
-            "version (planned for WP07); task.kind = 'md' is the supported "
-            "workflow today — nothing is silently substituted")
+            f"task.kind {config.task.kind!r} is not supported; choose "
+            "singlepoint, relax or md")
     report: dict[str, Any] = {"config": config, "probes": {}}
 
     atoms = load_structure(config)

@@ -20,6 +20,7 @@ are not silently mapped onto the MD path.
 
 from __future__ import annotations
 
+import dataclasses
 import signal
 import sys
 import time
@@ -37,11 +38,14 @@ from pyraimd2 import __version__
 from pyraimd2.config import PyramidConfig, load_resolved_config
 from pyraimd2.engines.base import EngineError
 from pyraimd2.loop import EnergeticRunner
+from pyraimd2.loop.constraints import validate_constraints
 from pyraimd2.loop.energetic import EnergeticRunSummary
+from pyraimd2.runtime.checkpoint import CheckpointManager
 from pyraimd2.runtime.context import EvaluationContext, EvaluationPhase
 from pyraimd2.runtime.events import (
     EVALUATION_COMMITTED,
     EVENT_SCHEMA_VERSION,
+    RESUMED,
     RUN_END,
     RUN_START,
     RUN_SUMMARY,
@@ -262,10 +266,12 @@ class _BackendCalculator(Calculator):
 
     implemented_properties: ClassVar[list[str]] = ["energy", "forces"]
 
-    def __init__(self, backend: object, section: str) -> None:
+    def __init__(self, backend: object, section: str, *,
+                 on_evaluation: Any = None) -> None:
         super().__init__()
         self._backend = backend
         self._section = section
+        self._on_evaluation = on_evaluation
         self.last_label: Any = None
 
     def calculate(self, atoms=None, properties=("energy", "forces"),
@@ -281,14 +287,24 @@ class _BackendCalculator(Calculator):
                 f"{self._section} backend returned non-finite energy/forces")
         self.last_label = label
         self.results = {"energy": float(label.energy), "forces": forces}
+        if self._on_evaluation is not None:
+            self._on_evaluation(label)
 
 
 class _PlainDriver:
     """Velocity-Verlet NVE over one fixed backend, with energetic-style
-    store rows and event records (no anchors, probes or checks)."""
+    store rows and event records (no anchors, probes or checks).
+
+    FixAtoms is supported through the same projection semantics as the
+    energetic runner (constraints applied once, raw forces kept, projected
+    driving force recorded).  Complete-step checkpoints use the WP03
+    CheckpointManager unchanged, so plain runs resume exactly like adaptive
+    ones.
+    """
 
     def __init__(self, config: PyramidConfig, atoms: Atoms, backend: object,
-                 run_dir: Path) -> None:
+                 run_dir: Path, *, event_log: EventLog | None = None,
+                 resume_state: dict | None = None) -> None:
         self.config = config
         self.atoms = atoms
         self.backend = backend
@@ -297,8 +313,9 @@ class _PlainDriver:
         self.run_id = config.run.id
         self._stop_requested = False
         self._task_counter = 0
+        self.projection = validate_constraints(atoms)
         self.store = Store(run_dir / "trajectory.db")
-        self.event_log = EventLog(run_dir)
+        self.event_log = event_log if event_log is not None else EventLog(run_dir)
         atoms.calc = _BackendCalculator(backend, self.section)
         if "momenta" not in atoms.arrays:
             thermalize_momenta(atoms, config.dynamics.temperature_K,
@@ -306,6 +323,11 @@ class _PlainDriver:
         self.dyn = VelocityVerlet(atoms, config.dynamics.timestep_fs * units.fs)
         self.model_id = (model_id_for(backend, 0) if self.section == "surrogate"
                          else (fingerprint_of(backend) or type(backend).__qualname__))
+        self._checkpoints: CheckpointManager | None = CheckpointManager(run_dir)
+        self._resume_state = resume_state
+        if resume_state is not None:
+            self._task_counter = int(resume_state["task_counter"])
+            self.dyn.nsteps = int(resume_state["nsteps"])
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -366,6 +388,16 @@ class _PlainDriver:
         route = "dft" if self.section == "reference" else "ml"
         label_id = (f"{self.run_id}-label-{evaluation_id}"
                     if self.section == "reference" else None)
+        driving = label
+        constraint_record = None
+        if self.projection is not None:
+            # Raw physical forces stay in the backend payload; the driving
+            # force that actually propagates has fixed DOFs zeroed.
+            driving = dataclasses.replace(
+                label, forces=self.projection.project_forces(label.forces))
+            constraint_record = self.projection.as_dict()
+            constraint_record["raw_forces_eV_A"] = np.asarray(
+                label.forces, dtype=float).tolist()
         # snapshot without the calculator: the db row must not resurrect a
         # SinglePointCalculator on read (export writes its own info/arrays)
         self.store.append(
@@ -374,8 +406,8 @@ class _PlainDriver:
             engine=label if self.section == "reference" else None,
             reason="md",
             metadata={"context": ctx.as_dict(), "accepted": True,
-                      "checked": False},
-            driving=label, label_id=label_id)
+                      "checked": False, "constraint": constraint_record},
+            driving=driving, label_id=label_id)
         self.event_log.append_once(
             f"evaluation:{self.run_id}:{evaluation_id}", EVALUATION_COMMITTED,
             {"run_id": self.run_id, "context": ctx.as_dict(), "route": route,
@@ -395,16 +427,57 @@ class _PlainDriver:
                                         "status": "failed",
                                         "reason": repr(error)})
 
-    def run(self, n_steps: int, outputs: RunOutputs, *, verbose: bool) -> dict:
+    def _write_checkpoint(self, step: int) -> int | None:
+        if self._checkpoints is None:
+            return None
+        generation = self._checkpoints.next_generation()
+        state = {
+            "run_id": self.run_id, "driver": "plain-nve", "section": self.section,
+            "nsteps": int(step), "task_counter": self._task_counter,
+            "model_id": self.model_id,
+            "engine_fingerprint": (fingerprint_of(self.backend)
+                                   if self.section == "reference" else None),
+            "timestep_fs": self.config.dynamics.timestep_fs,
+            "driving_energy_eV": float(self.atoms.calc.results["energy"]),
+            "constraint": (None if self.projection is None
+                           else self.projection.as_dict()),
+        }
+        arrays = {
+            "numbers": self.atoms.numbers,
+            "cell": self.atoms.cell.array,
+            "pbc": np.asarray(self.atoms.pbc),
+            "masses": self.atoms.get_masses(),
+            "initial_charges": self.atoms.get_initial_charges(),
+            "initial_magmoms": self.atoms.get_initial_magnetic_moments(),
+            "positions": self.atoms.positions,
+            "momenta": self.atoms.get_momenta(),
+            "driving_forces": np.asarray(self.atoms.calc.results["forces"],
+                                         dtype=float),
+        }
+        self._checkpoints.write(generation, state, arrays, {
+            "run_id": self.run_id,
+            "nsteps": int(step),
+            "physical_time_fs": step * self.config.dynamics.timestep_fs,
+            "last_event_seq": self.event_log.last_seq,
+            "store_schema_version": STORE_SCHEMA_VERSION,
+            "event_schema_version": EVENT_SCHEMA_VERSION,
+            "software_version": __version__,
+        })
+        return generation
+
+    def run(self, n_steps: int, outputs: RunOutputs, *, verbose: bool,
+            start_step: int = 0) -> dict:
         interval = outputs.summary_interval
-        self._emit_run_start()
-        run_start = time.perf_counter()
-        completed = 0
-        try:
+        if start_step == 0 and self._resume_state is None:
+            self._emit_run_start()
             self._evaluate(0)
             self._record_evaluation(0)
             outputs.regenerate_trajectory()
-            for step in range(1, n_steps + 1):
+        run_start = time.perf_counter()
+        completed = start_step
+        checkpoint_interval = self.config.checkpoint.interval_steps
+        try:
+            for step in range(start_step + 1, start_step + n_steps + 1):
                 if self._stop_requested:
                     break
                 # ASE's VelocityVerlet evaluates the new-step forces inside
@@ -419,22 +492,25 @@ class _PlainDriver:
                     {"run_id": self.run_id, "step_id": step - 1,
                      "physical_time_fs": step * self.config.dynamics.timestep_fs})
                 completed = step
+                if step % checkpoint_interval == 0 or self._stop_requested:
+                    self._write_checkpoint(step)
                 outputs.append_trajectory_step(step)
                 if step % interval == 0:
                     outputs.write_summaries()
                     if verbose:
-                        print(f"  step {step}/{n_steps} "
+                        print(f"  step {step}/{start_step + n_steps} "
                               f"(t = {step * self.config.dynamics.timestep_fs:.2f} fs)",
                               flush=True)
         except Exception as error:
             self._fail(error, completed + 1)
             raise
-        stopped = self._stop_requested and completed < n_steps
+        stopped = self._stop_requested and completed < start_step + n_steps
         wall = time.perf_counter() - run_start
         if stopped:
             self.event_log.append(RUN_END, {
                 "run_id": self.run_id, "status": "stopped",
-                "reason": "stop requested; stopped at the last complete step"})
+                "reason": "stop requested; checkpoint saved at the last "
+                          "complete step"})
         self.event_log.append(RUN_SUMMARY, {
             "run_id": self.run_id, "n_steps": completed,
             "n_evaluations": completed + 1, "n_accepted": completed + 1,
@@ -494,19 +570,231 @@ def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
 # public entry points
 
 
+# ---------------------------------------------------------------------------
+# singlepoint and relax tasks
+
+
+def _plain_backend(config: PyramidConfig, run_dir: Path) -> object:
+    return (create_configured_backend("reference", config.reference,
+                                      run_dir=run_dir)
+            if config.task.mode == "reference"
+            else create_configured_backend("surrogate", config.surrogate,
+                                           run_dir=run_dir))
+
+
+def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
+                     verbose: bool) -> WorkflowResult:
+    """One backend evaluation of the structure (reference or fixed surrogate)."""
+    section = config.task.mode
+    backend = _plain_backend(config, run_dir)
+    prepare_run_directory(
+        config, engine=backend if section == "reference" else None,
+        surrogate=backend if section == "surrogate" else None)
+    event_log = EventLog(run_dir)
+    store = Store(run_dir / "trajectory.db")
+    model_id = (model_id_for(backend, 0) if section == "surrogate"
+                else (fingerprint_of(backend) or type(backend).__qualname__))
+    ctx = EvaluationContext(run_id=config.run.id, step_id=-1, evaluation_id=0,
+                            phase=EvaluationPhase.SINGLE_POINT,
+                            physical_time_fs=0.0, model_id=model_id)
+    event_log.append(RUN_START, {
+        "run_id": config.run.id, "schema_version": STORE_SCHEMA_VERSION,
+        "event_schema_version": EVENT_SCHEMA_VERSION,
+        "software_version": __version__,
+        "reference_id": (fingerprint_of(backend) if section == "reference"
+                         else None),
+        "model_id": model_id,
+        "workflow": {"driver": "singlepoint", "mode": section},
+        "policy": None})
+    started_unix = time.time()
+    start = time.perf_counter()
+    try:
+        if section == "reference":
+            label = backend.compute(atoms)
+        else:
+            label = backend.predict(atoms)
+        forces = np.asarray(label.forces, dtype=float)
+        if not np.isfinite(label.energy) or not np.isfinite(forces).all():
+            raise EngineError(f"{section} backend returned non-finite "
+                              "energy/forces")
+    except Exception as error:
+        event_log.append(TASK, {
+            "task_id": f"{config.run.id}-task-1", "attempt": 1,
+            "operation": "reference" if section == "reference" else "inference",
+            "purpose": "singlepoint", "status": "failed",
+            "started_unix": started_unix,
+            "elapsed_s": time.perf_counter() - start,
+            "cpu_cores": None, "gpu": None, "queue_s": None,
+            "source": "workflow", "evaluation_id": 0,
+            "label_id": None, "cache_hit": False, "error": repr(error)})
+        event_log.append(RUN_END, {"run_id": config.run.id,
+                                   "status": "failed", "reason": repr(error)})
+        event_log.close()
+        raise
+    elapsed = time.perf_counter() - start
+    label_id = f"{config.run.id}-label-0" if section == "reference" else None
+    event_log.append(TASK, {
+        "task_id": f"{config.run.id}-task-1", "attempt": 1,
+        "operation": "reference" if section == "reference" else "inference",
+        "purpose": "singlepoint", "status": "success",
+        "started_unix": started_unix, "elapsed_s": elapsed,
+        "cpu_cores": None, "gpu": None, "queue_s": None,
+        "source": "workflow", "evaluation_id": 0,
+        "label_id": label_id, "cache_hit": False})
+    store.append(config.run.id, -1, atoms.copy(),
+                 "dft" if section == "reference" else "ml",
+                 surrogate=label if section == "surrogate" else None,
+                 engine=label if section == "reference" else None,
+                 reason="singlepoint",
+                 metadata={"context": ctx.as_dict(), "accepted": True,
+                           "checked": False},
+                 driving=label, label_id=label_id)
+    event_log.append_once(f"evaluation:{config.run.id}:0", EVALUATION_COMMITTED,
+                          {"run_id": config.run.id, "context": ctx.as_dict(),
+                           "route": "dft" if section == "reference" else "ml",
+                           "checked": False, "verification": None})
+    event_log.append(RUN_SUMMARY, {
+        "run_id": config.run.id, "n_steps": 0, "n_evaluations": 1,
+        "n_accepted": 1,
+        "n_reference": 1 if section == "reference" else 0,
+        "wall_time_s": elapsed, "stopped_early": False})
+    event_log.close()
+    if verbose:
+        print(f"singlepoint ({section}): energy {float(label.energy):.10f} eV, "
+              f"max |F| {float(np.linalg.norm(forces, axis=1).max()):.6f} eV/A")
+        print(f"run directory: {run_dir}")
+    return WorkflowResult(run_dir=run_dir, run_id=config.run.id,
+                          mode=section, steps_completed=0, steps_this_call=0,
+                          stopped_early=False, summary=None)
+
+
+def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
+               verbose: bool) -> WorkflowResult:
+    """Fixed-model structure optimization with ASE FIRE/BFGS.
+
+    Only a fixed surrogate or reference-only optimization is allowed — the
+    energetic calculator (time gating + model switching) is never placed
+    under an optimizer, because it does not define a fixed potential surface.
+    """
+    section = config.task.mode
+    backend = _plain_backend(config, run_dir)
+    prepare_run_directory(
+        config, engine=backend if section == "reference" else None,
+        surrogate=backend if section == "surrogate" else None)
+    event_log = EventLog(run_dir)
+    store = Store(run_dir / "trajectory.db")
+    model_id = (model_id_for(backend, 0) if section == "surrogate"
+                else (fingerprint_of(backend) or type(backend).__qualname__))
+    task_counter = 0
+    event_log.append(RUN_START, {
+        "run_id": config.run.id, "schema_version": STORE_SCHEMA_VERSION,
+        "event_schema_version": EVENT_SCHEMA_VERSION,
+        "software_version": __version__,
+        "reference_id": (fingerprint_of(backend) if section == "reference"
+                         else None),
+        "model_id": model_id,
+        "workflow": {"driver": "relax", "mode": section,
+                     "optimizer": config.relax.optimizer},
+        "policy": None})
+
+    def _record_evaluation(label: object, evaluation_id: int) -> None:
+        nonlocal task_counter
+        task_counter += 1
+        label_id = (f"{config.run.id}-label-{evaluation_id}"
+                    if section == "reference" else None)
+        event_log.append(TASK, {
+            "task_id": f"{config.run.id}-task-{task_counter}", "attempt": 1,
+            "operation": "reference" if section == "reference" else "inference",
+            "purpose": "relax", "status": "success",
+            "started_unix": time.time(),
+            "elapsed_s": float(getattr(label, "wall_time_s", 0.0) or 0.0),
+            "cpu_cores": None, "gpu": None, "queue_s": None,
+            "source": "workflow", "evaluation_id": evaluation_id,
+            "label_id": label_id, "cache_hit": False})
+
+    evaluations = 0
+
+    def _on_evaluation(label: object) -> None:
+        nonlocal evaluations
+        evaluations += 1
+        _record_evaluation(label, evaluations)
+
+    atoms.calc = _BackendCalculator(backend, section,
+                                    on_evaluation=_on_evaluation)
+    if config.relax.optimizer == "bfgs":
+        from ase.optimize import BFGS
+
+        optimizer = BFGS(atoms)
+    else:
+        from ase.optimize import FIRE
+
+        optimizer = FIRE(atoms)
+    start = time.perf_counter()
+
+    def _record_frame() -> None:
+        step = int(optimizer.nsteps)
+        ctx = EvaluationContext(run_id=config.run.id, step_id=step - 1,
+                                evaluation_id=evaluations,
+                                phase=EvaluationPhase.OPTIMIZATION_TRIAL,
+                                physical_time_fs=0.0, model_id=model_id)
+        label = atoms.calc.last_label
+        store.append(config.run.id, step, atoms.copy(),
+                     "dft" if section == "reference" else "ml",
+                     surrogate=label if section == "surrogate" else None,
+                     engine=label if section == "reference" else None,
+                     reason="relax",
+                     metadata={"context": ctx.as_dict(), "accepted": True,
+                               "checked": False},
+                     driving=label)
+
+    optimizer.attach(_record_frame, interval=1)
+    try:
+        converged = bool(optimizer.run(fmax=config.relax.fmax_eV_A,
+                                       steps=config.relax.steps))
+    except Exception as error:
+        event_log.append(RUN_END, {"run_id": config.run.id,
+                                   "status": "failed", "reason": repr(error)})
+        event_log.close()
+        raise
+    _record_frame()
+    wall = time.perf_counter() - start
+    final_forces = np.asarray(atoms.calc.results["forces"], dtype=float)
+    final_fmax = float(np.linalg.norm(final_forces, axis=1).max())
+    event_log.append(RUN_SUMMARY, {
+        "run_id": config.run.id, "n_steps": int(optimizer.nsteps),
+        "n_evaluations": evaluations, "n_accepted": evaluations,
+        "n_reference": evaluations if section == "reference" else 0,
+        "wall_time_s": wall, "stopped_early": False,
+        "converged": converged, "final_fmax_eV_A": final_fmax})
+    event_log.close()
+    if verbose:
+        status = "converged" if converged else "not converged"
+        print(f"relax ({section}, {config.relax.optimizer}): {status} in "
+              f"{optimizer.nsteps} steps — final max |F| "
+              f"{final_fmax:.6f} eV/A (target {config.relax.fmax_eV_A} eV/A)")
+        print(f"run directory: {run_dir}")
+    return WorkflowResult(run_dir=run_dir, run_id=config.run.id,
+                          mode=section, steps_completed=int(optimizer.nsteps),
+                          steps_this_call=int(optimizer.nsteps),
+                          stopped_early=not converged, summary=None)
+
+
 def run_workflow(config: PyramidConfig, *, verbose: bool = True,
                  handle_sigint: bool = True) -> WorkflowResult:
     """Validate, set up the run directory and execute the configured task."""
-    if config.task.kind != "md":
+    if config.task.kind not in ("singlepoint", "relax", "md"):
         raise WorkflowError(
-            f"task.kind {config.task.kind!r} is not implemented in this "
-            "version (planned for WP07); nothing is run in its place — "
-            "task.kind = 'md' is the supported workflow today")
+            f"task.kind {config.task.kind!r} is not supported; choose "
+            "singlepoint, relax or md")
     validate_setup(config)  # dry pass: identical failures as `validate`
     atoms = load_structure(config)
     check_run_directory_available(config)
     run_dir = config.run.directory
     run_dir.mkdir(parents=True, exist_ok=True)
+    if config.task.kind == "singlepoint":
+        return _run_singlepoint(config, atoms, run_dir, verbose=verbose)
+    if config.task.kind == "relax":
+        return _run_relax(config, atoms, run_dir, verbose=verbose)
     if config.task.mode == "adaptive":
         return _run_adaptive(config, atoms, run_dir,
                              verbose=verbose, handle_sigint=handle_sigint)
@@ -516,12 +804,16 @@ def run_workflow(config: PyramidConfig, *, verbose: bool = True,
 
 def resume_workflow(run_dir: str | Path, extra_steps: int, *,
                     force_unlock: bool = False, verbose: bool = True,
-                    handle_sigint: bool = True) -> WorkflowResult:
-    """Continue an adaptive run for ``extra_steps`` additional steps.
+                    handle_sigint: bool = True,
+                    updater: object | None = None) -> WorkflowResult:
+    """Continue a run for ``extra_steps`` additional steps.
 
     Settings come from the run's ``resolved_config.json`` — the same physics,
     model chain and check stream; ``--steps`` is always *additional* steps
-    and the current/target step numbers are printed up front.
+    and the current/target step numbers are printed up front. Plain
+    reference/surrogate runs resume from their complete-step checkpoints
+    (WP07); adaptive runs resume through the WP03 protocol, with an optional
+    stateful updater passed through (WP06).
     """
     run_dir = Path(run_dir)
     if not run_dir.is_dir():
@@ -533,12 +825,15 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
         raise WorkflowError(
             f"resume --steps must be a positive integer, got {extra_steps!r}")
     config = load_resolved_config(run_dir)
-    if config.task.mode != "adaptive":
+    if config.task.kind != "md":
         raise WorkflowError(
-            f"this run used task.mode {config.task.mode!r}; resume is "
-            "implemented for adaptive runs (complete-step checkpoints) — "
-            "plain reference/surrogate resume arrives with WP07; use "
-            "`pyramid export` to extract what this run produced")
+            f"this run used task.kind {config.task.kind!r}; resume is "
+            "implemented for md runs (singlepoint has nothing to continue, "
+            "relax runs reach their target or stop)")
+    if config.task.mode != "adaptive":
+        return _resume_plain(config, run_dir, extra_steps,
+                             force_unlock=force_unlock, verbose=verbose,
+                             handle_sigint=handle_sigint)
     current = _complete_steps(run_dir, config.run.id)
     target = current + extra_steps
     if verbose:
@@ -547,7 +842,7 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
     engine, surrogate = build_backends(config, run_dir=run_dir)
     with _SigintGuard(handle_sigint):
         runner = EnergeticRunner.resume(
-            run_dir, surrogate, engine,
+            run_dir, surrogate, engine, updater=updater,
             checkpoint_interval_steps=config.checkpoint.interval_steps,
             handle_sigint=handle_sigint, event_log_force=force_unlock)
         outputs = RunOutputs(
@@ -580,3 +875,115 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
                           mode="adaptive", steps_completed=after,
                           steps_this_call=after - current,
                           stopped_early=stopped, summary=summary)
+
+
+def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
+                  force_unlock: bool, verbose: bool,
+                  handle_sigint: bool) -> WorkflowResult:
+    """Resume a plain reference/surrogate MD run from its last valid
+    complete-step checkpoint (same CheckpointManager schema as adaptive)."""
+    manager = CheckpointManager(run_dir)
+    checkpoint = manager.read_latest_valid()
+    if checkpoint is None:
+        raise WorkflowError(
+            f"no valid checkpoint under {run_dir}; this plain run has no "
+            "complete-step checkpoint to resume from (checkpoints are written "
+            f"every {config.checkpoint.interval_steps} steps and on a stop "
+            "request)")
+    state, arrays, manifest = checkpoint.state, checkpoint.arrays, checkpoint.manifest
+    if state.get("driver") != "plain-nve" or state.get("section") != config.task.mode:
+        raise WorkflowError(
+            f"checkpoint under {run_dir} belongs to driver "
+            f"{state.get('driver')!r}/{state.get('section')!r}, not to a "
+            f"plain {config.task.mode!r} run; resume requires the same run")
+    backend = _plain_backend(config, run_dir)
+    if config.task.mode == "reference" and \
+            fingerprint_of(backend) != state.get("engine_fingerprint"):
+        raise WorkflowError(
+            "reference backend identity does not match the checkpoint; "
+            "resume requires the same physical settings")
+    current = _complete_steps(run_dir, config.run.id)
+    if current < int(state["nsteps"]):
+        raise WorkflowError(
+            f"the trajectory ({current} complete steps) is behind the "
+            f"checkpoint (step {state['nsteps']}); the run directory is "
+            "inconsistent")
+    target = current + extra_steps
+    if verbose:
+        print(f"resume: run {config.run.id} ({config.task.mode}-only) is at "
+              f"complete step {current}; running {extra_steps} additional "
+              f"steps (target {target})")
+    from ase.constraints import FixAtoms
+
+    if current >= 1:
+        # The window after the checkpoint advanced the trajectory: rebuild
+        # the boundary from the last committed row.  The plain driver logs
+        # AFTER the step completes, so the row's momenta are already the
+        # full-step momenta — no extra half-kick to apply.
+        store = Store(run_dir / "trajectory.db")
+        row = store._row_at_step(config.run.id, current - 1)
+        atoms = row.toatoms()
+        driving_energy, driving_forces = store.driving_label(config.run.id,
+                                                             current - 1)
+    else:
+        atoms = Atoms(numbers=np.array(arrays["numbers"]),
+                      positions=np.array(arrays["positions"], dtype=float),
+                      cell=np.array(arrays["cell"]), pbc=np.array(arrays["pbc"]))
+        atoms.set_masses(np.array(arrays["masses"]))
+        atoms.set_initial_charges(np.array(arrays["initial_charges"]))
+        atoms.set_initial_magnetic_moments(np.array(arrays["initial_magmoms"]))
+        atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
+        driving_energy = float(state["driving_energy_eV"])
+        driving_forces = np.array(arrays["driving_forces"], dtype=float)
+    constraint = state.get("constraint")
+    if constraint is not None:
+        atoms.set_constraint(FixAtoms(indices=list(constraint["indices"])))
+    event_log = EventLog(run_dir, force=force_unlock)
+    task_counter = int(state["task_counter"])
+    for event in event_log.iter_events():
+        if event.get("type") == TASK:
+            try:
+                task_counter = max(task_counter,
+                                   int(str(event.get("task_id", "")).rsplit("-", 1)[1]))
+            except (ValueError, IndexError):
+                continue
+    driver = _PlainDriver(config, atoms, backend, run_dir,
+                          event_log=event_log, resume_state=state)
+    driver._task_counter = task_counter
+    driver.dyn.nsteps = current
+    driver.atoms.calc.atoms = atoms.copy()
+    # The reusable driving force of the boundary evaluation feeds the first
+    # half-kick without recalculating it.
+    driver.atoms.calc.results = {
+        "energy": float(driving_energy),
+        "forces": np.asarray(driving_forces, dtype=float).copy()}
+    event_log.append(RESUMED, {
+        "run_id": config.run.id, "driver": "plain-nve",
+        "from_event_seq": int(manifest["last_event_seq"]),
+        "checkpoint_generation": checkpoint.generation})
+    outputs = RunOutputs(
+        run_dir, config.run.id,
+        trajectory_interval_steps=config.output.trajectory_interval_steps,
+        summary_interval_steps=config.output.summary_interval_steps)
+    outputs.regenerate_trajectory()
+    previous = signal.getsignal(signal.SIGINT) if handle_sigint else None
+    if handle_sigint:
+        signal.signal(signal.SIGINT,
+                      lambda signum, frame: driver.request_stop())
+    try:
+        outcome = driver.run(extra_steps, outputs, verbose=verbose,
+                             start_step=current)
+    finally:
+        _finalize_quietly(outputs)
+        driver.close()
+        if handle_sigint:
+            signal.signal(signal.SIGINT, previous)
+    after = _complete_steps(run_dir, config.run.id)
+    if verbose:
+        status = ("stopped early at the last complete step"
+                  if outcome["stopped"] else "done")
+        print(f"resume {status}: run is now at complete step {after}")
+    return WorkflowResult(run_dir=run_dir, run_id=config.run.id,
+                          mode=config.task.mode, steps_completed=after,
+                          steps_this_call=after - current,
+                          stopped_early=outcome["stopped"], summary=None)

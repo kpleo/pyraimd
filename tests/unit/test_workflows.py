@@ -182,11 +182,13 @@ def test_continuous_vs_stop_resume_are_identical(tmp_path) -> None:
             == second_info["checks"]["accepted_count"])
 
 
-def test_resume_rejects_plain_mode_runs(tmp_path) -> None:
+def test_resume_continues_plain_mode_runs(tmp_path) -> None:
     config = load_config(make_config(tmp_path, mode="reference"))
     run_workflow(config, verbose=False, handle_sigint=False)
-    with pytest.raises(WorkflowError, match="adaptive"):
-        resume_workflow(config.run.directory, 2, verbose=False)
+    result = resume_workflow(config.run.directory, 2, verbose=False,
+                             handle_sigint=False)
+    assert result.steps_this_call == 2
+    assert result.steps_completed == config.dynamics.steps + 2
 
 
 def test_sigint_stops_at_a_step_boundary_and_resume_continues(tmp_path) -> None:

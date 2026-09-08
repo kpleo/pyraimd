@@ -42,6 +42,11 @@ TASK_KINDS = ("singlepoint", "relax", "md")
 TASK_MODES = ("reference", "surrogate", "adaptive")
 ENSEMBLES = ("nve",)
 POLICY_NAMES = ("energetic",)
+# Canonical force-error metric vocabulary (also imported by
+# pyraimd2.loop.constraints): the budget controls the free coordinates by
+# default; all-atom control is an explicit alternative, never silent.
+FORCE_METRICS = ("active_dofs_max_atom", "all_atoms_max_atom")
+RELAX_OPTIMIZERS = ("fire", "bfgs")
 
 # Backend option keys whose string values are filesystem paths, resolved
 # against the configuration file's directory and checked at validate time.
@@ -100,6 +105,23 @@ class PolicyConfig:
     numerical_floor_eV_A: float
     time_cap_fs: float
     transverse_cap: float
+    force_metric: str = "active_dofs_max_atom"
+
+
+@dataclass(frozen=True)
+class RelaxConfig:
+    """Fixed-model structure optimization (ASE optimizers, never hand-rolled)."""
+
+    optimizer: str = "fire"
+    fmax_eV_A: float = 0.05
+    steps: int = 200
+
+
+@dataclass(frozen=True)
+class ConstraintsConfig:
+    """FixAtoms declaration; every other constraint kind is rejected."""
+
+    fix_atoms_indices: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -141,6 +163,8 @@ class PyramidConfig:
     verification: VerificationConfig
     checkpoint: CheckpointConfig
     output: OutputConfig
+    relax: RelaxConfig
+    constraints: ConstraintsConfig
     source_path: Path | None  # the file this configuration was loaded from
 
     def resolved_dict(self) -> dict[str, Any]:
@@ -177,6 +201,7 @@ class PyramidConfig:
                 "numerical_floor_eV_A": self.policy.numerical_floor_eV_A,
                 "time_cap_fs": self.policy.time_cap_fs,
                 "transverse_cap": self.policy.transverse_cap,
+                "force_metric": self.policy.force_metric,
             }),
             "verification": (None if self.task.mode != "adaptive" else {
                 "probability": self.verification.probability,
@@ -188,6 +213,10 @@ class PyramidConfig:
                            "keep_generations": self.checkpoint.keep_generations},
             "output": {"trajectory_interval_steps": self.output.trajectory_interval_steps,
                        "summary_interval_steps": self.output.summary_interval_steps},
+            "relax": {"optimizer": self.relax.optimizer,
+                      "fmax_eV_A": self.relax.fmax_eV_A,
+                      "steps": self.relax.steps},
+            "constraints": {"fix_atoms_indices": list(self.constraints.fix_atoms_indices)},
         }
 
 
@@ -274,6 +303,8 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
     verification = _parse_verification(verification_table, run.seed)
     checkpoint = _parse_checkpoint(_section(document, "checkpoint"))
     output = _parse_output(_section(document, "output"))
+    relax = _parse_relax(_section(document, "relax"))
+    constraints = _parse_constraints(_section(document, "constraints"))
     _check_task_compatibility(task, reference=reference, surrogate=surrogate,
                               policy=policy,
                               verification_present=verification_table is not None)
@@ -281,7 +312,8 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
         schema_version=version, run=run, task=task, structure=structure,
         dynamics=dynamics, reference=reference, surrogate=surrogate,
         policy=policy, verification=verification, checkpoint=checkpoint,
-        output=output, source_path=source_path)
+        output=output, relax=relax, constraints=constraints,
+        source_path=source_path)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +321,8 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
 
 
 _SECTIONS = ("run", "task", "structure", "dynamics", "reference", "surrogate",
-             "policy", "verification", "checkpoint", "output")
+             "policy", "verification", "checkpoint", "output", "relax",
+             "constraints")
 
 
 def _reject_unknown(table: dict, known: tuple[str, ...] | list[str], prefix: str,
@@ -511,7 +544,8 @@ def _parse_policy(table: dict | None) -> PolicyConfig | None:
         return None
     _reject_unknown(table,
                     ("name", "force_budget_eV_A", "probe_steps_A",
-                     "numerical_floor_eV_A", "time_cap_fs", "transverse_cap"),
+                     "numerical_floor_eV_A", "time_cap_fs", "transverse_cap",
+                     "force_metric"),
                     "policy", "field")
     _str_field(table, "name", "policy", default="energetic",
                choices=POLICY_NAMES)
@@ -533,9 +567,40 @@ def _parse_policy(table: dict | None) -> PolicyConfig | None:
                             minimum=0.0)
     transverse_cap = _float_field(table, "transverse_cap", "policy", default=0.1,
                                   minimum=0.0, allow_zero=True, maximum=1.0)
+    force_metric = _str_field(table, "force_metric", "policy",
+                              default="active_dofs_max_atom",
+                              choices=FORCE_METRICS)
     return PolicyConfig(force_budget_eV_A=force_budget, probe_steps_A=probe,
                         numerical_floor_eV_A=numerical_floor, time_cap_fs=time_cap,
-                        transverse_cap=transverse_cap)
+                        transverse_cap=transverse_cap, force_metric=force_metric)
+
+
+def _parse_relax(table: dict | None) -> RelaxConfig:
+    if table is None:
+        return RelaxConfig()
+    _reject_unknown(table, ("optimizer", "fmax_eV_A", "steps"), "relax", "field")
+    optimizer = _str_field(table, "optimizer", "relax", default="fire",
+                           choices=RELAX_OPTIMIZERS)
+    fmax = _float_field(table, "fmax_eV_A", "relax", default=0.05, minimum=0.0)
+    steps = _int_field(table, "steps", "relax", default=200, minimum=1)
+    return RelaxConfig(optimizer=optimizer, fmax_eV_A=fmax, steps=steps)
+
+
+def _parse_constraints(table: dict | None) -> ConstraintsConfig:
+    if table is None:
+        return ConstraintsConfig()
+    _reject_unknown(table, ("fix_atoms_indices",), "constraints", "field")
+    indices = table.pop("fix_atoms_indices", [])
+    if (not isinstance(indices, list)
+            or not all(isinstance(i, int) and not isinstance(i, bool) and i >= 0
+                       for i in indices)):
+        raise ConfigError(
+            f"constraints.fix_atoms_indices must be a list of nonnegative "
+            f"integer atom indices, got {indices!r}")
+    if len(set(indices)) != len(indices):
+        raise ConfigError(
+            f"constraints.fix_atoms_indices contains duplicates: {indices}")
+    return ConstraintsConfig(fix_atoms_indices=tuple(sorted(indices)))
 
 
 def _parse_verification(table: dict | None, run_seed: int) -> VerificationConfig:

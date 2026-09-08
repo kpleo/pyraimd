@@ -320,15 +320,16 @@ def test_export_marks_missing_reference_labels(tmp_path) -> None:
         assert "energy" not in frame.calc.results
 
 
-def test_resume_rejects_a_plain_mode_run(tmp_path, capsys) -> None:
+def test_resume_continues_a_plain_mode_run(tmp_path, capsys) -> None:
     block = ('[surrogate]\nbackend = "harmonic-surrogate"\n'
              'k = 1.0\nr0 = 0.9\nbias = 0.05')
     config_path = write_config(tmp_path, _plain_mode_config("surrogate", block))
     assert run_cli("run", str(config_path)) == 0
     capsys.readouterr()
     run_dir = tmp_path / "runs" / "harmonic-demo"
-    assert run_cli("resume", str(run_dir), "--steps", "2") == 2
-    assert "adaptive" in capsys.readouterr().err
+    assert run_cli("resume", str(run_dir), "--steps", "2") == 0
+    out, _ = capsys.readouterr()
+    assert "complete step" in out
 
 
 def test_resume_stale_lock_requires_deliberate_force_unlock(tmp_path, capsys) -> None:

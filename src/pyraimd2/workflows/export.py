@@ -55,9 +55,15 @@ def _select_forces(data: dict, route: str, force_source: str):
             True, label_id)
 
 
-def frame_from_row(row, run_id: str, *, force_source: str) -> Atoms:
+def frame_from_row(row, run_id: str, *, force_source: str,
+                   wrap: bool = False) -> Atoms:
     """One export frame from one store row (see module docstring for the
-    missing-data marking rules)."""
+    missing-data marking rules).
+
+    Coordinates in the store are continuous unwrapped positions; pass
+    ``wrap=True`` to export them wrapped back into the cell instead (the
+    store itself is never rewritten).
+    """
     data = row.data
     route = str(row.key_value_pairs["route"])
     step = int(row.key_value_pairs["step"])
@@ -67,6 +73,11 @@ def frame_from_row(row, run_id: str, *, force_source: str) -> Atoms:
     # rows whose atoms carried a calculator (plain-mode snapshots) reattach
     # it on read; the export writes info/arrays itself, so detach it
     atoms.calc = None
+    if wrap:
+        atoms.wrap()
+        atoms.info["coordinates"] = "wrapped"
+    else:
+        atoms.info["coordinates"] = "unwrapped"
     atoms.arrays["forces"] = (forces if available
                               else np.full((len(atoms), 3), np.nan))
     metadata = data.get("metadata") or {}
@@ -89,13 +100,15 @@ def frame_from_row(row, run_id: str, *, force_source: str) -> Atoms:
 
 def frames_from_store(store: Store, run_id: str, *, force_source: str,
                       interval_steps: int = 1,
-                      only_step: int | None = None) -> list[Atoms]:
+                      only_step: int | None = None,
+                      wrap: bool = False) -> list[Atoms]:
     """Export frames in step order, thinned by evaluation id.
 
     ``interval_steps = k`` keeps every k-th committed evaluation (the
     initial evaluation, id 0, always passes); ``only_step`` selects the one
     row stored at that step index.  Missing forces for the requested source
-    are marked, never zero-filled.
+    are marked, never zero-filled.  ``wrap=True`` wraps the continuous
+    unwrapped store coordinates back into the cell for output.
     """
     if force_source not in FORCE_SOURCES:
         raise ExportError(
@@ -111,7 +124,8 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
             continue
         if only_step is None and evaluation_id % interval_steps != 0:
             continue
-        frames.append(frame_from_row(row, run_id, force_source=force_source))
+        frames.append(frame_from_row(row, run_id, force_source=force_source,
+                                     wrap=wrap))
     return frames
 
 

@@ -94,8 +94,8 @@ any other version is rejected — see *Schema migration*.
 
 ### [task]
 
-- `kind`: `md` (supported), `singlepoint` / `relax` (rejected with a WP07
-  pointer — they are not silently mapped onto the MD path).
+- `kind`: `singlepoint` (one backend evaluation), `relax` (fixed-model
+  optimization with ASE FIRE/BFGS), `md` (NVE dynamics).
 - `mode`: `adaptive` (energetic MD: anchored surrogate forces with
   independent reference checks), `reference` (plain NVE on the reference
   engine), `surrogate` (plain NVE on the frozen surrogate).
@@ -103,18 +103,39 @@ any other version is rejected — see *Schema migration*.
 Mode rules:
 
 - `adaptive` requires `[reference]`, `[surrogate]` and `[policy]`, and only
-  applies to `kind = "md"`.
+  applies to `kind = "md"` — the energetic calculator is never placed
+  under an optimizer, because it does not define a fixed potential surface.
 - `reference` / `surrogate` require their own backend section and reject
   the other backend section plus `[policy]` and `[verification]` (unused
   sections are errors, not silently ignored).
+
+### [relax]
+
+- `optimizer`: `fire` (default) or `bfgs` — ASE optimizers, never
+  hand-rolled.
+- `fmax_eV_A` (number > 0, default 0.05): convergence threshold on the max
+  per-atom force.
+- `steps` (integer >= 1, default 200): optimizer step cap.
+
+### [constraints]
+
+- `fix_atoms_indices` (list of nonnegative integer atom indices): merges
+  with FixAtoms the structure itself carries (e.g. POSCAR selective
+  dynamics) into one fixed set. Every other constraint kind (RATTLE,
+  energy-carrying or moving constraints) and any variable-cell dynamics is
+  rejected explicitly. Fixed coordinates never move; the force budget
+  applies to the free coordinates by default (`policy.force_metric =
+  "active_dofs_max_atom"`), with raw forces, the projected driving force
+  and the actual constrained displacement recorded per evaluation;
+  `"all_atoms_max_atom"` is the explicit alternative.
 
 ### [structure]
 
 - `file` (path, required): any structure ASE reads (extxyz, CIF, POSCAR,
   ...), resolved relative to the configuration file. Velocities in the file
   are kept; without them, momenta are thermalized at
-  `dynamics.temperature_K` with `dynamics.velocity_seed`. Constraints (e.g.
-  FixAtoms) are rejected with a WP07 pointer.
+  `dynamics.temperature_K` with `dynamics.velocity_seed`. FixAtoms
+  constraints are supported (see `[constraints]`).
 
 ### [dynamics]
 
@@ -152,6 +173,11 @@ Mode rules:
 - `numerical_floor_eV_A` (number >= 0, default 0.0).
 - `time_cap_fs` (number > 0, default 1.0).
 - `transverse_cap` (number in [0, 1], default 0.1).
+- `force_metric` (`active_dofs_max_atom` default, or
+  `all_atoms_max_atom`): what the force budget measures. With FixAtoms,
+  the default counts only the free coordinates (the raw all-atom residual
+  stays recorded as a diagnostic); the all-atom metric is an explicit
+  alternative, never a silent redefinition.
 
 ### [verification] (adaptive only)
 
@@ -208,9 +234,10 @@ evaluation — they are the recovery record and are never thinned.
   last valid checkpoint plus event replay (WP03). Reference/surrogate
   identity mismatches are refused; changing settings means a new run (or a
   library-level `fork`).
-- Plain reference/surrogate runs cannot be resumed in 0.4.0 (their resume
-  needs the energetic checkpoint protocol; arrives with WP07). `export`
-  works on them today.
+- Plain reference/surrogate runs resume from their complete-step
+  checkpoints (WP07): the plain driver checkpoints at every
+  `checkpoint.interval_steps` and on a stop request, and resume rebuilds
+  the boundary from the last committed step. `export` works on them too.
 
 ## Export and missing data
 
@@ -241,13 +268,13 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 
 ## Current limitations (0.4.0, by design)
 
-- `singlepoint` / `relax` task kinds and `FixAtoms` constraints: rejected
-  with a WP07 pointer, not approximated.
+- Constraints: FixAtoms only — RATTLE/holonomic, energy-carrying and
+  moving constraints are rejected explicitly, as is any variable-cell
+  (NPT) dynamics.
 - NVE only; NVT is 0.4.1 (WP10).
-- Plain reference/surrogate runs: no resume (WP07).
 - `checkpoint.keep_generations` is fixed at 2 by the runtime.
-- Model updates (online training) land with WP06; adaptive runs today use
-  a frozen surrogate.
+- Model updates (online training) use the WP06 guarded updater interface;
+  adaptive runs without an updater use a frozen surrogate.
 
 ## Examples
 
