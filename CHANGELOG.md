@@ -1,11 +1,11 @@
 # Changelog
 
-## 0.4.0 (in development)
+## 0.4.0rc1
 
 The first workflow-stable release line: configuration-driven, resumable runs
 with an explicit evaluation contract, a complete cost record and guarded model
-updates. All changes below are already on the development branch; materials
-validation results and the release-candidate checklist are pending.
+updates. Materials validation landed with the two QE + MACE recipes below
+(QE 7.5, MACE-MPA-0 medium at float64 on CPU).
 
 ### Added
 
@@ -63,6 +63,14 @@ validation results and the release-candidate checklist are pending.
   `examples/qe_mace_skeleton/`, an installable example backend plugin
   `examples/backends/pyraimd2_harmonic/`, and user documentation:
   `docs/configuration.md`, `docs/api.md`.
+- Materials recipes with inputs, settings, commands and full costs:
+  `examples/si_bulk_qe_mace/` (8-atom bulk Si: surrogate relax, plain NVE in
+  both modes, adaptive NVE with 4/7 accepted evaluations at checks p = 1.0,
+  interrupted runs resumed in a new process), `examples/al_surface_qe_mace/`
+  (Al(111) slab with bottom layers fixed: plain modes and plain
+  checkpoint/resume), and the no-external-software periodic CI example
+  `examples/periodic_lj/` with its `pyraimd2_lj` backend plugin. A generic
+  Slurm template lives in `hpc/templates/`; site profiles are not shipped.
 
 ### Fixed
 
@@ -94,9 +102,15 @@ validation results and the release-candidate checklist are pending.
   (`Runner`, `SwitchingCalculator`, scheduled/conformal policies) are
   unchanged; the 0.3.0-era examples continue to run.
 - QE working-directory layout changed to `<label>-NNNNNN/attempt-N/` (run
-  artifacts only, no API change). With smearing, the QE engine now honestly
-  declares `free_energy` (the `!` value is the variational free energy); it
-  was previously mislabeled `energy`.
+  artifacts only, no API change), continuing across processes so resume never
+  collides; pseudopotentials inside `pseudo_dir` are written as basenames in
+  ATOMIC_SPECIES lines (long absolute paths overflow QE's card-line buffer).
+  With smearing, the QE engine now honestly declares `free_energy` (the `!`
+  value is the variational free energy); it was previously mislabeled `energy`.
+  Because the energy-kind contract refuses to mix a smeared reference
+  (`free_energy`) with a potential-energy surrogate (`energy`), **adaptive MD
+  with a metallic smeared reference is not supported in 0.4.0**; plain
+  single-backend workflows are unaffected.
 - Current 0.4.0 limits by design: NVE only (NVT is 0.4.1), FixAtoms only,
   `checkpoint.keep_generations` fixed at 2, and adaptive mode only for
   `task.kind = "md"`.

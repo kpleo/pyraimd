@@ -219,7 +219,8 @@
     引擎 hermetic（fake pw.x＋输出夹具）、PySCF 单位/符号回归（有
     PySCF 的机器）、MACE 名称/委员会 slow 标记测试（需 torch 与本地
     模型）、配置/CLI/续算/导出三模式；
-  - 已有材料验证：待补充（WP08）。
+  - 已有材料验证：见文末"最终 0.4.0 完成度（R3 填写）"（WP08 已返回，
+    体相 Si adaptive 与 Al 表面 plain 通过，metallic adaptive 不支持）。
 - 哪些能力只是接口支持，哪些完成了真实后端验证：见上分级；无任何
   真实 QE/MACE 前向验证在本阶段被声明。
 
@@ -270,5 +271,121 @@
 
 ## 最终 0.4.0 完成度（R3 填写）
 
-未执行。逐项核对与候选发布决定依赖 WP08 的两条周期材料工作流结果，
-按计划留待 WP09 第二阶段。
+### §3 完成条件逐项核对
+
+- 可以用配置进行单点、固定模型结构优化、固定晶胞 NVE；支持
+  reference-only、surrogate-only 和明确支持的 adaptive MD 模式：
+  **完成。** `tests/unit/test_relax_singlepoint.py`（CLI 全流程）、
+  `test_workflows.py`、`examples/si_bulk_qe_mace/`（真实材料三模式）、
+  `examples/periodic_lj/`（解析周期示例）。adaptive 仅 `kind="md"`，
+  metallic（smeared free-energy）参考的 adaptive 明确拒绝（WP08 证据）。
+- energetic NVE 可以从完整步边界续算；冻结模型和受支持更新器的状态均可
+  恢复：**完成。** `tests/unit/test_resume.py`（连续 100 vs 40+恢复 60，
+  1e-12）、`test_plain_resume.py`（plain 模式）、`test_guarded_update.py`
+  （可保存更新器全过程恢复）、`examples/si_bulk_qe_mace/`（真实材料在新
+  作业中 resume +2，接受/检查一致）。
+- 最小核心仍只需 NumPy、ASE 和标准库；不运行模型推理也能验证主要运行机
+  制：**完成。** CI `tests.yml` 核心腿断言无 torch/pyscf（本报告验收项），
+  wheel/sdist 安装冒烟同断言（0.4.0rc1 复验，见验收项"候选版本"）。
+- 能替换 ASE 后端，并有 QE＋MACE 的周期体相与固定层表面案例：**完成。**
+  `examples/si_bulk_qe_mace/`（体相 Si，QE 7.5＋MACE-MPA-0 medium）、
+  `examples/al_surface_qe_mace/`（Al(111) 固定层，plain＋FixAtoms）、
+  `examples/backends/{pyraimd2_harmonic,pyraimd2_lj}`（插件路径）、
+  `qe-ase`（ASE 原生 QE 路径）。
+- 每个新案例都有输入、后端版本、命令、预期检查和完整成本；不要求先得
+  到论文级加速比：**完成。** 两个配方的 README（输入/设置/命令）、
+  WP08 报告（58 次实际参考执行、分用途计数与墙钟、预算 58/200）。
+- 支持固定原子约束 FixAtoms，定义并测试自由坐标的力预算及真实驱动力；
+  复杂约束留到后续：**完成。** `tests/unit/test_fixatoms.py`、
+  `test_constraints.py`、`examples/al_surface_qe_mace/`（真实固定层）；
+  `policy.force_metric` 两档定义在 docs/configuration.md 写明；RATTLE 等
+  复杂约束与变胞明确拒绝（测试覆盖）。
+- 有一条真实的标签收集—模型更新—重新锚定—保存／恢复演示；生产可恢复
+  模式只接受已实现状态导出的更新器：**完成（解析可保存更新器）。**
+  `tests/unit/test_guarded_update.py`（发布/回退/去重/全过程恢复）；
+  MACE 委员会路径的 slow 集成测试已就位但**未执行**（本机与 CI 均无
+  torch；`tests/unit/test_committee_guarded_update.py`，WP06 报告如实
+  标注），无状态接口的更新器恢复时明确拒绝。
+- 关键错误会停止或进行有记录的有限重试，不会把失败结果当成成功标签：
+  **完成。** WP00 定向修复套件、QE 重试与失败诊断（`test_qe_engine.py`、
+  `test_qe_reliability.py`）、失败尝试入帐（WP08 报告的 1 次失败尝试）。
+
+### 工作包逐项
+
+- WP00 基础问题定向修复：**完成**（`WP00_report.md`，6 项问题各配暴露
+  性回归测试）。
+- WP01 物理时间、能力和模型身份：**完成**（`WP01_report.md`，
+  EvaluationContext、能量口径契约、代次缓存键全部带验收测试）。
+- WP02 事件、成本与检查重放：**完成**（`WP02_report.md`，权威事件日志、
+  完整成本账本、数值标签缓存、验证重放与在线一致）。
+- WP03 完整步 resume：**完成**（`WP03_report.md`，连续 vs 中断恢复逐项
+  1e-12，故障注入、截断回退、重复恢复拒绝）。
+- WP04 TOML／CLI：**完成**（`WP04_report.md`，init/validate/run/resume/
+  inspect/export 全流程，含空格目录、离线 help）。
+- WP05 后端与可靠 QE：**完成**（`WP05_report.md`，注册表、parser 边界、
+  唯一目录、密度热启动、第三方插件）。
+- WP06 更新／回退／恢复：**完成**（`WP06_report.md`；MACE 真实微调 slow
+  测试未执行，优化器状态不含已如实标注）。
+- WP07 普通任务和 FixAtoms NVE：**完成**（`WP07_report.md`，三任务分发、
+  投影语义、plain resume、PBC 展开坐标）。
+- WP08 两条周期材料工作流：**完成**（`WP08_report.md`；配方 A 含真实
+  接受/重锚/恢复，配方 B adaptive 按契约如实报不支持，配额 58/200）。
+- WP09 打包、文档、兼容和候选发布：**完成**（第一阶段报告＋本节；wheel
+  与 sdist 的 0.4.0rc1 仓库外冒烟见验收项"候选版本"）。
+- 已投稿复现标签和数值目标保持不变：**保持。** `reproducibility/` 自
+  `895897b` 固定后未被任何 WP 提交触碰（git log 可复核）。
+- 是否仍有 P0 未完成：**无。**（WP10–12 不在本轮，按计划不启动。）
+- 建议：**可供外部试用**（0.4.0rc1 作为候选； metallic smearing 参考的
+  adaptive 组合在支持矩阵与 README 中明示为 0.4.0 不支持）。
+
+### 三句话结论
+
+1. 软件机制：通过。389 项单元/冒烟测试在 Python 3.12/3.13 与 ASE
+   3.29 固定腿全绿，wheel/sdist 仓库外 CLI 冒烟通过，全部 P0 工作包有
+   逐项证据。
+2. 真实材料集成：通过（按计划的两条配方）。QE 7.5＋MACE-MPA-0 medium
+   的体相 Si adaptive 观察到真实 surrogate 接受、重新锚定与中断恢复，
+   固定层 Al 表面的 plain 工作流与 plain resume 通过；metallic smearing
+   参考的 adaptive 组合被契约明确拒绝并如实记录，不构成缺陷。
+3. 物理精度与全成本证据是否足以支持加速主张：未开展。本批算例为 4–8
+   步的机制验证（57–100% 的短程接受率不构成稳态或加速结论），稳态接受
+   率与总成本—精度比较属下一阶段科研节点，本报告不作任何加速主张。
+
+### 科学／架构决策（交研究负责人判断）
+
+**议题：metallic（smeared）参考与普通能量替代模型在 adaptive 模式的组合。**
+
+现状（实现 (b)）：QE 在 metallic smearing 下如实报告
+`energy_kind = free_energy`（`!` 行即变分自由能，其梯度给出力），
+MACE 等替代模型报告 `energy`。WP01 契约把已声明的口径不匹配视为不可
+组合，在 validate 阶段明确拒绝（WP08 配方 B 证据）。0.4.0 因此不支持
+该组合的 adaptive；plain 单后端工作流不受影响。
+
+- (a) 放宽契约——"两侧均 force_consistent 时允许跨 kind 锚定"。要点：
+  锚定公式 E_drive(X) = E_model(X) − c·(X−X₀) + const 只要求两个面各自
+  与力一致（常数偏移由锚点吸收），endpoint work 用的是各自面内的差值，
+  数学上可成立；风险是变分自由能对 smearing 参数（类型/宽度）敏感，
+  温度增大时 E_free 与势能面的偏离增大，endpoint work 的物理解释随之
+  漂移，而且"参考口径随参数而变"会污染长期可比性（换 degauss 即换
+  标签口径）。若走此路，建议契约改为拒绝仅在 force_consistent=False 时，
+  并在工件/检查记录中固定 smearing 参数进 reference fingerprint。
+- (b) 维持不支持（当前实现）。要点：口径不匹配即拒绝，不静默降级；
+  metallic adaptive 需要等"MACE 也以 free energy 口径训练/声明"或
+  "无 smearing 的可靠金属参考协议"成立后再开。代价是 0.4.0 不能做金属
+  体系的 adaptive。
+
+本 WP 未自行修改契约；(a)/(b) 属科学判断，请研究负责人定夺后另起
+工作包实施。
+
+### 验收项：候选版本（0.4.0rc1）构建与仓库外冒烟
+
+```text
+命令：uv run --with build python -m build && 干净 venv 分别安装
+      dist/pyraimd2-0.4.0rc1-py3-none-any.whl 与 .tar.gz，
+      在仓库外执行 pyramid init/validate/run/inspect/resume/export
+通过标准：两分发均安装成功，`pyramid --version` 输出 0.4.0rc1，
+      CLI 全流程通过，wheel 环境无 torch/pyscf
+实际关键结果：全部通过（`pyramid 0.4.0rc1` ×2；run 21 评估 18 接受；
+      resume +10；export 31 帧；核心安装无 torch/pyscf 断言通过）
+状态：通过
+```

@@ -67,8 +67,8 @@ any material. The full field reference is in
 `examples/qe_mace_skeleton/` shows the configuration shape for a real-material
 adaptive run: `pw.x` as the reference engine and a MACE foundation model as the
 surrogate over a small periodic silicon cell. It is a skeleton, not a verified
-materials recipe — converged reference settings and pseudopotential choices are
-being validated separately (see *What works today* below).
+materials recipe — the verified recipes live in `examples/si_bulk_qe_mace/`
+and `examples/al_surface_qe_mace/` (see *What works today* below).
 
 Before `pyramid run` works you need, on that machine:
 
@@ -157,10 +157,24 @@ Support claims come in three classes; nothing is implied beyond its class.
   selection and committee fine-tuning in slow-marked tests (require torch and
   local model files); configuration, CLI, resume and export for all three run
   modes.
-- **Materials validated.** *To be filled in.* Periodic bulk and fixed-layer
-  surface recipes (QE + MACE) with inputs, versions, commands, expected checks
-  and full costs are being produced in a separate work package; this section
-  gets its entries when those results land.
+- **Materials validated.** Recipes under `examples/` with inputs, settings,
+  commands and full costs (Quantum ESPRESSO 7.5 with PBE + Grimme D3, MACE-MPA-0
+  medium at float64 on CPU, 48 MPI ranks on one node):
+  - `examples/si_bulk_qe_mace/` (8-atom bulk Si): surrogate singlepoint and
+    FIRE relaxation, plain 6-step NVE in both modes, and an adaptive 6-step NVE
+    in which 4 of 7 evaluations were accepted against the reference
+    (budget 0.10 eV/A, checks at p = 1.0, no violations) — including
+    interrupted runs resumed from checkpoints in a new process, with the
+    complete cost record (21 actual reference executions across the run).
+  - `examples/al_surface_qe_mace/` (17-atom Al(111) slab, bottom two layers
+    fixed with FixAtoms): surrogate singlepoint and relaxation, plain
+    reference-only and surrogate-only NVE, and plain checkpoint/resume.
+  Short runs by design: they demonstrate mechanics and accounting, not
+  thermodynamics or speed-ups. Not supported in 0.4.0: **adaptive mode with a
+  metallic (smeared) reference** — such a reference honestly reports a
+  variational free energy, the surrogate reports a potential energy, and the
+  energy-kind contract refuses to mix them at validation time rather than
+  silently degrading. Plain (single-backend) workflows are unaffected.
 
 ## The energetic MD loop
 
