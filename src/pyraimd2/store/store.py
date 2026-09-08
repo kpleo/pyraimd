@@ -1,0 +1,204 @@
+"""Store: append-only run log on top of ``ase.db`` (SQLite).
+
+Every force evaluation is one row: the atoms snapshot (positions *and*
+momenta), the route, the switch's reason, the surrogate prediction, and the
+engine label when present. Legacy runners use these records for restart;
+energetic restart additionally needs calibration and check state and is not
+implemented yet.
+
+Note: use a ``.db`` file suffix — ASE maps it to its SQLite3 backend.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+
+import ase.db
+import numpy as np
+from ase import Atoms
+
+from pyraimd2.engines.base import EngineResult
+from pyraimd2.surrogate.base import SurrogatePrediction
+
+
+class Store:
+    """Append-only wrapper around an ASE SQLite database."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = str(path)
+        self._db = ase.db.connect(self.path)
+
+    def append(
+        self,
+        run_id: str,
+        step: int,
+        atoms: Atoms,
+        route: str,
+        surrogate: SurrogatePrediction | None = None,
+        engine: EngineResult | None = None,
+        reason: str = "",
+        *,
+        metadata: dict | None = None,
+        driving: SurrogatePrediction | EngineResult | None = None,
+    ) -> int:
+        """Append a step, preserving momenta and optional actual driving label.
+
+        ``metadata`` holds additional method-specific records. ``driving``
+        distinguishes corrected forces from the uncorrected prediction and
+        a reference label acquired only for checking. Legacy callers omit
+        both arguments and retain their original storage format.
+        """
+        data = {
+            "reason": reason,
+            "surrogate": None if surrogate is None else _prediction_to_dict(surrogate),
+            "engine": None if engine is None else _result_to_dict(engine),
+        }
+        if metadata is not None:
+            data["metadata"] = metadata
+        if driving is not None:
+            data["driving"] = {
+                "energy": float(driving.energy),
+                "forces": np.array(driving.forces, dtype=float, copy=True),
+            }
+        return int(
+            self._db.write(atoms, run_id=run_id, step=int(step), route=route, data=data)
+        )
+
+    def latest_state(self, run_id: str) -> tuple[Atoms, int]:
+        """Return ``(atoms, step)`` of the last logged MD step of ``run_id``.
+
+        The atoms carry the momenta exactly as logged.  Note that the
+        SwitchingCalculator logs the atoms at force-evaluation time, so for
+        step >= 0 these are the velocity-Verlet half-step momenta;
+        :meth:`driving_label` provides what is needed to reconstruct the
+        on-step momenta.
+        """
+        row = self._latest_row(run_id)
+        step = int(row.key_value_pairs["step"])
+        if step < 0:
+            raise RuntimeError(
+                f"run {run_id!r} has only the pre-MD initial evaluation "
+                "(step -1); nothing to resume from"
+            )
+        return row.toatoms(), step
+
+    def driving_label(self, run_id: str, step: int) -> tuple[float, np.ndarray]:
+        """Return ``(energy, forces)`` that actually drove the MD at ``step``:
+        the engine label on "dft" rows, the surrogate prediction on "ml" rows.
+
+        ``Runner.resume`` uses this — instead of re-invoking engine and
+        switch — so a restart reproduces the run bit-for-bit (§3, rule 3).
+        """
+        row = self._row_at_step(run_id, step)
+        if row.data.get("driving") is not None:
+            payload = row.data["driving"]
+            return float(payload["energy"]), np.asarray(payload["forces"], dtype=float)
+        route = row.key_value_pairs["route"]
+        payload = row.data["engine"] if route == "dft" else row.data["surrogate"]
+        if payload is None:
+            raise RuntimeError(f"run {run_id!r} step {step}: no {route!r} payload stored")
+        return float(payload["energy"]), np.asarray(payload["forces"], dtype=float)
+
+    def iter_labels(self, run_id: str) -> Iterator[tuple[Atoms, EngineResult]]:
+        """Yield ``(atoms, EngineResult)`` for every row carrying an engine
+        label, in step order.
+
+        That is every "dft" row plus every explore-label row (an accepted
+        "ml" step whose shadow engine label was computed anyway — see
+        SwitchingCalculator): explore labels enter the live calibration
+        window and fine-tune counting, so the resume-time label set must
+        contain exactly them too.
+        """
+        rows = [
+            r
+            for r in self._db.select(run_id=run_id)
+            if r.key_value_pairs["route"] == "dft" or r.data.get("engine") is not None
+        ]
+        for row in sorted(rows, key=lambda r: r.key_value_pairs["step"]):
+            eng = row.data["engine"]
+            yield row.toatoms(), EngineResult(
+                energy=float(eng["energy"]),
+                forces=np.asarray(eng["forces"], dtype=float),
+                stress=None if eng["stress"] is None else np.asarray(eng["stress"], dtype=float),
+                wall_time_s=float(eng["wall_time_s"]),
+            )
+
+    def trailing_ml_streak(self, run_id: str) -> int:
+        """Length of the current trailing run of accepted ("ml") steps.
+
+        The conformal streak-inflation needs the true streak length even
+        across a resume: the switch's window rebuilds from (s, e) pairs,
+        which only exist on "dft" rows, so the trailing "ml" tail is
+        counted here from the stored routes.
+        """
+        rows = sorted(
+            self._db.select(run_id=run_id),
+            key=lambda r: r.key_value_pairs["step"],
+        )
+        streak = 0
+        for row in reversed(rows):
+            if row.key_value_pairs["route"] != "ml":
+                break
+            streak += 1
+        return streak
+
+    def iter_observations(self, run_id: str) -> Iterator[tuple[int, float, float]]:
+        """Yield ``(step, s, e)`` for every row carrying an engine label, in
+        step order — the exact spread/error stream the switch observed at
+        label time.
+
+        ``s`` is the stored max per-atom committee spread and ``e`` the
+        realized max per-atom force error of the shadow prediction, both in
+        eV/Å.  Used to rebuild the conformal window on resume (the window
+        lives in memory; the labels live here).  Explore-label rows (route
+        "ml" with an engine payload) are included: they were observed by the
+        live switch, so the rebuilt window must replay them or qhat would
+        silently diverge after a resume.
+        """
+        rows = [
+            r
+            for r in self._db.select(run_id=run_id)
+            if r.key_value_pairs["route"] == "dft" or r.data.get("engine") is not None
+        ]
+        for row in sorted(rows, key=lambda r: r.key_value_pairs["step"]):
+            eng = row.data.get("engine")
+            sur = row.data.get("surrogate")
+            if eng is None or sur is None:
+                continue
+            err = np.asarray(sur["forces"], dtype=float) - np.asarray(eng["forces"], dtype=float)
+            e = float(np.linalg.norm(err, axis=1).max())
+            s = float(np.max(np.asarray(sur["uncertainty"], dtype=float)))
+            yield int(row.key_value_pairs["step"]), s, e
+
+    def _latest_row(self, run_id: str) -> ase.db.row.AtomsRow:
+        rows = list(self._db.select(run_id=run_id))
+        if not rows:
+            raise RuntimeError(f"no rows stored for run_id={run_id!r}")
+        # rows come out in insertion (id) order; max() keeps the first
+        # occurrence on ties, i.e. the originally logged row.
+        return max(rows, key=lambda r: r.key_value_pairs["step"])
+
+    def _row_at_step(self, run_id: str, step: int) -> ase.db.row.AtomsRow:
+        for row in self._db.select(run_id=run_id):
+            if int(row.key_value_pairs["step"]) == step:
+                return row
+        raise RuntimeError(f"no row stored for run_id={run_id!r} at step {step}")
+
+
+def _prediction_to_dict(prediction: SurrogatePrediction) -> dict:
+    return {
+        "energy": float(prediction.energy),
+        "forces": np.asarray(prediction.forces, dtype=float),
+        "stress": None if prediction.stress is None else np.asarray(prediction.stress, dtype=float),
+        "uncertainty": np.asarray(prediction.uncertainty, dtype=float),
+    }
+
+
+def _result_to_dict(result: EngineResult) -> dict:
+    return {
+        "energy": float(result.energy),
+        "forces": np.asarray(result.forces, dtype=float),
+        "stress": None if result.stress is None else np.asarray(result.stress, dtype=float),
+        "wall_time_s": float(result.wall_time_s),
+    }

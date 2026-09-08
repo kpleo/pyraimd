@@ -1,0 +1,43 @@
+[project]
+name = "pyraimd2"
+version = "0.3.0"
+description = "Pyramid: extensible ab initio molecular dynamics with energetic force-error prediction"
+readme = "README.md"
+authors = [
+    { name = "kpleo", email = "pengkang@buaa.edu.cn" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "ase>=3.29.0",
+]
+
+[project.optional-dependencies]
+mace = ["mace-torch>=0.3.16"]
+pyscf = ["pyscf>=2.6"]
+all = ["mace-torch>=0.3.16", "pyscf>=2.6"]
+dev = ["pytest>=8", "ruff>=0.11"]
+builders = ["rdkit>=2024.3"]
+
+[project.urls]
+Repository = "https://github.com/kpleo/pyraimd"
+
+[project.scripts]
+pyraimd2 = "pyraimd2:main"
+pyramid = "pyraimd2:main"
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.11",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks slow tests (deselected by default; run with --runslow)",
+]
+addopts = ["-m", "not slow"]

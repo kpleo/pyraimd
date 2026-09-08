@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Analysis artifacts (large binaries stay out of git)
+analysis/**/*.db
+analysis/*model*
+analysis/**/*.pt
+analysis/**/pdf_review/
+analysis/**/fontlist-*.json
+analysis/execution_20260905/tungsten/main_preview.png
+
+# macOS
+.DS_Store
+/reproducibility.zip
+/.release/
