@@ -156,6 +156,19 @@ def test_validate_names_unknown_backend(tmp_path, capsys) -> None:
     assert "'vasp' is not registered" in error and "harmonic-reference" in error
 
 
+def test_validate_mace_name_config_without_torch(tmp_path, capsys) -> None:
+    """A MACE foundation-model *name* (not a path) validates without torch:
+    construction is lazy, capability/contract checks need no weights."""
+    block = ('[surrogate]\nbackend = "mace"\nmodel = "small"\n'
+             'device = "cpu"\ndefault_dtype = "float64"')
+    config = write_config(tmp_path, _plain_mode_config("surrogate", block))
+    if importlib.util.find_spec("torch") is not None:
+        pytest.skip("needs a torch-free environment")
+    output = run_cli_and_out(capsys, "validate", str(config))
+    assert "surrogate   : mace" in output
+    assert "torch" not in sys.modules
+
+
 def test_validate_refuses_singlepoint_and_relax(tmp_path, capsys) -> None:
     for kind in ("singlepoint", "relax"):
         target = tmp_path / kind
