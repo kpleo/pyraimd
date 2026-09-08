@@ -8,9 +8,17 @@ the accepted corrected force without replacing that force retrospectively.
 
 Coordinates must be unwrapped and atom order, cell and masses must remain
 fixed. EnergeticRunner maintains the physical evaluation clock, including
-steps with unchanged positions. EnergeticCalculator can also be used directly:
-each new uncached configuration then advances its clock by ``timestep_fs``.
-Neither interface supports restoring an energetic run from disk yet.
+steps with unchanged positions, and hands each evaluation an explicit
+physical time. EnergeticCalculator can also be used directly: each new
+uncached configuration then advances its clock by ``timestep_fs`` — a
+fixed-timestep compatibility assumption, not a general time source.
+Every committed evaluation carries an explicit EvaluationContext (run_id,
+step_id, evaluation_id, phase, physical_time_fs, model_id) recorded in the
+stored metadata; probes share their parent evaluation's identity and never
+advance physical time. Model updates announced through ``on_label`` advance
+a decision-layer model generation that keys pending proposals, anchors and
+cached results. Neither interface supports restoring an energetic run from
+disk yet.
 """
 
 from __future__ import annotations
@@ -35,9 +43,26 @@ from pyraimd2.energetics import (
     estimate_responses,
     residual_work,
 )
-from pyraimd2.engines.base import Engine, EngineError, EngineResult
+from pyraimd2.engines.base import (
+    EnergyKind,
+    Engine,
+    EngineError,
+    EngineResult,
+    engine_capabilities,
+)
+from pyraimd2.runtime import (
+    EvaluationContext,
+    EvaluationPhase,
+    fingerprint_of,
+    model_id_for,
+)
 from pyraimd2.store.store import Store
-from pyraimd2.surrogate.base import Surrogate, SurrogatePrediction
+from pyraimd2.surrogate.base import (
+    Surrogate,
+    SurrogatePrediction,
+    assert_compatible_energy_contract,
+    surrogate_capabilities,
+)
 from pyraimd2.switch.base import LabelObservation
 
 Direction = Callable[[Atoms], np.ndarray]
@@ -83,6 +108,7 @@ class _Anchor:
     responses: tuple[DirectionalResponse, ...]
     open_prefix: list[bool]
     calibration: dict
+    model_generation: int = 0
 
 
 @dataclass
@@ -107,6 +133,8 @@ class _Pending:
     new_anchor: _Anchor | None = None
     calibration_done: bool = False
     probe_records: list[dict] = field(default_factory=list)
+    context: EvaluationContext | None = None
+    model_generation: int = 0
 
 
 @dataclass
@@ -159,6 +187,20 @@ class EnergeticCalculator(Calculator):
     Only this callback may update the model while a calculation is running.
     A callback failure stops the run; in-process retry of a stored callback
     failure and checkpoint restart are deliberately unsupported.
+
+    Every committed evaluation carries an :class:`EvaluationContext` recorded
+    in the stored metadata; physical time comes from the integrator's
+    schedule, while ``evaluation_id`` counts logical force evaluations.
+    Any ``on_label`` return except exactly ``False`` declares a model change
+    and advances the decision-layer model generation: cached results for the
+    same geometry, pending proposals and anchors from the old generation are
+    never reused for a new evaluation (WP01 decision-cache rule; the numeric
+    geometry-keyed label cache is WP02 and deliberately separate).
+
+    Direct use as a plain ASE Calculator is a compatibility layer with a
+    fixed-timestep assumption: each new uncached configuration advances the
+    physical clock by exactly ``timestep_fs``. Supported workflows drive the
+    calculator through an integrator that schedules explicit physical times.
     """
 
     implemented_properties: ClassVar[list[str]] = ["energy", "forces"]
@@ -206,6 +248,13 @@ class EnergeticCalculator(Calculator):
         if next(store._db.select(run_id=run_id), None) is not None:
             raise ValueError("run_id already exists; energetic restart is not implemented")
         self.surrogate, self.engine, self.store, self.run_id = surrogate, engine, store, run_id
+        # Contract preflight: a declared unit/energy-convention mismatch fails
+        # here, before the first (expensive) SCF or inference call. Undeclared
+        # capabilities read as unknown and cannot prove a mismatch.
+        assert_compatible_energy_contract(
+            engine_capabilities(engine), surrogate_capabilities(surrogate)
+        )
+        self._engine_fingerprint = fingerprint_of(engine)
         self.direction, self.on_label = direction, on_label
         self.check_probability, self.check_seed = float(check_probability), int(check_seed)
         self._rng = np.random.default_rng(check_seed)
@@ -216,20 +265,49 @@ class EnergeticCalculator(Calculator):
         self.reference_calls = {"anchor": 0, "probe": 0, "check": 0}
         self._anchor: _Anchor | None = None
         self._segment = 0
+        self._model_generation = 0
         self._identity: Atoms | None = None
         self._pending: _Pending | None = None
         self._scheduled_index: int | None = None
+        self._scheduled_time_fs: float | None = None
         self._expected_positions: np.ndarray | None = None
         self._callback_failed = False
         self._next_reason = "initial_reference"
         self._deferred_origin: _CalibrationOrigin | None = None
         self._deferred_record: dict | None = None
         self._evaluation_calls_before: dict | None = None
+        self._results_model_generation: int | None = None
 
     @property
     def n_reference(self) -> int:
         """Actual successful reference calls, including off-trajectory probes."""
         return sum(self.reference_calls.values())
+
+    @property
+    def model_generation(self) -> int:
+        """Decision-layer model generation; advances on each announced update."""
+        return self._model_generation
+
+    @property
+    def model_id(self) -> str:
+        """Model identity of the current generation (decision-cache key)."""
+        return model_id_for(self.surrogate, self._model_generation)
+
+    def _context_for(self, index: int) -> EvaluationContext:
+        if self._scheduled_time_fs is not None:
+            physical_time_fs = self._scheduled_time_fs
+        else:
+            # Compatibility layer: direct Calculator use assumes one fixed
+            # timestep_fs per evaluation (see the class docstring).
+            physical_time_fs = index * self.timestep_fs
+        return EvaluationContext(
+            run_id=self.run_id,
+            step_id=index - 1,
+            evaluation_id=index,
+            phase=EvaluationPhase.INITIAL if index == 0 else EvaluationPhase.MD_STEP,
+            physical_time_fs=physical_time_fs,
+            model_id=self.model_id,
+        )
 
     def _check_identity(self, atoms: Atoms) -> None:
         """Reject any change that must never happen mid-run.
@@ -262,6 +340,13 @@ class EnergeticCalculator(Calculator):
             raise ValueError("positions do not match the scheduled unwrapped Verlet step")
 
     def get_property(self, name, atoms: Atoms | None = None, allow_calculation: bool = True):
+        # A committed evaluation's cached results are valid only for the model
+        # generation that produced them: after a model update, a request at
+        # the same geometry is a NEW logical evaluation with a new decision,
+        # not a replay of the old one.
+        if (self.results and self._results_model_generation is not None
+                and self._results_model_generation != self._model_generation):
+            self.results = {}
         # ASE skips calculate() entirely when nothing it tracks has changed,
         # but it does not track masses or constraints: validate the immutable
         # physical state before serving even a fully cached property. A
@@ -284,9 +369,21 @@ class EnergeticCalculator(Calculator):
         if (uncertainty.shape != (len(atoms),) or np.isinf(uncertainty).any()
                 or np.any(uncertainty < 0)):
             raise ValueError("uncertainty must be a nonnegative (N,) array or NaN")
-        return SurrogatePrediction(energy, forces, stress, uncertainty)
+        return SurrogatePrediction(
+            energy, forces, stress, uncertainty,
+            energy_kind=getattr(prediction, "energy_kind", EnergyKind.UNKNOWN),
+            force_consistent=getattr(prediction, "force_consistent", None),
+        )
 
     def _reference(self, atoms: Atoms, purpose: str) -> EngineResult:
+        # Reference settings identity is fixed for a run; check it before the
+        # expensive call so a mid-run settings swap fails cheap, not after an
+        # SCF whose label would silently mix conventions with older anchors.
+        if fingerprint_of(self.engine) != self._engine_fingerprint:
+            raise ValueError(
+                "reference settings identity changed mid-run; start a new run "
+                "instead of mixing labels from different reference settings"
+            )
         work = atoms.copy()
         try:
             result = self.engine.compute(work)
@@ -299,7 +396,11 @@ class EnergeticCalculator(Calculator):
         except Exception as error:
             raise EngineError(f"invalid {purpose} reference evaluation: {error}") from error
         self.reference_calls[purpose] += 1
-        return EngineResult(energy, forces, stress, wall)
+        return EngineResult(
+            energy, forces, stress, wall,
+            energy_kind=getattr(result, "energy_kind", EnergyKind.UNKNOWN),
+            force_consistent=getattr(result, "force_consistent", None),
+        )
 
     def _directions(self, atoms: Atoms) -> np.ndarray | None:
         raw = atoms.get_velocities() if self.direction is None else self.direction(atoms.copy())
@@ -337,6 +438,8 @@ class EnergeticCalculator(Calculator):
                     displacements[d, h_index] = displacement
                     residuals[d, h_index] = prediction.forces + correction - label.forces
                     records.append({"direction": d, "step_A": float(h), "sign": sign,
+                                    "phase": str(EvaluationPhase.PROBE),
+                                    "evaluation_id": pending.index,
                                     "displacement_A": displacement.tolist(),
                                     "base_energy_eV": prediction.energy,
                                     "reference_energy_eV": label.energy,
@@ -349,15 +452,18 @@ class EnergeticCalculator(Calculator):
             # C_rw is undefined, so keep using reference forces. A zero
             # finite-probe derivative does not establish a global bound.
             return None
+        model_id = pending.context.model_id if pending.context is not None else self.model_id
         calibration = {"probe_steps_A": self.probe_steps.tolist(), "probes": records,
                        "responses": [response.as_dict() for response in responses],
                        "force_call_count": 1 + 4 * len(directions),
+                       "model_id": model_id,
                        "type": "two_scale_empirical_reference_probes"}
         self._segment += 1
         self.n_calibrations += 1
         return _Anchor(self._segment, pending.index, pending.atoms.positions.copy(),
                        pending.prediction, pending.label, correction, responses,
-                       [True] * len(responses), calibration)
+                       [True] * len(responses), calibration,
+                       model_generation=self._model_generation)
 
     @staticmethod
     def _anchor_record(anchor: _Anchor | None) -> dict | None:
@@ -376,9 +482,16 @@ class EnergeticCalculator(Calculator):
         if origin is None:
             return
         prediction = self._predict(origin.atoms)
+        # Recalibration probes belong to the origin evaluation: they reuse its
+        # identity and physical time (fixed-step value), never advancing the
+        # clock, but run under the NEW model generation.
+        context = EvaluationContext(self.run_id, origin.index - 1, origin.index,
+                                    EvaluationPhase.PROBE,
+                                    origin.index * self.timestep_fs, self.model_id)
         pending = _Pending(origin.atoms, origin.index, prediction, None, False,
                            "model_update_calibration", [], None, [], None, None,
-                           False, None, self.reference_calls.copy(), label=origin.label)
+                           False, None, self.reference_calls.copy(), label=origin.label,
+                           context=context, model_generation=self._model_generation)
         anchor = self._calibrate(pending)
         self._anchor = anchor
         self._deferred_record = {
@@ -393,6 +506,10 @@ class EnergeticCalculator(Calculator):
     def _freeze(self, atoms: Atoms, index: int) -> _Pending:
         prediction = self._predict(atoms)
         anchor = self._anchor
+        if anchor is not None and anchor.model_generation != self._model_generation:
+            # A calibration from an older model generation must never drive a
+            # new evaluation (WP01 decision-cache rule).
+            anchor = None
         forecasts, open_prefix = [], []
         selected = None
         reason = self._next_reason
@@ -427,7 +544,9 @@ class EnergeticCalculator(Calculator):
         checked = draw is not None and draw < self.check_probability
         return _Pending(atoms.copy(), index, prediction, anchor, accepted, reason,
                         forecasts, selected, open_prefix, energy, forces, checked, draw,
-                        self._evaluation_calls_before.copy())
+                        self._evaluation_calls_before.copy(),
+                        context=self._context_for(index),
+                        model_generation=self._model_generation)
 
     def _observed(self, pending: _Pending) -> dict | None:
         anchor, label = pending.anchor, pending.label
@@ -458,11 +577,18 @@ class EnergeticCalculator(Calculator):
             bound.update(pending.accepted, pending.checked, violation)
         anchor = pending.anchor
         new_anchor = pending.new_anchor
+        energy_source = pending.prediction if pending.accepted else pending.label
         drive = SurrogatePrediction(pending.energy, pending.forces.copy(), None,
-                                    pending.prediction.uncertainty.copy())
+                                    pending.prediction.uncertainty.copy(),
+                                    energy_kind=getattr(energy_source, "energy_kind",
+                                                        EnergyKind.UNKNOWN),
+                                    force_consistent=getattr(energy_source, "force_consistent",
+                                                             None))
         metadata = {
             "method": "energetic_force_error", "evaluation_index": pending.index,
             "time_fs": pending.index * self.timestep_fs, "timestep_fs": self.timestep_fs,
+            "context": None if pending.context is None else pending.context.as_dict(),
+            "reference_id": self._engine_fingerprint,
             "gate_scope": "discrete_force_evaluation", "coordinates": "unwrapped",
             "force_budget_eV_A": self.force_budget, "numerical_floor_eV_A": self.numerical_floor,
             "time_cap_fs": self.time_cap_fs, "transverse_cap": self.transverse_cap,
@@ -499,6 +625,7 @@ class EnergeticCalculator(Calculator):
             self._anchor = new_anchor
             self._next_reason = "direction_unavailable_reference" if new_anchor is None else "reference_required"
         self.results = {"energy": drive.energy, "forces": drive.forces.copy()}
+        self._results_model_generation = self._model_generation
         self._pending = None
         self._deferred_record = None
         self._evaluation_calls_before = None
@@ -514,6 +641,12 @@ class EnergeticCalculator(Calculator):
                 self.results = {}
                 self._callback_failed = True
                 raise
+            if changed is not False:
+                # Anything except exactly False declares a model change:
+                # advance the decision-layer generation so cached results,
+                # pending proposals and anchors from the old model cannot be
+                # reused for a new evaluation.
+                self._model_generation += 1
             if pending.accepted and changed is False:
                 self._anchor = candidate
                 if violation:
@@ -541,24 +674,38 @@ class EnergeticCalculator(Calculator):
                 self._evaluation_calls_before = self.reference_calls.copy()
             self._prepare_updated_model()
             self._pending = self._freeze(self.atoms, index)
-        elif self._pending.index != index or not _same_state(self._pending.atoms, self.atoms, momenta=True):
-            raise ValueError("retry requires the same pending geometry, momenta and evaluation time")
+        elif (self._pending.index != index
+              or self._pending.model_generation != self._model_generation
+              or not _same_state(self._pending.atoms, self.atoms, momenta=True)):
+            raise ValueError("retry requires the same pending geometry, momenta, "
+                             "model generation and evaluation time")
         try:
             self._finish(self._pending)
         except Exception:
             self.results = {}
             raise
 
-    def _schedule(self, index: int, positions: np.ndarray | None = None) -> None:
+    def _schedule(self, index: int, positions: np.ndarray | None = None, *,
+                  physical_time_fs: float | None = None) -> None:
         if index != self.n_evaluations:
             raise ValueError("the MD clock must advance by one force evaluation")
+        if physical_time_fs is not None:
+            physical_time_fs = float(physical_time_fs)
+            if not math.isfinite(physical_time_fs) or physical_time_fs < 0:
+                raise ValueError("physical_time_fs must be finite and >= 0")
         self._scheduled_index = index
+        self._scheduled_time_fs = physical_time_fs
         self._expected_positions = None if positions is None else positions.copy()
         self.results = {}
 
 
 class _EnergeticVerlet(VelocityVerlet):
-    """Advance the evaluation clock even at an unchanged configuration."""
+    """Advance the evaluation clock even at an unchanged configuration.
+
+    The integrator owns the physical clock: each scheduled evaluation gets
+    its explicit physical time from the step count and the fixed timestep,
+    keeping real integration time separate from the evaluation counter.
+    """
 
     def step(self, forces=None):
         atoms = self.atoms
@@ -567,7 +714,9 @@ class _EnergeticVerlet(VelocityVerlet):
         next_positions = atoms.positions + self.dt * (
             atoms.get_momenta() + 0.5 * self.dt * forces
         ) / atoms.get_masses()[:, None]
-        atoms.calc._schedule(self.nsteps + 1, next_positions)
+        calc = atoms.calc
+        calc._schedule(self.nsteps + 1, next_positions,
+                       physical_time_fs=(self.nsteps + 1) * calc.timestep_fs)
         return super().step(forces)
 
 

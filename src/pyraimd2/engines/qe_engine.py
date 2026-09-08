@@ -27,6 +27,8 @@ then.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import json
 import re
 import subprocess
 import time
@@ -37,7 +39,12 @@ import numpy as np
 from ase import Atoms, units
 from ase.data import atomic_masses, chemical_symbols
 
-from pyraimd2.engines.base import EngineError, EngineResult
+from pyraimd2.engines.base import (
+    EnergyKind,
+    EngineCapabilities,
+    EngineError,
+    EngineResult,
+)
 
 RY_EV = units.Hartree / 2.0  # QE reports Rydbergs
 RY_BOHR3_TO_EV_A3 = RY_EV / units.Bohr**3
@@ -227,6 +234,23 @@ class QeEngine:
         self.run_root.mkdir(parents=True, exist_ok=True)
         self._call_counter = 0
 
+    @property
+    def capabilities(self) -> EngineCapabilities:
+        # Converged pw.x forces differentiate the reported total energy;
+        # stress is always requested (tstress) and parsed when printed.
+        return EngineCapabilities(
+            energy_kind=EnergyKind.ENERGY,
+            force_consistent=True,
+            forces_conservative=True,
+            stress_available=True,
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        payload = json.dumps(dataclasses.asdict(self.config), sort_keys=True)
+        digest = hashlib.sha256(payload.encode()).hexdigest()[:16]
+        return f"qe-pbe-d3:{digest}"
+
     def compute(self, atoms: Atoms, label: str | None = None) -> EngineResult:
         base = "eval" if label is None else str(label).replace("/", "_")
         run_dir = self.run_root / f"{base}-{self._call_counter:06d}"
@@ -290,4 +314,6 @@ class QeEngine:
             forces=result.forces,
             stress=result.stress,
             wall_time_s=wall,
+            energy_kind=EnergyKind.ENERGY,
+            force_consistent=True,
         )

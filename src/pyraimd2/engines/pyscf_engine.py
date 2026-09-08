@@ -12,7 +12,12 @@ import time
 import numpy as np
 from ase import Atoms, units
 
-from pyraimd2.engines.base import EngineError, EngineResult
+from pyraimd2.engines.base import (
+    EnergyKind,
+    EngineCapabilities,
+    EngineError,
+    EngineResult,
+)
 
 
 class PyscfEngine:
@@ -36,6 +41,20 @@ class PyscfEngine:
     @property
     def name(self) -> str:
         return f"pyscf-rks-{self.functional}-{self.basis}"
+
+    @property
+    def capabilities(self) -> EngineCapabilities:
+        # RKS analytic gradients differentiate the reported total energy.
+        return EngineCapabilities(
+            energy_kind=EnergyKind.ENERGY,
+            force_consistent=True,
+            forces_conservative=True,
+            stress_available=False,
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        return f"pyscf-rks:{self.functional}:{self.basis}:conv_tol={self.conv_tol}"
 
     def compute(self, atoms: Atoms) -> EngineResult:
         from pyscf import dft, gto  # local import: keep module import cheap
@@ -74,4 +93,6 @@ class PyscfEngine:
             forces=-grad_ha_bohr * (units.Hartree / units.Bohr),
             stress=None,  # finite molecule: no cell, no virial
             wall_time_s=wall_time_s,
+            energy_kind=EnergyKind.ENERGY,
+            force_consistent=True,
         )

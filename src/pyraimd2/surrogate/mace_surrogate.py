@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 from ase import Atoms
 
-from pyraimd2.surrogate.base import SurrogatePrediction
+from pyraimd2.surrogate.base import SurrogateCapabilities, SurrogatePrediction
 
 
 class MaceSurrogate:
@@ -28,6 +28,22 @@ class MaceSurrogate:
         self.device = device
         self.default_dtype = default_dtype
         self._calc: Any = None
+
+    @property
+    def capabilities(self) -> SurrogateCapabilities:
+        # MACE forces are autograd gradients of the reported energy; a single
+        # frozen model has no honest uncertainty spread.
+        return SurrogateCapabilities(
+            energy_kind="energy",
+            force_consistent=True,
+            forces_conservative=True,
+            stress_available=True,
+            uncertainty_available=False,
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        return f"mace-mp:{self.model}:{self.device}:{self.default_dtype}"
 
     def _get_calc(self) -> Any:
         if self._calc is None:
@@ -55,4 +71,6 @@ class MaceSurrogate:
             forces=forces,
             stress=stress,
             uncertainty=np.full(len(atoms), np.nan),
+            energy_kind="energy",
+            force_consistent=True,
         )

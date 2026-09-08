@@ -31,7 +31,11 @@ import numpy as np
 from ase import Atoms
 
 from pyraimd2.engines.base import EngineResult
-from pyraimd2.surrogate.base import SurrogatePrediction, TrainReport
+from pyraimd2.surrogate.base import (
+    SurrogateCapabilities,
+    SurrogatePrediction,
+    TrainReport,
+)
 
 # Configurations per optimizer step within one epoch (see module docstring).
 MINIBATCH_CONFIGS = 8
@@ -96,6 +100,28 @@ class CommitteeSurrogate:
         self._models: list[Any] = []  # the K members (built lazily with _calc)
         self._foundation_readouts: list[dict[str, Any]] = []  # per-member heads
         self._energy_shifts: list[float] = []  # per-member energy reference
+
+    @property
+    def capabilities(self) -> SurrogateCapabilities:
+        # Member forces are autograd gradients of member energies, and energy
+        # shifts are per-member constants, so the mean force differentiates
+        # the mean energy. Committee stress is not implemented.
+        return SurrogateCapabilities(
+            energy_kind="energy",
+            force_consistent=True,
+            forces_conservative=True,
+            stress_available=False,
+            uncertainty_available=True,
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        specs = ",".join(sorted(set(self._model_specs)))
+        filters = "|".join(self.trainable_filters)
+        return (
+            f"committee:{self.n_members}x[{specs}]:seed={self.seed}"
+            f":perturbation={self.perturbation}:filters={filters}"
+        )
 
     # -- loading ---------------------------------------------------------
 
@@ -235,6 +261,8 @@ class CommitteeSurrogate:
             forces=mean_force.numpy() * f_conv,
             stress=None,  # committee stress is not implemented
             uncertainty=sigma.numpy() * f_conv,
+            energy_kind="energy",
+            force_consistent=True,
         )
 
     # -- fine-tuning ------------------------------------------------------

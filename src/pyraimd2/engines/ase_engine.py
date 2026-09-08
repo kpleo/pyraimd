@@ -8,7 +8,12 @@ import numpy as np
 from ase import Atoms
 from ase.calculators.calculator import Calculator
 
-from pyraimd2.engines.base import EngineError, EngineResult
+from pyraimd2.engines.base import (
+    EnergyKind,
+    EngineCapabilities,
+    EngineError,
+    EngineResult,
+)
 
 
 class AseEngine:
@@ -22,6 +27,13 @@ class AseEngine:
     constraint adjustment (energy terms included) is left to the workflow,
     which applies constraints exactly once. Mixing a constraint-adjusted
     energy with unprojected forces would pair values from different surfaces.
+
+    Capabilities and result metadata follow the flags exactly: with
+    ``force_consistent=True`` the reported energy is the free energy whose
+    gradient is the forces (``energy_kind="free_energy"``,
+    ``force_consistent=True``); otherwise the default ``energy`` is reported
+    and whether the forces differentiate it is calculator-dependent, so
+    consistency stays unknown rather than claimed.
     """
 
     def __init__(self, calculator: Calculator, *, force_consistent: bool = False,
@@ -33,6 +45,24 @@ class AseEngine:
     @property
     def name(self) -> str:
         return f"ase-{self.calculator.name}"
+
+    @property
+    def capabilities(self) -> EngineCapabilities:
+        return EngineCapabilities(
+            energy_kind=(EnergyKind.FREE_ENERGY if self.force_consistent
+                         else EnergyKind.ENERGY),
+            force_consistent=True if self.force_consistent else None,
+            forces_conservative=None,  # property of the wrapped calculator
+            stress_available=self.include_stress,
+        )
+
+    @property
+    def fingerprint(self) -> str:
+        return (
+            f"ase:{self.calculator.name}"
+            f":force_consistent={self.force_consistent}"
+            f":stress={self.include_stress}"
+        )
 
     def compute(self, atoms: Atoms) -> EngineResult:
         work = atoms.copy()
@@ -52,4 +82,6 @@ class AseEngine:
         except Exception as error:
             self.calculator.reset()
             raise EngineError(f"ASE reference evaluation failed: {error}") from error
-        return EngineResult(energy, forces, stress, time.perf_counter() - start)
+        return EngineResult(energy, forces, stress, time.perf_counter() - start,
+                            energy_kind=self.capabilities.energy_kind,
+                            force_consistent=True if self.force_consistent else None)
