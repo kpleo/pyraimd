@@ -323,6 +323,15 @@ def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
                 else:
                     result = backend.predict(atoms)
                 elapsed = time.perf_counter() - start
+            except ImportError as error:
+                name = getattr(config, section).name
+                extra = _OPTIONAL_EXTRAS.get(name)
+                hint = (f"install it with `pip install 'pyraimd2[{extra}]'`"
+                        if extra else "install the backend's package")
+                raise WorkflowError(
+                    f"--probe-backends: {section} backend {name!r} needs an "
+                    f"optional dependency that is not installed ({error}); "
+                    f"{hint}, or choose another backend") from error
             except Exception as error:
                 raise WorkflowError(
                     f"--probe-backends: {section} self-check failed: {error}; "

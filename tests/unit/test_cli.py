@@ -9,6 +9,7 @@ printing and exiting 0 (caught here as SystemExit).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -165,6 +166,62 @@ def test_validate_refuses_singlepoint_and_relax(tmp_path, capsys) -> None:
         assert "WP07" in capsys.readouterr().err
 
 
+def _plain_mode_config(mode: str, backend_block: str) -> str:
+    """The harmonic template turned into a plain-mode config whose backend
+    section is `backend_block` (including its [section] header)."""
+    text = HARMONIC_CONFIG.replace('mode = "adaptive"', f'mode = "{mode}"')
+    keep, drop = ("[reference]", "[surrogate]") if mode == "reference" \
+        else ("[surrogate]", "[reference]")
+    start = text.index(keep)
+    following = text.index("\n[", start + 1)
+    text = text[:start] + backend_block + "\n\n" + text[following + 1:]
+    for section in (drop, "[policy]", "[verification]"):
+        start = text.index(section)
+        following = text.index("\n[", start + 1)
+        text = text[:start] + text[following + 1:]
+    return text
+
+
+def qe_config(tmp_path: Path, *, with_pseudos: bool) -> Path:
+    block = ('[reference]\nbackend = "qe"\npseudo_dir = "pseudos"\n'
+             'ecutwfc = 30.0\npseudos = { H = "H.upf", O = "O.upf" }')
+    text = _plain_mode_config("reference", block)
+    assert 'backend = "qe"' in text
+    if with_pseudos:
+        (tmp_path / "pseudos").mkdir()
+        for species in ("H", "O"):
+            (tmp_path / "pseudos" / f"{species}.upf").write_text(
+                f'<UPF version="2.0.1"><PP_HEADER element="{species}"/></UPF>\n')
+    return write_config(tmp_path, text)
+
+
+def test_validate_qe_backend_names_missing_pseudo_dir(tmp_path, capsys) -> None:
+    config = qe_config(tmp_path, with_pseudos=False)
+    assert run_cli("validate", str(config)) == 2
+    error = capsys.readouterr().err
+    assert "reference.pseudo_dir" in error and "directory not found" in error
+
+
+def test_validate_qe_backend_constructs_without_pw(tmp_path, capsys) -> None:
+    """QE configs are validated through create_backend (parameters, paths,
+    capabilities) without pw.x on this machine — no SCF is executed."""
+    config = qe_config(tmp_path, with_pseudos=True)
+    output = run_cli_and_out(capsys, "validate", str(config))
+    assert "reference   : qe" in output
+    assert "validate: OK" in output
+
+
+def test_validate_probe_reports_missing_optional_dependency(tmp_path, capsys) -> None:
+    block = ('[reference]\nbackend = "pyscf"\nfunctional = "pbe"\n'
+             'basis = "def2-svp"')
+    config = write_config(tmp_path, _plain_mode_config("reference", block))
+    if importlib.util.find_spec("pyscf") is not None:
+        pytest.skip("needs a pyscf-free environment")
+    assert run_cli("validate", str(config), "--probe-backends") == 2
+    error = capsys.readouterr().err
+    assert "optional dependency" in error and "pyraimd2[pyscf]" in error
+
+
 # ---------------------------------------------------------------------------
 # the full acceptance flow (directory name contains a space; cwd changes
 # between commands must not move the results)
@@ -192,11 +249,14 @@ def test_full_flow_space_directory_and_cwd_independence(tmp_path, capsys,
     assert (run_dir / "resolved_config.json").is_file()
     assert (run_dir / "checkpoints" / "latest.json").is_file()
 
-    # duplicate run is refused with the field name and the remedy
+    # duplicate run is refused with the field name and the remedy — and so
+    # is re-validating a configuration whose run already exists
     assert run_cli("run", str(config_path)) == 2
     error = capsys.readouterr().err
     assert "run.id 'harmonic-demo' already exists" in error
     assert "resume" in error
+    assert run_cli("validate", str(config_path)) == 2
+    assert "already exists" in capsys.readouterr().err
 
     # inspect: human and JSON renderings come from the same source
     human = run_cli_and_out(capsys, "inspect", str(run_dir))
@@ -248,14 +308,25 @@ def test_export_marks_missing_reference_labels(tmp_path) -> None:
 
 
 def test_resume_rejects_a_plain_mode_run(tmp_path, capsys) -> None:
-    text = HARMONIC_CONFIG.replace('mode = "adaptive"', 'mode = "surrogate"')
-    for section in ("[reference]", "[policy]", "[verification]"):
-        start = text.index(section)
-        following = text.index("\n[", start + 1)
-        text = text[:start] + text[following + 1:]
-    config_path = write_config(tmp_path, text)
+    block = ('[surrogate]\nbackend = "harmonic-surrogate"\n'
+             'k = 1.0\nr0 = 0.9\nbias = 0.05')
+    config_path = write_config(tmp_path, _plain_mode_config("surrogate", block))
     assert run_cli("run", str(config_path)) == 0
     capsys.readouterr()
     run_dir = tmp_path / "runs" / "harmonic-demo"
     assert run_cli("resume", str(run_dir), "--steps", "2") == 2
     assert "adaptive" in capsys.readouterr().err
+
+
+def test_resume_stale_lock_requires_deliberate_force_unlock(tmp_path, capsys) -> None:
+    config_path = write_config(tmp_path, HARMONIC_CONFIG)
+    assert run_cli("run", str(config_path)) == 0
+    capsys.readouterr()
+    run_dir = tmp_path / "runs" / "harmonic-demo"
+    # a crashed writer leaves its lock behind; resume must refuse to share it
+    (run_dir / "events.jsonl.lock").write_text("999999")
+    assert run_cli("resume", str(run_dir), "--steps", "2") == 2
+    assert "active writer" in capsys.readouterr().err
+    output = run_cli_and_out(capsys, "resume", str(run_dir), "--steps", "2",
+                             "--force-unlock")
+    assert "now at complete step 22" in output

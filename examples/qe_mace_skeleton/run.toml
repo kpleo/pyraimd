@@ -1,0 +1,63 @@
+# QE + MACE adaptive NVE skeleton (schema_version 1).
+# NOT a verified materials recipe — see README.md. Validate with:
+#   pyramid validate run.toml
+schema_version = 1
+
+[run]
+id = "si-qe-mace-demo"
+directory = "runs/si-qe-mace-demo"
+seed = 42
+
+[task]
+kind = "md"
+mode = "adaptive"
+
+[structure]
+file = "si_diamond_2atom.extxyz"
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 1.0
+steps = 8
+temperature_K = 300.0
+velocity_seed = 7
+
+[reference]
+backend = "qe"
+pseudo_dir = "pseudos"            # resolved relative to this file
+xc = "pbe"
+dispersion = "grimme-d3"
+ecutwfc = 40.0
+ecutrho = 320.0
+kpts = [2, 2, 2]
+conv_thr = 1e-8
+pseudos = { Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF" }
+# pw_cmd = ["mpirun", "-np", "4", "pw.x"]   # platform profile, not physics
+
+[surrogate]
+backend = "mace"
+model = "small"                   # MACE-MP foundation name, or a model path
+device = "cpu"
+default_dtype = "float64"
+
+[policy]
+name = "energetic"
+force_budget_eV_A = 0.1
+probe_steps_A = [0.02, 0.04]
+numerical_floor_eV_A = 0.001
+time_cap_fs = 3.0
+transverse_cap = 0.1
+
+[verification]
+probability = 0.1
+failure_probability = 0.05
+tilt = 0.6931471805599453
+seed = 19
+
+[checkpoint]
+interval_steps = 4
+keep_generations = 2
+
+[output]
+trajectory_interval_steps = 1
+summary_interval_steps = 4

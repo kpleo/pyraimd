@@ -1,0 +1,5 @@
+3
+H2O for the harmonic demo, placed near the toy well minimum (r0 = 0.9); no velocities, so momenta are thermalized from dynamics.temperature_K with dynamics.velocity_seed
+O       0.870000    0.910000    0.885000
+H       0.945000    0.862000    0.918000
+H       0.893000    0.948000    0.955000
