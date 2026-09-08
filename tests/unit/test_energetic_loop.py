@@ -292,8 +292,12 @@ def test_explicit_restart_rejected_without_changing_legacy_runner(tmp_path):
     atoms.get_forces()
     with pytest.raises(ValueError, match="restart"):
         EnergeticCalculator(model, engine, store, "run", force_budget=0.1)
-    with pytest.raises(NotImplementedError, match="restart"):
-        EnergeticRunner.resume(store, "run", model, engine)
+    # Resume exists but requires a valid complete-step checkpoint: a bare
+    # Store trajectory is not one and is refused, not silently degraded.
+    from pyraimd2.runtime import ResumeError
+
+    with pytest.raises(ResumeError, match="checkpoint"):
+        EnergeticRunner.resume(tmp_path / "no-such-run", model, engine)
 
 
 def test_callback_failure_cannot_repeat_a_stored_event(tmp_path):

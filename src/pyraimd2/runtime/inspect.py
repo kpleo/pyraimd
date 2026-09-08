@@ -63,6 +63,21 @@ def _find_db(run_dir: Path) -> Path | None:
     return dbs[0] if len(dbs) == 1 else None
 
 
+def _last_checkpoint(run_dir: Path) -> dict | None:
+    pointer = run_dir / "checkpoints" / "latest.json"
+    if not pointer.exists():
+        return None
+    try:
+        generation = int(json.loads(pointer.read_text())["generation"])
+        manifest = json.loads(
+            (run_dir / "checkpoints" / str(generation) / "manifest.json").read_text())
+    except (OSError, ValueError, KeyError):
+        return {"valid": False}
+    return {"generation": generation, "nsteps": manifest.get("nsteps"),
+            "physical_time_fs": manifest.get("physical_time_fs"),
+            "last_event_seq": manifest.get("last_event_seq"), "valid": True}
+
+
 def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
     """Structured run status from the run directory (events + trajectory db).
 
@@ -152,7 +167,7 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         "cost": cost,
         "wall_time_s": (run_summaries[-1]["wall_time_s"] if run_summaries
                         else None),
-        "last_checkpoint": None,  # WP03
+        "last_checkpoint": _last_checkpoint(run_dir),
         "failure": failure,
         "events": {"count": len(events),
                    "last_seq": max((int(e.get("seq", 0)) for e in events), default=0)},

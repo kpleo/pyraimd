@@ -33,10 +33,14 @@ EVENT_SCHEMA_VERSION = 1
 RUN_START = "run_start"
 EVALUATION_PROPOSED = "evaluation_proposed"
 EVALUATION_COMMITTED = "evaluation_committed"
+STEP_COMPLETED = "step_completed"
+PROBE_COMPLETED = "probe_completed"
+LABEL_CONSUMED = "label_consumed"
 TASK = "task"
 MODEL_UPDATE = "model_update"
 RUN_SUMMARY = "run_summary"
 RUN_END = "run_end"
+RESUMED = "resumed"
 
 
 class EventLogError(RuntimeError):
@@ -51,7 +55,8 @@ class EventLog:
     last committed event (the resume path WP03 builds on).
     """
 
-    def __init__(self, run_dir: str | Path, name: str = "events.jsonl") -> None:
+    def __init__(self, run_dir: str | Path, name: str = "events.jsonl", *,
+                 force: bool = False) -> None:
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.path = self.run_dir / name
@@ -59,11 +64,16 @@ class EventLog:
         try:
             fd = os.open(self._lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError as error:
-            raise EventLogError(
-                f"run at {self.run_dir} already has an active writer "
-                f"({self._lock_path.name} exists); concurrent starts are "
-                "rejected — remove a stale lock deliberately after a crash"
-            ) from error
+            if not force:
+                raise EventLogError(
+                    f"run at {self.run_dir} already has an active writer "
+                    f"({self._lock_path.name} exists); concurrent starts are "
+                    "rejected — remove a stale lock deliberately after a crash"
+                ) from error
+            # Deliberate reclaim: the caller asserts it is the sole writer
+            # (e.g. resume after a crash). Never use this to queue writers.
+            self._lock_path.unlink()
+            fd = os.open(self._lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.write(fd, str(os.getpid()).encode())
         os.close(fd)
         self._closed = False

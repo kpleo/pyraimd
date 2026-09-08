@@ -17,17 +17,29 @@ step_id, evaluation_id, phase, physical_time_fs, model_id) recorded in the
 stored metadata; probes share their parent evaluation's identity and never
 advance physical time. Model updates announced through ``on_label`` advance
 a decision-layer model generation that keys pending proposals, anchors and
-cached results. Neither interface supports restoring an energetic run from
-disk yet.
+cached results.
+
+Resumable runs (WP03) write complete-step checkpoints (positions, full-step
+momenta, real time, committed evaluation id, reusable driving force, anchor,
+check RNG bit state, model identity and updater state) through
+``run_dir``/``checkpoint_interval_steps``, and ``EnergeticRunner.resume``
+restores the last valid checkpoint in a new process and replays the events
+after its cursor — reusing frozen proposals, check draws and driving forces
+without re-sampling, re-training or re-consuming. Plain ``on_label``
+callbacks without a state export are not resumable; unsupported combinations
+are refused, never silently degraded.
 """
 
 from __future__ import annotations
 
 import copy
+import json
 import math
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
@@ -57,18 +69,28 @@ from pyraimd2.runtime import (
     fingerprint_of,
     model_id_for,
 )
+from pyraimd2.runtime.checkpoint import (
+    CheckpointManager,
+    ResumeError,
+    rng_state_to_json,
+)
 from pyraimd2.runtime.events import (
     EVALUATION_COMMITTED,
     EVALUATION_PROPOSED,
     EVENT_SCHEMA_VERSION,
+    LABEL_CONSUMED,
     MODEL_UPDATE,
+    PROBE_COMPLETED,
+    RESUMED,
     RUN_END,
     RUN_START,
     RUN_SUMMARY,
+    STEP_COMPLETED,
     TASK,
     EventLog,
 )
 from pyraimd2.runtime.labels import LabelCache, atoms_input_hash
+from pyraimd2.runtime.updater import StatefulUpdater
 from pyraimd2.store.store import STORE_SCHEMA_VERSION, Store
 from pyraimd2.surrogate.base import (
     Surrogate,
@@ -159,6 +181,62 @@ class _CalibrationOrigin:
     index: int
     label: EngineResult
     label_id: str | None = None
+
+
+def _response_from_dict(record: dict) -> DirectionalResponse:
+    """Rebuild a response from its stored snapshot (derived fields recompute
+    identically from the same inputs)."""
+    return DirectionalResponse(
+        np.array(record["direction"], dtype=float),
+        np.array(record["response"], dtype=float),
+        float(record["eta"]),
+        float(record["transverse_coefficient"]),
+        float(record["remainder_coefficient"]),
+    )
+
+
+def _anchor_from_record(record: dict, model_generation: int | None = None) -> _Anchor:
+    """Rebuild an anchor from its stored record (store metadata, checkpoint
+    state or proposal events all share ``_anchor_record``'s shape)."""
+    calibration = record["calibration"]
+    responses = tuple(_response_from_dict(r) for r in calibration["responses"])
+    n_atoms = len(record["positions_A"])
+    prediction = SurrogatePrediction(
+        float(record["base_energy_eV"]),
+        np.array(record["base_forces_eV_A"], dtype=float), None,
+        np.full(n_atoms, np.nan))
+    label = EngineResult(
+        float(record["reference_energy_eV"]),
+        np.array(record["reference_forces_eV_A"], dtype=float), None, 0.0)
+    open_prefix = record.get("open_prefix")
+    generation = record.get("model_generation", model_generation)
+    return _Anchor(
+        int(record["segment_id"]), int(record["evaluation_index"]),
+        np.array(record["positions_A"], dtype=float), prediction, label,
+        np.array(record["correction_eV_A"], dtype=float), responses,
+        [bool(v) for v in open_prefix] if open_prefix is not None
+        else [True] * len(responses),
+        calibration, model_generation=0 if generation is None else int(generation))
+
+
+def _id_suffix(identity: str | None) -> int:
+    """Numeric suffix of a ``...-N`` run identifier (0 when absent/invalid)."""
+    if identity is None:
+        return 0
+    try:
+        return int(str(identity).rsplit("-", 1)[1])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _is_stateful(callback: object) -> bool:
+    """A resumable updater exports and restores its continuation state."""
+    return callable(callback) and hasattr(callback, "state_dict") \
+        and hasattr(callback, "load_state_dict")
+
+
+class StopRequested(RuntimeError):
+    """Raised inside the integrator loop to stop at the last complete step."""
 
 
 @dataclass(frozen=True)
@@ -252,6 +330,7 @@ class EnergeticCalculator(Calculator):
         on_label: LabelCallback | None = None,
         event_log: EventLog | None = None,
         label_cache: bool = True,
+        _resume_state: dict | None = None,
     ) -> None:
         super().__init__()
         self.force_budget = _positive(force_budget, "force_budget")
@@ -273,8 +352,10 @@ class EnergeticCalculator(Calculator):
             raise ValueError("run_id must be a nonempty string")
         # Reject accidental append/restart rather than silently losing the
         # reference anchor, RNG history or the independent bound's counts.
-        if next(store._db.select(run_id=run_id), None) is not None:
-            raise ValueError("run_id already exists; energetic restart is not implemented")
+        # A resume restores its state over the existing run deliberately.
+        if _resume_state is None and next(store._db.select(run_id=run_id), None) is not None:
+            raise ValueError("run_id already exists; direct restart is rejected, "
+                             "use EnergeticRunner.resume")
         self.surrogate, self.engine, self.store, self.run_id = surrogate, engine, store, run_id
         # Contract preflight: a declared unit/energy-convention mismatch fails
         # here, before the first (expensive) SCF or inference call. Undeclared
@@ -285,6 +366,7 @@ class EnergeticCalculator(Calculator):
         self._engine_fingerprint = fingerprint_of(engine)
         self.direction, self.on_label = direction, on_label
         self.check_probability, self.check_seed = float(check_probability), int(check_seed)
+        self.failure_probability, self.tilt = float(failure_probability), float(tilt)
         self._rng = np.random.default_rng(check_seed)
         self.verification = (IndependentCheckBound(check_probability, failure_probability, tilt)
                              if check_probability > 0 else None)
@@ -305,6 +387,9 @@ class EnergeticCalculator(Calculator):
         self._deferred_record: dict | None = None
         self._evaluation_calls_before: dict | None = None
         self._results_model_generation: int | None = None
+        # Set once the integrator schedules its first evaluation: afterwards
+        # unscheduled property requests are re-reads of committed facts.
+        self._integrator_owned = False
         # WP02 run records: authoritative event log (optional — direct legacy
         # use stays event-free), task/label ID counters, and the numeric
         # label cache (§5.4; disabled unless the reference declares a
@@ -314,23 +399,31 @@ class EnergeticCalculator(Calculator):
         self._label_counter = 0
         self._active_evaluation_id: int | None = None
         self._label_cache = LabelCache(self._engine_fingerprint, enabled=label_cache)
-        self._emit(RUN_START, run_id=self.run_id,
-                   schema_version=STORE_SCHEMA_VERSION,
-                   event_schema_version=EVENT_SCHEMA_VERSION,
-                   software_version=__version__,
-                   reference_id=self._engine_fingerprint,
-                   model_id=self.model_id,
-                   surrogate_fingerprint=fingerprint_of(self.surrogate),
-                   policy={"force_budget_eV_A": self.force_budget,
-                           "timestep_fs": self.timestep_fs,
-                           "probe_steps_A": self.probe_steps.tolist(),
-                           "numerical_floor_eV_A": self.numerical_floor,
-                           "time_cap_fs": self.time_cap_fs,
-                           "transverse_cap": self.transverse_cap,
-                           "check_probability": self.check_probability,
-                           "check_seed": self.check_seed,
-                           "failure_probability": failure_probability,
-                           "tilt": tilt})
+        # Resume machinery: verified probes reusable across a crashed
+        # calibration, and the model-artifact publisher the runner installs.
+        self._probe_reuse: dict[tuple, dict] = {}
+        self._model_publisher: Callable[[str, dict | None], None] | None = None
+        if _resume_state is None:
+            self._emit(RUN_START, run_id=self.run_id,
+                       schema_version=STORE_SCHEMA_VERSION,
+                       event_schema_version=EVENT_SCHEMA_VERSION,
+                       software_version=__version__,
+                       reference_id=self._engine_fingerprint,
+                       model_id=self.model_id,
+                       surrogate_fingerprint=fingerprint_of(self.surrogate),
+                       policy={"force_budget_eV_A": self.force_budget,
+                               "timestep_fs": self.timestep_fs,
+                               "probe_steps_A": self.probe_steps.tolist(),
+                               "numerical_floor_eV_A": self.numerical_floor,
+                               "time_cap_fs": self.time_cap_fs,
+                               "transverse_cap": self.transverse_cap,
+                               "check_probability": self.check_probability,
+                               "check_seed": self.check_seed,
+                               "failure_probability": failure_probability,
+                               "tilt": tilt})
+        else:
+            self._apply_checkpoint_state(_resume_state["state"],
+                                         _resume_state["arrays"])
 
     def _emit(self, event_type: str, **payload: object) -> int | None:
         if self._event_log is None:
@@ -395,6 +488,259 @@ class EnergeticCalculator(Calculator):
             model_id=self.model_id,
         )
 
+    def _policy_dict(self) -> dict:
+        return {"force_budget": self.force_budget, "timestep_fs": self.timestep_fs,
+                "probe_steps": tuple(float(v) for v in self.probe_steps),
+                "numerical_floor": self.numerical_floor,
+                "time_cap_fs": self.time_cap_fs,
+                "transverse_cap": self.transverse_cap,
+                "check_probability": self.check_probability,
+                "check_seed": self.check_seed,
+                "failure_probability": self.failure_probability,
+                "tilt": self.tilt}
+
+    def _checkpoint_payload(self, boundary_atoms: Atoms) -> tuple[dict, dict]:
+        """Complete-step state for ``CheckpointManager.write``.
+
+        ``boundary_atoms`` carries the full-step momenta (the runner calls
+        this only at a complete-step boundary); the driving force comes from
+        the last committed evaluation and is reusable for the next first
+        half-kick.
+        """
+        origin = self._deferred_origin
+        state = {
+            "run_id": self.run_id,
+            "n_evaluations": self.n_evaluations,
+            "n_accepted": self.n_accepted,
+            "n_violations": self.n_violations,
+            "n_calibrations": self.n_calibrations,
+            "reference_calls": dict(self.reference_calls),
+            "step": self.step,
+            "segment": self._segment,
+            "model_generation": self._model_generation,
+            "model_id": self.model_id,
+            "engine_fingerprint": self._engine_fingerprint,
+            "next_reason": self._next_reason,
+            "task_counter": self._task_counter,
+            "label_counter": self._label_counter,
+            "verification": (None if self.verification is None
+                             else self.verification.as_dict()),
+            "check_rng": rng_state_to_json(self._rng.bit_generator.state),
+            "policy": self._policy_dict(),
+            "driving_energy_eV": (None if not self.results
+                                  else float(self.results["energy"])),
+            "anchor": self._anchor_record(self._anchor),
+            "deferred_origin": None if origin is None else {
+                "index": origin.index,
+                "label_id": origin.label_id,
+                "label_energy_eV": float(origin.label.energy),
+                "label_wall_time_s": float(origin.label.wall_time_s),
+                "positions_A": origin.atoms.positions.tolist(),
+                "momenta": origin.atoms.get_momenta().tolist(),
+                "label_forces_eV_A": origin.label.forces.tolist(),
+            },
+            "updater_state": (self.on_label.state_dict()
+                              if _is_stateful(self.on_label) else None),
+        }
+        arrays = {
+            "numbers": boundary_atoms.numbers,
+            "cell": boundary_atoms.cell.array,
+            "pbc": np.asarray(boundary_atoms.pbc),
+            "masses": boundary_atoms.get_masses(),
+            "initial_charges": boundary_atoms.get_initial_charges(),
+            "initial_magmoms": boundary_atoms.get_initial_magnetic_moments(),
+            "positions": boundary_atoms.positions,
+            "momenta": boundary_atoms.get_momenta(),
+            "driving_forces": (np.zeros((len(boundary_atoms), 3)) if not self.results
+                               else np.asarray(self.results["forces"], dtype=float)),
+        }
+        return state, arrays
+
+    def _identity_from_arrays(self, arrays: dict) -> Atoms:
+        identity = Atoms(numbers=np.array(arrays["numbers"]),
+                         cell=np.array(arrays["cell"]),
+                         pbc=np.array(arrays["pbc"]))
+        identity.set_masses(np.array(arrays["masses"]))
+        identity.set_initial_charges(np.array(arrays["initial_charges"]))
+        identity.set_initial_magnetic_moments(np.array(arrays["initial_magmoms"]))
+        return identity
+
+    def _apply_checkpoint_state(self, state: dict, arrays: dict) -> None:
+        """Restore a payload written by :meth:`_checkpoint_payload`."""
+        self.n_evaluations = int(state["n_evaluations"])
+        self.n_accepted = int(state["n_accepted"])
+        self.n_violations = int(state["n_violations"])
+        self.n_calibrations = int(state["n_calibrations"])
+        self.reference_calls = {key: int(value)
+                                for key, value in state["reference_calls"].items()}
+        self.step = int(state["step"])
+        self._segment = int(state["segment"])
+        self._model_generation = int(state["model_generation"])
+        self._next_reason = state["next_reason"]
+        self._task_counter = int(state["task_counter"])
+        self._label_counter = int(state["label_counter"])
+        recorded = state["verification"]
+        if recorded is not None:
+            bound = IndependentCheckBound(float(recorded["probability"]),
+                                          float(recorded["failure_probability"]),
+                                          float(recorded["tilt"]))
+            object.__setattr__(bound, "accepted_count", int(recorded["accepted_count"]))
+            object.__setattr__(bound, "detected_count", int(recorded["detected_count"]))
+            self.verification = bound
+        self._rng = np.random.default_rng(self.check_seed)
+        self._rng.bit_generator.state = state["check_rng"]
+        self._anchor = (_anchor_from_record(state["anchor"])
+                        if state["anchor"] is not None else None)
+        self._identity = self._identity_from_arrays(arrays)
+        origin = state["deferred_origin"]
+        if origin is not None:
+            atoms = self._identity.copy()
+            atoms.positions = np.array(origin["positions_A"], dtype=float)
+            atoms.set_momenta(np.array(origin["momenta"], dtype=float))
+            label = EngineResult(float(origin["label_energy_eV"]),
+                                 np.array(origin["label_forces_eV_A"], dtype=float),
+                                 None, float(origin["label_wall_time_s"]))
+            self._deferred_origin = _CalibrationOrigin(atoms, int(origin["index"]),
+                                                       label, label_id=origin["label_id"])
+        if state["driving_energy_eV"] is not None:
+            # Reusable driving force of the boundary evaluation: the resumed
+            # integrator's first half-kick reads this from the ASE cache.
+            self.results = {"energy": float(state["driving_energy_eV"]),
+                            "forces": np.array(arrays["driving_forces"], dtype=float)}
+            self._results_model_generation = self._model_generation
+
+    def _replay_committed(self, event: dict, row: object) -> None:
+        """Apply one committed evaluation from its records, never recompute.
+
+        Counters, the check stream, the independent bound and the anchor
+        evolve exactly as the original commit made them; every value comes
+        from the authoritative records (event + store row).
+        """
+        metadata = row.data.get("metadata") or {}
+        accepted = event["route"] == "ml"
+        violation = event["violation"]
+        # A recalibration before this evaluation's decision defines the
+        # anchor the decision used; the live path clears the deferred origin
+        # once it has run.
+        deferred_rec = metadata.get("calibration_after_previous_label")
+        if deferred_rec is not None:
+            self._deferred_origin = None
+            anchor_rec = deferred_rec.get("anchor")
+            self._anchor = (_anchor_from_record(anchor_rec)
+                            if anchor_rec is not None else None)
+            if anchor_rec is not None:
+                self.n_calibrations += 1
+        if accepted:
+            anchor = self._anchor
+            if anchor is not None and metadata.get("forecasts"):
+                anchor.open_prefix = [bool(f["prefix_open"])
+                                      for f in metadata["forecasts"]]
+            self._anchor = None if violation else anchor
+            self._next_reason = ("previous_independent_check_violation" if violation
+                                 else "reference_required")
+        else:
+            new_anchor_rec = metadata.get("new_anchor")
+            if new_anchor_rec is not None:
+                self._anchor = _anchor_from_record(new_anchor_rec)
+                self.n_calibrations += 1
+            else:
+                self._anchor = None
+            self._next_reason = ("direction_unavailable_reference"
+                                 if self._anchor is None else "reference_required")
+        for key, count in event["reference_calls_this_evaluation"].items():
+            self.reference_calls[key] += int(count)
+        self.n_evaluations += 1
+        self.n_accepted += int(accepted)
+        self.n_violations += int(violation is True)
+        self.step = int(event["context"]["evaluation_id"])
+        if accepted and self.check_probability > 0:
+            # Each accepted evaluation consumed exactly one draw; advancing
+            # the stream keeps every later draw identical to the live run.
+            self._rng.random()
+        if self.verification is not None:
+            self.verification.update(bool(accepted), bool(event["checked"]),
+                                     violation if event["checked"] else None)
+        self._segment = max(self._segment, int(metadata.get("segment_id") or 0))
+        if self._anchor is not None:
+            self._segment = max(self._segment, self._anchor.segment)
+
+    def _replay_label_event(self, event: dict, store: Store, updater: object,
+                            models_dir: Path) -> None:
+        """Apply a label-consumption or model-update event to the updater and
+        the deferred-calibration bookkeeping — never re-running training."""
+        if not _is_stateful(updater):
+            raise ResumeError(
+                "the run consumed labels through an updater; supply the same "
+                "stateful updater to resume")
+        if event["type"] == LABEL_CONSUMED:
+            updater_state = event.get("updater_state")
+            if updater_state is None:
+                raise ResumeError(
+                    f"label {event.get('label_id')} has no persisted updater "
+                    "state; automatic resume stops here as pending")
+            updater.load_state_dict(updater_state)
+            # An unchanged model on a reference route still recalibrates
+            # before the next proposal (live semantics); on an accepted
+            # route the anchor is kept untouched.
+            row = store._row_at_step(self.run_id, int(event["evaluation_id"]) - 1)
+            if row.key_value_pairs["route"] == "dft":
+                payload = row.data["engine"]
+                label = EngineResult(float(payload["energy"]),
+                                     np.asarray(payload["forces"], dtype=float),
+                                     None, 0.0)
+                self._anchor = None
+                self._next_reason = "model_update_requires_recalibration"
+                self._deferred_origin = _CalibrationOrigin(
+                    row.toatoms(), int(event["evaluation_id"]), label,
+                    label_id=event["label_id"])
+            return
+        artifact = _model_artifact(models_dir, event["model_id"])
+        if artifact is None or artifact.get("updater_state") is None:
+            raise ResumeError(
+                f"model artifact for {event['model_id']!r} is missing or "
+                "incomplete; automatic resume stops here as pending")
+        updater.load_state_dict(artifact["updater_state"])
+        self._model_generation = int(event["generation"])
+        self._anchor = None
+        if event.get("origin_violation"):
+            self._next_reason = "previous_independent_check_violation"
+            return
+        origin_eval = int(event["origin_evaluation_id"])
+        row = store._row_at_step(self.run_id, origin_eval - 1)
+        payload = row.data.get("engine")
+        label = EngineResult(float(payload["energy"]),
+                             np.asarray(payload["forces"], dtype=float), None, 0.0)
+        self._next_reason = "model_update_requires_recalibration"
+        self._deferred_origin = _CalibrationOrigin(
+            row.toatoms(), origin_eval, label,
+            label_id=event["origin_label_id"])
+
+    def _rebuild_pending(self, proposal: dict, atoms: Atoms) -> _Pending:
+        """Rebuild the frozen pending decision of an uncommitted evaluation."""
+        prediction_payload = proposal["prediction"]
+        prediction = SurrogatePrediction(
+            float(prediction_payload["energy_eV"]),
+            np.array(prediction_payload["forces_eV_A"], dtype=float), None,
+            np.array(prediction_payload["uncertainty"], dtype=float))
+        anchor_rec = proposal.get("anchor_record")
+        anchor = (_anchor_from_record(anchor_rec)
+                  if anchor_rec is not None else None)
+        context = EvaluationContext(**proposal["context"])
+        self._deferred_record = proposal.get("deferred_record")
+        return _Pending(
+            atoms, int(context.evaluation_id), prediction, anchor,
+            bool(proposal["accepted"]), proposal["reason"],
+            [dict(f) for f in proposal["forecasts"]],
+            proposal["selected_direction"],
+            [bool(v) for v in proposal["open_prefix"]],
+            proposal["frozen_energy_eV"],
+            None if proposal["frozen_forces_eV_A"] is None
+            else np.array(proposal["frozen_forces_eV_A"], dtype=float),
+            bool(proposal["checked"]), proposal["check_draw"],
+            dict(proposal["calls_before"]),
+            context=context,
+            model_generation=int(proposal["model_generation"]))
+
     def _check_identity(self, atoms: Atoms) -> None:
         """Reject any change that must never happen mid-run.
 
@@ -427,10 +773,15 @@ class EnergeticCalculator(Calculator):
 
     def get_property(self, name, atoms: Atoms | None = None, allow_calculation: bool = True):
         # A committed evaluation's cached results are valid only for the model
-        # generation that produced them: after a model update, a request at
-        # the same geometry is a NEW logical evaluation with a new decision,
-        # not a replay of the old one.
-        if (self.results and self._results_model_generation is not None
+        # generation that produced them. In the compatibility layer (no
+        # integrator schedule), a same-geometry request after a model update
+        # is a NEW logical evaluation with a new decision, not a replay of
+        # the old one. Integrator-driven runs schedule every evaluation
+        # explicitly: an unscheduled request is by definition a re-read of
+        # the committed fact and must replay (§5.2) — the integrator itself
+        # re-reads forces between steps for bookkeeping.
+        if (not self._integrator_owned and self.results
+                and self._results_model_generation is not None
                 and self._results_model_generation != self._model_generation):
             self.results = {}
         # ASE skips calculate() entirely when nothing it tracks has changed,
@@ -556,25 +907,57 @@ class EnergeticCalculator(Calculator):
         shape = (len(directions), 2, len(pending.atoms), 3)
         plus_d, minus_d, plus_r, minus_r = [np.empty(shape) for _ in range(4)]
         records = []
+        n_reused = 0
         for d, direction in enumerate(directions):
             for h_index, h in enumerate(self.probe_steps):
                 for sign, displacements, residuals in ((1, plus_d, plus_r), (-1, minus_d, minus_r)):
-                    probe = pending.atoms.copy()
-                    probe.positions += sign * h * direction
-                    prediction = self._predict(probe, purpose="probe")
-                    label, probe_label_id = self._reference(probe, "probe")
-                    displacement = probe.positions - pending.atoms.positions
+                    # A crashed calibration's verified probes are reused
+                    # instead of re-executed (each was persisted on success).
+                    reuse_key = (pending.index, d, h_index, sign, self._model_generation)
+                    reused = self._probe_reuse.get(reuse_key)
+                    if (reused is not None and not np.allclose(
+                            reused["displacement_A"], sign * h * direction,
+                            rtol=0, atol=1e-7)):
+                        reused = None  # stale record from a different origin
+                    if reused is not None:
+                        record = dict(reused)
+                        displacement = np.array(record["displacement_A"], dtype=float)
+                        prediction = SurrogatePrediction(
+                            float(record["base_energy_eV"]),
+                            np.array(record["base_forces_eV_A"], dtype=float),
+                            None, np.full(len(pending.atoms), np.nan))
+                        label = EngineResult(
+                            float(record["reference_energy_eV"]),
+                            np.array(record["reference_forces_eV_A"], dtype=float),
+                            None, 0.0)
+                        n_reused += 1
+                    else:
+                        probe = pending.atoms.copy()
+                        probe.positions += sign * h * direction
+                        prediction = self._predict(probe, purpose="probe")
+                        label, probe_label_id = self._reference(probe, "probe")
+                        displacement = probe.positions - pending.atoms.positions
+                        record = {"direction": d, "step_A": float(h), "sign": sign,
+                                        "phase": str(EvaluationPhase.PROBE),
+                                        "evaluation_id": pending.index,
+                                        "label_id": probe_label_id,
+                                        "displacement_A": displacement.tolist(),
+                                        "base_energy_eV": prediction.energy,
+                                        "reference_energy_eV": label.energy,
+                                        "base_forces_eV_A": prediction.forces.tolist(),
+                                        "reference_forces_eV_A": label.forces.tolist()}
+                        # Persist every verified probe immediately — never wait
+                        # for the whole probe set before writing.
+                        self._emit_once(
+                            f"probe:{self.run_id}:{pending.index}:{d}:{h_index}:{sign}",
+                            PROBE_COMPLETED, evaluation_id=pending.index,
+                            model_generation=self._model_generation,
+                            model_id=self.model_id,
+                            direction=d, step_A=float(h), sign=sign,
+                            record=record)
                     displacements[d, h_index] = displacement
                     residuals[d, h_index] = prediction.forces + correction - label.forces
-                    records.append({"direction": d, "step_A": float(h), "sign": sign,
-                                    "phase": str(EvaluationPhase.PROBE),
-                                    "evaluation_id": pending.index,
-                                    "label_id": probe_label_id,
-                                    "displacement_A": displacement.tolist(),
-                                    "base_energy_eV": prediction.energy,
-                                    "reference_energy_eV": label.energy,
-                                    "base_forces_eV_A": prediction.forces.tolist(),
-                                    "reference_forces_eV_A": label.forces.tolist()})
+                    records.append(record)
         pending.probe_records = records
         try:
             responses = estimate_responses(directions, self.probe_steps, plus_d, minus_d, plus_r, minus_r)
@@ -586,6 +969,7 @@ class EnergeticCalculator(Calculator):
         calibration = {"probe_steps_A": self.probe_steps.tolist(), "probes": records,
                        "responses": [response.as_dict() for response in responses],
                        "force_call_count": 1 + 4 * len(directions),
+                       "reused_probes": n_reused,
                        "model_id": model_id,
                        "type": "two_scale_empirical_reference_probes"}
         self._segment += 1
@@ -603,7 +987,11 @@ class EnergeticCalculator(Calculator):
                 "positions_A": anchor.positions.tolist(),
                 "base_energy_eV": anchor.prediction.energy,
                 "reference_energy_eV": anchor.label.energy,
+                "base_forces_eV_A": anchor.prediction.forces.tolist(),
+                "reference_forces_eV_A": anchor.label.forces.tolist(),
                 "correction_eV_A": anchor.correction.tolist(),
+                "open_prefix": [bool(v) for v in anchor.open_prefix],
+                "model_generation": anchor.model_generation,
                 "calibration": anchor.calibration}
 
     def _prepare_updated_model(self) -> None:
@@ -849,20 +1237,35 @@ class EnergeticCalculator(Calculator):
                             status="success", started_unix=training_started,
                             elapsed_s=time.perf_counter() - training_start,
                             label_id=pending.label_id)
+            updater_state = (self.on_label.state_dict()
+                             if _is_stateful(self.on_label) else None)
             if changed is not False:
                 # Anything except exactly False declares a model change:
                 # advance the decision-layer generation so cached results,
                 # pending proposals and anchors from the old model cannot be
-                # reused for a new evaluation. The update event is idempotent
-                # under (origin label ID, origin evaluation) — a redelivered
-                # label never rewrites the same logical update.
+                # reused for a new evaluation. The model artifact is
+                # persisted before the update event commits, and the event
+                # itself is idempotent under (origin label ID, evaluation).
                 self._model_generation += 1
+                if self._model_publisher is not None:
+                    self._model_publisher(self.model_id, updater_state)
                 self._emit_once(f"model-update:{pending.label_id}:eval-{pending.index}",
                                 MODEL_UPDATE,
                                 generation=self._model_generation,
                                 model_id=self.model_id,
                                 origin_evaluation_id=pending.index,
-                                origin_label_id=pending.label_id)
+                                origin_label_id=pending.label_id,
+                                origin_violation=bool(violation),
+                                updater_state=updater_state)
+            else:
+                # Label consumed without a model change: the updater's
+                # continuation state still advanced — persist it so a replay
+                # never re-consumes or misaligns the update queue.
+                self._emit_once(f"consumed:{pending.label_id}", LABEL_CONSUMED,
+                                label_id=pending.label_id,
+                                evaluation_id=pending.index,
+                                model_id=self.model_id,
+                                updater_state=updater_state)
             if pending.accepted and changed is False:
                 self._anchor = candidate
                 if violation:
@@ -893,14 +1296,28 @@ class EnergeticCalculator(Calculator):
             self._pending = self._freeze(self.atoms, index)
             # Persist the frozen proposal and check draw BEFORE any external
             # computation of this evaluation (§5.3); idempotent per
-            # evaluation ID, so a retry never duplicates it.
+            # evaluation ID, so a retry never duplicates it. The record is
+            # complete enough to rebuild the pending decision after a crash:
+            # positions, frozen prediction and decision, and the anchor used.
             self._emit_once(
                 f"proposal:{self.run_id}:{index}", EVALUATION_PROPOSED,
                 context=self._pending.context.as_dict(),
+                positions_A=self._pending.atoms.positions.tolist(),
+                prediction={"energy_eV": float(self._pending.prediction.energy),
+                            "forces_eV_A": self._pending.prediction.forces.tolist(),
+                            "uncertainty": self._pending.prediction.uncertainty.tolist()},
                 accepted=self._pending.accepted, reason=self._pending.reason,
                 forecasts=self._pending.forecasts,
                 checked=self._pending.checked, check_draw=self._pending.draw,
+                frozen_energy_eV=self._pending.energy,
+                frozen_forces_eV_A=(None if self._pending.forces is None
+                                    else self._pending.forces.tolist()),
+                open_prefix=[bool(v) for v in self._pending.open_prefix],
+                selected_direction=self._pending.selected_direction,
+                calls_before=dict(self._pending.calls_before),
                 model_generation=self._pending.model_generation,
+                anchor_record=self._anchor_record(self._pending.anchor),
+                deferred_record=self._deferred_record,
                 segment_id=(None if self._pending.anchor is None
                             else self._pending.anchor.segment),
             )
@@ -925,8 +1342,84 @@ class EnergeticCalculator(Calculator):
                 raise ValueError("physical_time_fs must be finite and >= 0")
         self._scheduled_index = index
         self._scheduled_time_fs = physical_time_fs
+        self._integrator_owned = True
         self._expected_positions = None if positions is None else positions.copy()
         self.results = {}
+
+
+def _model_artifact(models_dir: Path, model_id: str) -> dict | None:
+    path = Path(models_dir) / model_id.replace("/", "_") / "state.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _check_resume_safety(events: list[dict], updater: object) -> None:
+    """Refuse resume paths that cannot be honest before touching state."""
+    for event in events:
+        if (event.get("type") == TASK and event.get("operation") == "training"
+                and event.get("status") == "failed"):
+            raise ResumeError(
+                "the run stopped on a failed model update; fork from the "
+                "last valid checkpoint instead of resuming")
+    consumed = [e for e in events
+                if e.get("type") in (LABEL_CONSUMED, MODEL_UPDATE)]
+    if consumed and not _is_stateful(updater):
+        raise ResumeError(
+            "the run consumed labels through an updater; supply the same "
+            "stateful updater to resume")
+
+
+def _replay_window(calc: EnergeticCalculator, store: Store, events: list[dict], *,
+                   updater: object, models_dir: Path) -> dict | None:
+    """Replay committed events after a checkpoint cursor in original order.
+
+    Returns the last uncommitted proposal event (the frozen decision to
+    resume with the same check draw), or None. Replayed commits apply their
+    recorded values only — no re-sampling, no re-training, no re-consuming.
+    """
+    tail_proposal = None
+    unconsumed: set[str] = set()
+    for event in events:
+        event_type = event.get("type")
+        if event_type == TASK:
+            calc._task_counter = max(calc._task_counter,
+                                     _id_suffix(event.get("task_id")))
+            calc._label_counter = max(calc._label_counter,
+                                      _id_suffix(event.get("label_id")))
+        elif event_type == PROBE_COMPLETED:
+            record = event["record"]
+            calc._label_counter = max(calc._label_counter,
+                                      _id_suffix(record.get("label_id")))
+            try:
+                h_index = list(calc.probe_steps).index(float(event["step_A"]))
+            except ValueError:
+                continue  # probe step from another policy: not reusable
+            calc._probe_reuse[(int(event["evaluation_id"]),
+                               int(event["direction"]), h_index,
+                               int(event["sign"]),
+                               int(event["model_generation"]))] = record
+        elif event_type == EVALUATION_PROPOSED:
+            tail_proposal = event
+        elif event_type == EVALUATION_COMMITTED:
+            tail_proposal = None
+            row = store._row_at_step(
+                calc.run_id, int(event["context"]["evaluation_id"]) - 1)
+            calc._replay_committed(event, row)
+            if updater is not None and event.get("label_id") is not None:
+                unconsumed.add(str(event["label_id"]))
+        elif event_type in (LABEL_CONSUMED, MODEL_UPDATE):
+            calc._replay_label_event(event, store, updater, models_dir)
+            unconsumed.discard(str(event.get("label_id")
+                                       or event.get("origin_label_id")))
+    if unconsumed:
+        raise ResumeError(
+            f"labels {sorted(unconsumed)} were committed but their consumption "
+            "state was never persisted; automatic resume stops here as pending")
+    return tail_proposal
 
 
 class _EnergeticVerlet(VelocityVerlet):
@@ -947,7 +1440,13 @@ class _EnergeticVerlet(VelocityVerlet):
         calc = atoms.calc
         calc._schedule(self.nsteps + 1, next_positions,
                        physical_time_fs=(self.nsteps + 1) * calc.timestep_fs)
-        return super().step(forces)
+        result = super().step(forces)
+        # The full-step boundary is now complete: half-step momenta have been
+        # promoted. Recorded per step so replay and export know the phase.
+        calc._emit_once(f"step:{calc.run_id}:{self.nsteps}", STEP_COMPLETED,
+                        step_id=self.nsteps,
+                        physical_time_fs=(self.nsteps + 1) * calc.timestep_fs)
+        return result
 
 
 class EnergeticRunner:
@@ -956,9 +1455,20 @@ class EnergeticRunner:
     Existing momenta are preserved. If missing, a seeded thermal distribution
     at ``temperature_K`` initializes them once. Force-call costs count every
     successful anchor/probe/check separately. Calling ``run`` again continues
-    this live instance; loading an old Store as a restart is not implemented.
-    A failed MD step stops this runner because Verlet may have advanced to
-    half-step momenta; no silent integrator retry is attempted.
+    this live instance. A failed MD step stops this runner because Verlet may
+    have advanced to half-step momenta; no silent integrator retry is
+    attempted — resume from the last complete-step checkpoint instead.
+
+    With ``run_dir`` (requires ``event_log``) the runner writes complete-step
+    checkpoints every ``checkpoint_interval_steps`` and on a stop request
+    (:meth:`request_stop`, optionally installed as a SIGINT flag via
+    ``handle_sigint``): positions and full-step momenta, real time, committed
+    evaluation id, reusable driving force, anchor, check RNG bit state, model
+    identity and updater state. :meth:`resume` restores the last valid
+    checkpoint in a fresh process and replays the events after its cursor;
+    :meth:`fork` starts a new run from a checkpoint with the model chain
+    carried over. Resumable model updates require a stateful updater (state
+    export/restore); plain callbacks are not resumable and are refused.
     """
 
     def __init__(
@@ -971,8 +1481,15 @@ class EnergeticRunner:
         direction: Direction | None = None, on_label: LabelCallback | None = None,
         temperature_K: float = 300.0, velocity_seed: int = 0,
         event_log: EventLog | None = None, label_cache: bool = True,
+        run_dir: str | Path | None = None, checkpoint_interval_steps: int | None = None,
+        handle_sigint: bool = False,
     ) -> None:
         temperature_K = _positive(temperature_K, "temperature_K", zero=True)
+        if checkpoint_interval_steps is not None and (
+                isinstance(checkpoint_interval_steps, bool)
+                or not isinstance(checkpoint_interval_steps, (int, np.integer))
+                or checkpoint_interval_steps < 1):
+            raise ValueError("checkpoint_interval_steps must be a positive integer")
         self.calc = EnergeticCalculator(
             surrogate, engine, store, run_id, force_budget=force_budget, timestep_fs=timestep_fs,
             probe_steps=probe_steps, numerical_floor=numerical_floor, time_cap_fs=time_cap_fs,
@@ -990,6 +1507,75 @@ class EnergeticRunner:
         self.calc._schedule(0)
         self.dyn = _EnergeticVerlet(atoms, self.timestep_fs * units.fs)
         self._failed = False
+        self._stop_requested = False
+        self.run_dir = None if run_dir is None else Path(run_dir)
+        self.checkpoint_interval_steps = (None if checkpoint_interval_steps is None
+                                          else int(checkpoint_interval_steps))
+        self._checkpoints: CheckpointManager | None = None
+        if self.run_dir is not None:
+            if event_log is None:
+                raise ValueError("checkpointing requires an event log")
+            self._checkpoints = CheckpointManager(self.run_dir)
+            (self.run_dir / "models").mkdir(parents=True, exist_ok=True)
+            self.calc._model_publisher = self._publish_model_artifact
+            self.dyn.attach(self._maybe_checkpoint, interval=1)
+        if handle_sigint:
+            self._install_sigint_handler()
+
+    def _install_sigint_handler(self) -> None:
+        """SIGINT only sets the stop flag; the checkpoint is written by the
+        normal control flow at the next complete-step boundary."""
+        import signal
+
+        signal.signal(signal.SIGINT, lambda signum, frame: self.request_stop())
+
+    def request_stop(self) -> None:
+        """Ask the run to checkpoint and stop at the next complete step."""
+        self._stop_requested = True
+
+    def close(self) -> None:
+        """Release the event-log writer lock (a deliberate end of writing)."""
+        if self.calc._event_log is not None:
+            self.calc._event_log.close()
+
+    def _publish_model_artifact(self, model_id: str, updater_state: dict | None) -> None:
+        """Immutable model artifact, persisted before the update event."""
+        directory = self.run_dir / "models" / model_id.replace("/", "_")
+        directory.mkdir(parents=True, exist_ok=True)
+        payload = {"model_id": model_id, "updater_state": updater_state,
+                   "written_unix": time.time()}
+        tmp = directory / "state.json.tmp"
+        tmp.write_text(json.dumps(payload, sort_keys=True))
+        with tmp.open("rb") as fh:
+            os.fsync(fh.fileno())
+        os.replace(tmp, directory / "state.json")
+
+    def _write_checkpoint(self) -> int | None:
+        if self._checkpoints is None:
+            return None
+        generation = self._checkpoints.next_generation()
+        state, arrays = self.calc._checkpoint_payload(self.atoms)
+        self._checkpoints.write(generation, state, arrays, {
+            "run_id": self.calc.run_id,
+            "nsteps": self.dyn.nsteps,
+            "physical_time_fs": self.dyn.nsteps * self.timestep_fs,
+            "last_event_seq": (self.calc._event_log.last_seq
+                               if self.calc._event_log is not None else 0),
+            "store_schema_version": STORE_SCHEMA_VERSION,
+            "event_schema_version": EVENT_SCHEMA_VERSION,
+            "software_version": __version__,
+        })
+        return generation
+
+    def _maybe_checkpoint(self) -> None:
+        if self._checkpoints is None:
+            return
+        if self._stop_requested:
+            self._write_checkpoint()
+            raise StopRequested
+        if (self.checkpoint_interval_steps
+                and self.dyn.nsteps % self.checkpoint_interval_steps == 0):
+            self._write_checkpoint()
 
     def run(self, n_steps: int) -> EnergeticRunSummary:
         if isinstance(n_steps, bool) or not isinstance(n_steps, (int, np.integer)) or n_steps < 0:
@@ -999,8 +1585,15 @@ class EnergeticRunner:
         before = (self.calc.n_evaluations, self.calc.n_accepted, self.calc.n_violations,
                   self.calc.n_calibrations, self.calc.reference_calls.copy())
         start = time.perf_counter()
+        stopped = False
         try:
             self.dyn.run(int(n_steps))
+        except StopRequested:
+            stopped = True
+            self._stop_requested = False
+            self.calc._emit(RUN_END, run_id=self.calc.run_id, status="stopped",
+                            reason="stop requested; checkpoint saved at the last "
+                                   "complete step")
         except Exception as error:
             self._failed = True
             self.calc._emit(RUN_END, run_id=self.calc.run_id, status="failed",
@@ -1022,9 +1615,183 @@ class EnergeticRunner:
         self.calc._emit(RUN_SUMMARY, run_id=self.calc.run_id,
                         n_steps=summary.n_steps, n_evaluations=summary.n_evaluations,
                         n_accepted=summary.n_accepted, n_reference=summary.n_reference,
-                        wall_time_s=summary.wall_time_s)
+                        wall_time_s=summary.wall_time_s, stopped_early=stopped)
         return summary
 
+    @staticmethod
+    def _read_resume_checkpoint(run_dir: Path) -> tuple[dict, dict, dict, int]:
+        checkpoint = CheckpointManager(run_dir).read_latest_valid()
+        if checkpoint is None:
+            raise ResumeError(f"no valid checkpoint under {run_dir}")
+        return (checkpoint.state, checkpoint.arrays, checkpoint.manifest,
+                checkpoint.generation)
+
     @classmethod
-    def resume(cls, *args, **kwargs):
-        raise NotImplementedError("energetic restart is not implemented; legacy Runner.resume is unchanged")
+    def resume(cls, run_dir: str | Path, surrogate: Surrogate, engine: Engine, *,
+               updater: StatefulUpdater | None = None,
+               direction: Direction | None = None,
+               checkpoint_interval_steps: int | None = None,
+               handle_sigint: bool = False, event_log_force: bool = False,
+               label_cache: bool = True) -> EnergeticRunner:
+        """Resume a run from its last valid checkpoint plus event replay.
+
+        Restores the complete-step boundary in a fresh process, replays the
+        committed events after the checkpoint cursor (no re-sampling,
+        re-training or re-consuming), and resumes an uncommitted frozen
+        proposal with its original check draw. ``event_log_force`` reclaims
+        the writer lock left by a crashed process — a deliberate assertion
+        that no live writer exists.
+        """
+        run_dir = Path(run_dir)
+        state, arrays, manifest, generation = cls._read_resume_checkpoint(run_dir)
+        run_id = state["run_id"]
+        if fingerprint_of(engine) != state["engine_fingerprint"]:
+            raise ResumeError(
+                "reference settings identity does not match the checkpoint; "
+                "resume requires the same physical settings — use fork to change them")
+        if model_id_for(surrogate, state["model_generation"]) != state["model_id"]:
+            raise ResumeError(
+                "surrogate identity does not match the checkpoint's model chain; "
+                "resume requires the same model lineage")
+        if state["updater_state"] is not None and not _is_stateful(updater):
+            raise ResumeError(
+                "the checkpoint references an updater state; supply the same "
+                "stateful updater to resume")
+        store = Store(run_dir / "trajectory.db")
+        event_log = EventLog(run_dir, force=event_log_force)
+        policy = dict(state["policy"])
+        calc = EnergeticCalculator(
+            surrogate, engine, store, run_id, direction=direction,
+            on_label=updater, event_log=event_log, label_cache=label_cache,
+            _resume_state={"state": state, "arrays": arrays}, **policy)
+        events = list(event_log.iter_events())
+        _check_resume_safety(events, updater)
+        cursor = int(manifest["last_event_seq"])
+        if _is_stateful(updater) and state["updater_state"] is not None:
+            updater.load_state_dict(state["updater_state"])
+        tail = _replay_window(calc, store,
+                              [e for e in events if int(e["seq"]) > cursor],
+                              updater=updater, models_dir=run_dir / "models")
+        runner = cls.__new__(cls)
+        runner.calc = calc
+        runner.run_dir = run_dir
+        runner.checkpoint_interval_steps = (None if checkpoint_interval_steps is None
+                                            else int(checkpoint_interval_steps))
+        runner._stop_requested = False
+        runner._failed = False
+        runner._checkpoints = CheckpointManager(run_dir)
+        calc._model_publisher = runner._publish_model_artifact
+        # Boundary atoms: full-step momenta of the last committed evaluation.
+        atoms = calc._identity_from_arrays(arrays)
+        atoms.positions = np.array(arrays["positions"], dtype=float)
+        atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
+        timestep_ase = calc.timestep_fs * units.fs
+        last_eval = calc.n_evaluations - 1
+        driving_energy = state["driving_energy_eV"]
+        driving_forces = (np.array(arrays["driving_forces"], dtype=float)
+                          if driving_energy is not None else None)
+        if last_eval >= 1:
+            row = store._row_at_step(run_id, last_eval - 1)
+            atoms.positions = row.toatoms().positions
+            driving_energy, driving_forces = store.driving_label(run_id, last_eval - 1)
+            # ASE's velocity-Verlet kick adds 0.5*dt*F to the momenta (no
+            # mass division — momenta, not velocities); the drift divides.
+            full_step = (row.toatoms().get_momenta()
+                         + 0.5 * timestep_ase * driving_forces)
+            atoms.set_momenta(full_step)
+        runner.atoms = atoms
+        runner.timestep_fs = calc.timestep_fs
+        atoms.calc = calc
+        calc.atoms = atoms.copy()
+        runner.dyn = _EnergeticVerlet(atoms, runner.timestep_fs * units.fs)
+        runner.dyn.nsteps = max(last_eval, 0)
+        if tail is not None:
+            # Resume the uncommitted frozen proposal mid-step: the integrator
+            # redoes exactly one first half-kick and drift, landing on the
+            # persisted positions bit-identically.
+            eval_id = int(tail["context"]["evaluation_id"])
+            if eval_id != calc.n_evaluations:
+                raise ResumeError(
+                    f"uncommitted proposal {eval_id} does not follow the "
+                    f"replayed state {calc.n_evaluations}")
+            positions = np.array(tail["positions_A"], dtype=float)
+            half_step = (atoms.get_momenta()
+                         + 0.5 * timestep_ase * driving_forces)
+            pending_atoms = atoms.copy()
+            pending_atoms.positions = positions.copy()
+            pending_atoms.set_momenta(half_step)
+            calc._pending = calc._rebuild_pending(tail, pending_atoms)
+            calc._schedule(eval_id, positions,
+                           physical_time_fs=eval_id * calc.timestep_fs)
+        else:
+            calc._schedule(calc.n_evaluations, None,
+                           physical_time_fs=calc.n_evaluations * calc.timestep_fs)
+        # The schedule cleared the ASE cache; restore the reusable driving
+        # force so the resumed integrator's first half-kick does not
+        # recalculate the boundary evaluation.
+        if driving_energy is not None:
+            calc.results = {"energy": float(driving_energy),
+                            "forces": driving_forces.copy()}
+            calc._results_model_generation = calc._model_generation
+        runner.dyn.attach(runner._maybe_checkpoint, interval=1)
+        if handle_sigint:
+            runner._install_sigint_handler()
+        calc._emit(RESUMED, run_id=run_id, from_event_seq=cursor,
+                   checkpoint_generation=generation)
+        return runner
+
+    @classmethod
+    def fork(cls, run_dir: str | Path, new_run_dir: str | Path, new_run_id: str,
+             surrogate: Surrogate, engine: Engine, *,
+             updater: StatefulUpdater | None = None,
+             direction: Direction | None = None,
+             policy_overrides: dict | None = None,
+             checkpoint_interval_steps: int | None = None,
+             handle_sigint: bool = False, label_cache: bool = True) -> EnergeticRunner:
+        """Start a new run from the parent's last valid checkpoint.
+
+        The physical state (positions, full-step momenta) and the model chain
+        (surrogate lineage, updater state) carry over; policy parameters may
+        change (a new check segment starts, recorded as such). The parent run
+        is only read, never written.
+        """
+        run_dir = Path(run_dir)
+        new_run_dir = Path(new_run_dir)
+        if new_run_dir.resolve() == run_dir.resolve():
+            raise ValueError("fork requires a new run directory distinct from the parent")
+        state, arrays, _, generation = cls._read_resume_checkpoint(run_dir)
+        if fingerprint_of(engine) != state["engine_fingerprint"]:
+            raise ResumeError(
+                "fork keeps the same reference backend identity; change "
+                "reference settings in a fresh run instead")
+        if model_id_for(surrogate, state["model_generation"]) != state["model_id"]:
+            raise ResumeError(
+                "fork keeps the same surrogate lineage; the checkpoint's model "
+                "chain does not match the supplied surrogate")
+        if state["updater_state"] is not None:
+            if not _is_stateful(updater):
+                raise ResumeError(
+                    "the checkpoint references an updater state; supply the "
+                    "same stateful updater to fork")
+            updater.load_state_dict(state["updater_state"])
+        policy = dict(state["policy"])
+        policy.update(policy_overrides or {})
+        atoms = Atoms(numbers=np.array(arrays["numbers"]),
+                      positions=np.array(arrays["positions"], dtype=float),
+                      cell=np.array(arrays["cell"]), pbc=np.array(arrays["pbc"]))
+        atoms.set_masses(np.array(arrays["masses"]))
+        atoms.set_initial_charges(np.array(arrays["initial_charges"]))
+        atoms.set_initial_magnetic_moments(np.array(arrays["initial_magmoms"]))
+        atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
+        event_log = EventLog(new_run_dir)
+        runner = cls(atoms, surrogate, engine, Store(new_run_dir / "trajectory.db"),
+                     new_run_id, direction=direction, on_label=updater,
+                     event_log=event_log, label_cache=label_cache,
+                     run_dir=new_run_dir,
+                     checkpoint_interval_steps=checkpoint_interval_steps,
+                     handle_sigint=handle_sigint, **policy)
+        runner.calc._emit("forked_from", parent_run_id=state["run_id"],
+                          parent_run_dir=str(run_dir),
+                          checkpoint_generation=generation,
+                          parent_model_id=state["model_id"])
+        return runner
