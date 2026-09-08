@@ -41,6 +41,7 @@ MODEL_UPDATE = "model_update"
 RUN_SUMMARY = "run_summary"
 RUN_END = "run_end"
 RESUMED = "resumed"
+UPDATE_REJECTED = "update_rejected"
 
 
 class EventLogError(RuntimeError):

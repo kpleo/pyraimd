@@ -12,6 +12,7 @@ from pyraimd2.runtime.events import EventLog, EventLogError
 from pyraimd2.runtime.identity import fingerprint_of, model_id_for
 from pyraimd2.runtime.inspect import format_inspection, inspect_run, summary_csv
 from pyraimd2.runtime.labels import LabelCache, atoms_input_hash, label_key
+from pyraimd2.runtime.models import ModelRegistry, ModelRegistryError
 from pyraimd2.runtime.updater import StatefulUpdater
 
 __all__ = [
@@ -22,6 +23,8 @@ __all__ = [
     "EventLog",
     "EventLogError",
     "LabelCache",
+    "ModelRegistry",
+    "ModelRegistryError",
     "ResumeError",
     "StatefulUpdater",
     "atoms_input_hash",

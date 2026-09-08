@@ -35,7 +35,6 @@ from __future__ import annotations
 import copy
 import json
 import math
-import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -87,9 +86,11 @@ from pyraimd2.runtime.events import (
     RUN_SUMMARY,
     STEP_COMPLETED,
     TASK,
+    UPDATE_REJECTED,
     EventLog,
 )
 from pyraimd2.runtime.labels import LabelCache, atoms_input_hash
+from pyraimd2.runtime.models import ModelRegistry
 from pyraimd2.runtime.updater import StatefulUpdater
 from pyraimd2.store.store import STORE_SCHEMA_VERSION, Store
 from pyraimd2.surrogate.base import (
@@ -1239,6 +1240,20 @@ class EnergeticCalculator(Calculator):
                             label_id=pending.label_id)
             updater_state = (self.on_label.state_dict()
                              if _is_stateful(self.on_label) else None)
+            pop_rejection = getattr(self.on_label, "pop_rejection", None)
+            rejection = pop_rejection() if callable(pop_rejection) else None
+            if rejection is not None:
+                # A rolled-back update attempt: the parent model carries on,
+                # the attempt's cost and outcome are recorded (ledger is
+                # append-only, so the training time stays billed).
+                self._emit_once(f"update-rejected:{pending.label_id}:eval-{pending.index}",
+                                UPDATE_REJECTED,
+                                evaluation_id=pending.index,
+                                origin_label_id=pending.label_id,
+                                model_id=self.model_id,
+                                reason=rejection.get("reason"),
+                                metrics=rejection.get("metrics"),
+                                label_ids=rejection.get("label_ids"))
             if changed is not False:
                 # Anything except exactly False declares a model change:
                 # advance the decision-layer generation so cached results,
@@ -1246,9 +1261,23 @@ class EnergeticCalculator(Calculator):
                 # reused for a new evaluation. The model artifact is
                 # persisted before the update event commits, and the event
                 # itself is idempotent under (origin label ID, evaluation).
+                parent_model_id = self.model_id
                 self._model_generation += 1
+                update_record = None
+                get_update_record = getattr(self.on_label, "update_record", None)
+                if callable(get_update_record):
+                    update_record = get_update_record()
+                artifact = {
+                    "generation": self._model_generation,
+                    "parent_model_id": parent_model_id,
+                    "label_ids": (update_record or {}).get("label_ids",
+                                                          [pending.label_id]),
+                    "recipe": (update_record or {}).get("recipe"),
+                    "training": (update_record or {}).get("training"),
+                    "updater_state": updater_state,
+                }
                 if self._model_publisher is not None:
-                    self._model_publisher(self.model_id, updater_state)
+                    self._model_publisher(self.model_id, artifact)
                 self._emit_once(f"model-update:{pending.label_id}:eval-{pending.index}",
                                 MODEL_UPDATE,
                                 generation=self._model_generation,
@@ -1256,6 +1285,7 @@ class EnergeticCalculator(Calculator):
                                 origin_evaluation_id=pending.index,
                                 origin_label_id=pending.label_id,
                                 origin_violation=bool(violation),
+                                label_ids=artifact["label_ids"],
                                 updater_state=updater_state)
             else:
                 # Label consumed without a model change: the updater's
@@ -1512,11 +1542,12 @@ class EnergeticRunner:
         self.checkpoint_interval_steps = (None if checkpoint_interval_steps is None
                                           else int(checkpoint_interval_steps))
         self._checkpoints: CheckpointManager | None = None
+        self._model_registry: ModelRegistry | None = None
         if self.run_dir is not None:
             if event_log is None:
                 raise ValueError("checkpointing requires an event log")
             self._checkpoints = CheckpointManager(self.run_dir)
-            (self.run_dir / "models").mkdir(parents=True, exist_ok=True)
+            self._model_registry = ModelRegistry(self.run_dir)
             self.calc._model_publisher = self._publish_model_artifact
             self.dyn.attach(self._maybe_checkpoint, interval=1)
         if handle_sigint:
@@ -1538,17 +1569,9 @@ class EnergeticRunner:
         if self.calc._event_log is not None:
             self.calc._event_log.close()
 
-    def _publish_model_artifact(self, model_id: str, updater_state: dict | None) -> None:
+    def _publish_model_artifact(self, model_id: str, record: dict) -> None:
         """Immutable model artifact, persisted before the update event."""
-        directory = self.run_dir / "models" / model_id.replace("/", "_")
-        directory.mkdir(parents=True, exist_ok=True)
-        payload = {"model_id": model_id, "updater_state": updater_state,
-                   "written_unix": time.time()}
-        tmp = directory / "state.json.tmp"
-        tmp.write_text(json.dumps(payload, sort_keys=True))
-        with tmp.open("rb") as fh:
-            os.fsync(fh.fileno())
-        os.replace(tmp, directory / "state.json")
+        self._model_registry.publish(model_id, record)
 
     def _write_checkpoint(self) -> int | None:
         if self._checkpoints is None:
@@ -1680,6 +1703,7 @@ class EnergeticRunner:
         runner._stop_requested = False
         runner._failed = False
         runner._checkpoints = CheckpointManager(run_dir)
+        runner._model_registry = ModelRegistry(run_dir)
         calc._model_publisher = runner._publish_model_artifact
         # Boundary atoms: full-step momenta of the last committed evaluation.
         atoms = calc._identity_from_arrays(arrays)

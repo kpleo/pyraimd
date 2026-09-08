@@ -18,7 +18,15 @@ from pyraimd2.switch.base import LabelObservation
 
 
 class StatefulUpdater(Protocol):
-    """Callable label consumer with an exportable, restorable state."""
+    """Callable label consumer with an exportable, restorable state.
+
+    Two optional hooks extend the protocol for guarded updates
+    (:class:`pyraimd2.loop.online.GuardedUpdater` implements both):
+    ``update_record()`` returns metadata of the last published update
+    (label IDs, recipe, training cost) for the model artifact, and
+    ``pop_rejection()`` returns and clears the last rolled-back update
+    attempt (reason, metrics, label IDs) so the run can log it.
+    """
 
     def __call__(self, observation: LabelObservation) -> bool | None:
         """Consume one label; return exactly ``False`` to declare the model

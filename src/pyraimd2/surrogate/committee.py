@@ -389,8 +389,11 @@ class CommitteeSurrogate:
     # -- checkpointing ------------------------------------------------------
 
     def state_dict(self) -> dict:
-        """Full committee state for restart-safe campaigns: member weights,
-        energy shifts, and the recipe echo for identity validation."""
+        """Committee weights, energy shifts and recipe echo for model
+        artifacts and restart-safe campaigns. Optimizer state (Adam moments,
+        trainer RNG) is deliberately NOT included: a fine-tune continuation
+        restarts the optimizer rather than resuming it — record this
+        limitation wherever resume fidelity is claimed."""
         self._ensure_loaded()
         return {
             "model_specs": list(self._model_specs),
