@@ -6,6 +6,40 @@ permissions:
   contents: read
 jobs:
   core:
+    # Offline core suite: minimum declared dependencies only (NumPy + ASE,
+    # no torch, no PySCF, no external programs, no downloads).
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+        # '3.29.0' pins the minimum ASE supported by pyproject (ase>=3.29.0);
+        # 'latest' floats to the current stable release. Exact resolved
+        # versions are recorded in the "Record dependency versions" step.
+        ase: ['3.29.0', 'latest']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -e '.[dev]'
+      - name: Pin minimum supported ASE
+        if: matrix.ase != 'latest'
+        run: python -m pip install 'ase==${{ matrix.ase }}'
+      - name: Record dependency versions
+        run: |
+          python -c "import sys; print('python', sys.version)"
+          python -c "import ase, numpy; print('ase', ase.__version__); print('numpy', numpy.__version__)"
+      - name: Optional backends stay out of the core install
+        run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('torch') is None, 'torch leaked into the core install'"
+          python -c "import importlib.util; assert importlib.util.find_spec('pyscf') is None, 'pyscf leaked into the core install'"
+      - run: python -m pytest tests/unit tests/test_smoke.py -q
+      - run: python examples/energetic_loop.py
+
+  resume-regression:
+    # The complete-step checkpoint / new-process resume contract, run as a
+    # visible standalone selection (WP03 adaptive, WP07 plain modes).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -13,5 +47,39 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -e '.[dev]'
-      - run: python -m pytest tests/unit tests/test_smoke.py -q
-      - run: python examples/energetic_loop.py
+      - run: python -m pytest tests/unit/test_resume.py tests/unit/test_plain_resume.py tests/unit/test_checkpoint.py -q
+
+  wheel:
+    # Build sdist + wheel, install each into a clean environment outside the
+    # checkout, and smoke the CLI exactly as a user would.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install the built distributions outside the checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip install dist/pyraimd2-*-py3-none-any.whl
+          python -m venv "$RUNNER_TEMP/sdist-venv"
+          "$RUNNER_TEMP/sdist-venv/bin/python" -m pip install dist/pyraimd2-*.tar.gz
+          "$RUNNER_TEMP/sdist-venv/bin/pyramid" --version
+      - name: CLI smoke from the installed wheel
+        working-directory: ${{ runner.temp }}
+        run: |
+          wheel-venv/bin/pyramid --version
+          wheel-venv/bin/pyramid --help
+          wheel-venv/bin/pyramid init --template harmonic --output smoke
+          wheel-venv/bin/pyramid validate smoke/run.toml
+          wheel-venv/bin/pyramid run smoke/run.toml
+          wheel-venv/bin/pyramid inspect smoke/runs/harmonic-demo
+          wheel-venv/bin/pyramid resume smoke/runs/harmonic-demo --steps 10
+          wheel-venv/bin/pyramid export smoke/runs/harmonic-demo --force-source driving --output driving.extxyz
+      - name: Installed core carries no torch/PySCF
+        run: |
+          "$RUNNER_TEMP/wheel-venv/bin/python" -m pip list
+          "$RUNNER_TEMP/wheel-venv/bin/python" -c "import importlib.util; assert importlib.util.find_spec('torch') is None, 'torch in wheel install'"
+          "$RUNNER_TEMP/wheel-venv/bin/python" -c "import importlib.util; assert importlib.util.find_spec('pyscf') is None, 'pyscf in wheel install'"
