@@ -53,14 +53,12 @@ class CommitteeSurrogate:
         force_weight: float = 10.0,
         trainable_filters: tuple[str, ...] = ("readout",),
     ) -> None:
-        if n_members < 1:
-            raise ValueError(f"n_members must be >= 1, got {n_members}")
         if epochs < 1:
             raise ValueError(f"epochs must be >= 1, got {epochs}")
         if lr <= 0.0:
             raise ValueError(f"lr must be > 0, got {lr}")
-        if perturbation < 0.0:
-            raise ValueError(f"perturbation must be >= 0, got {perturbation}")
+        if perturbation <= 0.0:
+            raise ValueError(f"perturbation must be > 0, got {perturbation}")
         if not trainable_filters or not all(trainable_filters):
             raise ValueError(
                 f"trainable_filters must be non-empty substrings, got {trainable_filters}"
@@ -73,6 +71,8 @@ class CommitteeSurrogate:
             if not self._model_specs:
                 raise ValueError("model list must be non-empty")
             n_members = len(self._model_specs)  # explicit list defines K
+        if n_members < 2:
+            raise ValueError(f"n_members must be >= 2, got {n_members}")
         self.model = model
         self.device = device
         self.default_dtype = default_dtype
