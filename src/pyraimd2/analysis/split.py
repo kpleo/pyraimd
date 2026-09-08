@@ -26,6 +26,8 @@ def segment_held_out(idxs, boundaries: list[int], k: int) -> set[int]:
     (segment 0 covers everything below the first boundary). A
     single-element list reproduces the original two-segment split.
     """
+    if k < 1:
+        raise ValueError(f"k must be >= 1, got {k}")
     idxs = np.sort(np.asarray(idxs, dtype=int))
     edges = [-np.inf, *sorted(boundaries), np.inf]
     held: set[int] = set()

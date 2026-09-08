@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from pyraimd2.analysis import parse_boundaries, segment_held_out
 
@@ -40,3 +41,34 @@ def test_parse_boundaries():
     assert parse_boundaries("38") == [38]
     assert parse_boundaries("12,24,36") == [12, 24, 36]
     assert parse_boundaries(38) == [38]  # argparse may hand an int through
+
+
+def test_k_zero_raises_value_error():
+    # k=0 degenerates to seg[0:]: every segment is held out in full and the
+    # training set is silently emptied — reject it up front.
+    with pytest.raises(ValueError, match=r"k must be >= 1"):
+        segment_held_out(np.arange(10), [5], 0)
+
+
+def test_negative_k_raises_value_error():
+    # k=-1 degenerates to seg[1:], silently dropping the first frame of
+    # every segment instead of the last — same class of footgun as k=0.
+    with pytest.raises(ValueError, match=r"k must be >= 1"):
+        segment_held_out(np.arange(10), [5], -1)
+
+
+@pytest.mark.parametrize(
+    "k, expected",
+    [
+        (1, {4, 9}),
+        (2, {3, 4, 8, 9}),
+        (3, {2, 3, 4, 7, 8, 9}),
+        (4, {1, 2, 3, 4, 6, 7, 8, 9}),
+        (5, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}),
+    ],
+)
+def test_valid_k_one_to_five_holds_out_last_k_of_each_segment(k, expected):
+    # Guard against over-fixing: every k >= 1 keeps the legacy per-segment
+    # last-k rule intact (k=5 saturates both size-5 segments).
+    held = segment_held_out(np.arange(10), [5], k)
+    assert held == expected
