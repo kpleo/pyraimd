@@ -81,6 +81,7 @@ def test_write_input_metallic_smearing(tmp_path: Path) -> None:
 
 
 def _fake_pwx(tmp_path: Path, body: str) -> tuple[str, ...]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     script = tmp_path / "fake_pwx.sh"
     script.write_text(body)
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -135,7 +136,7 @@ def test_compute_engine_error_on_timeout(tmp_path: Path) -> None:
 
 
 def test_compute_startpot_retry_after_failure(tmp_path: Path) -> None:
-    """A failed chained-density attempt must wipe tmp/ and retry from scratch.
+    """A failed first attempt is retried within the retry budget.
 
     Regression: the wipe path crashed with NameError (missing shutil import)
     in production (W bootstrap labels, 2026-09-03), masking the real error.
@@ -166,6 +167,10 @@ _READ_INPUT = (
     '[ -f "$in" ] || { echo "missing input: $in"; exit 7; }\n'
 )
 
+# Fake pw.x that also leaves a charge-density tree behind, like a real run
+# writing <outdir>/<prefix>.save into its working directory.
+_MAKE_SAVE = "mkdir -p tmp/pyraimd2.save && echo fake-density > tmp/pyraimd2.save/charge-density.dat\n"
+
 
 def test_compute_unique_directories_and_absolute_input(tmp_path: Path, monkeypatch) -> None:
     """Consecutive calls must not share a work directory, and the input path
@@ -185,26 +190,36 @@ def test_compute_unique_directories_and_absolute_input(tmp_path: Path, monkeypat
     assert len(run_dirs) == 2
 
 
-def test_startpot_fallback_writes_atomic_start_and_keeps_failed_attempt(tmp_path: Path) -> None:
-    """Density-chain fallback must retry with an explicit atomic-start input
-    (not the same startpot='file' input against a wiped density), and must
-    keep the failed attempt's directory and diagnostics."""
-    body = (
-        "#!/bin/bash\n" + _READ_INPUT
-        + "if grep -q \"startingpot = 'file'\" \"$in\"; then echo 'bad density'; exit 3; fi\n"
-        + f"cat {FIXTURE.resolve()}\n"
-    )
+def test_density_start_fallback_keeps_failed_attempt(tmp_path: Path) -> None:
+    """A failed chained-density start retries once with an explicit
+    atomic-start input (a different input, not the same startpot='file'
+    against a missing density), and keeps the failed attempt's diagnostics."""
     engine = QeEngine(
-        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(
+            tmp_path, "#!/bin/bash\n" + _MAKE_SAVE + f"cat {FIXTURE.resolve()}\n"),
                  startpot_file=True),
         run_root=tmp_path / "runs",
     )
     si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]],
                cell=[5.43] * 3, pbc=True)
-    result = engine.compute(si, label="chain")
+    engine.compute(si, label="seed")  # successful attempt -> reusable density
+
+    failing = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(
+                     tmp_path / "failing",
+                     "#!/bin/bash\n" + _READ_INPUT
+                     + "if grep -q \"startingpot = 'file'\" \"$in\"; then"
+                     " echo 'bad density'; exit 3; fi\n"
+                     + _MAKE_SAVE + f"cat {FIXTURE.resolve()}\n"),
+                 startpot_file=True,
+                 density_source=str(tmp_path / "runs" / "seed-000000" / "attempt-1")),
+        run_root=tmp_path / "runs",
+    )
+    result = failing.compute(si, label="chain")
     assert result.energy == pytest.approx(SI_ENERGY_RY * units.Hartree / 2.0,
                                           abs=1e-6)
-    (run_dir,) = [p for p in (tmp_path / "runs").iterdir() if p.is_dir()]
+    run_dir = tmp_path / "runs" / "chain-000000"
     attempt_1 = (run_dir / "attempt-1" / "pw.in").read_text()
     attempt_2 = (run_dir / "attempt-2" / "pw.in").read_text()
     assert "startingpot = 'file'" in attempt_1
@@ -248,3 +263,39 @@ def test_parse_fortran_d_exponents() -> None:
     assert result.energy == pytest.approx(-93.439429 * units.Hartree / 2.0, rel=1e-6)
     assert result.forces.shape == (1, 3)
     assert result.forces[0, 0] == pytest.approx(0.1 * (units.Hartree / 2.0) / units.Bohr, rel=1e-6)
+
+
+def test_parse_missing_force_block_raises() -> None:
+    """An energy line without a following force block is not a label."""
+    text = "!    total energy              =      -1.00000000 Ry\n"
+    with pytest.raises(EngineError, match="no force block"):
+        parse_qe_output(text)
+
+
+def test_parse_empty_force_block_raises() -> None:
+    """A force header with no atom lines (e.g. killed mid-write) is not a label."""
+    text = (
+        "!    total energy              =      -1.00000000 Ry\n"
+        "     Forces acting on atoms (cartesian axes, Ry/au):\n\n"
+        "     The total force is     0.000\n"
+    )
+    with pytest.raises(EngineError, match="force block.*empty"):
+        parse_qe_output(text)
+
+
+def test_compute_engine_error_on_atom_count_mismatch(tmp_path: Path) -> None:
+    """A force block for the wrong number of atoms must be rejected, never
+    truncated or padded into a label."""
+    one_atom = (
+        "!    total energy              =      -1.00000000 Ry\n"
+        "     Forces acting on atoms (cartesian axes, Ry/au):\n\n"
+        "     atom    1 type  1   force =     0.10000000    0.00000000    0.00000000\n\n"
+    )
+    body = f"#!/bin/bash\ncat <<'EOF'\n{one_atom}   JOB DONE.\nEOF\n"
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+        run_root=tmp_path / "runs",
+    )
+    si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]], cell=[5.43] * 3, pbc=True)
+    with pytest.raises(EngineError, match=r"force shape.*!= \(2, 3\)"):
+        engine.compute(si, label="nat")
