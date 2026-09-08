@@ -78,6 +78,12 @@ _BUILTINS: dict[str, tuple[str, str, str]] = {
     "qe": (ENGINE, "pyraimd2.engines.qe_engine", "create_qe_engine"),
     "qe-ase": (ENGINE, "pyraimd2.engines.ase_qe", "create_ase_qe_engine"),
     "pyscf": (ENGINE, "pyraimd2.engines.pyscf_engine", "PyscfEngine"),
+    "mace": (SURROGATE, "pyraimd2.surrogate.mace_surrogate", "MaceSurrogate"),
+    # Analytic toys for offline runs; hyphenated names so the example plugin
+    # (examples/backends/pyraimd2_harmonic, entry-point names with
+    # underscores) never collides with builtins.
+    "harmonic-reference": (ENGINE, "pyraimd2.backends.harmonic", "reference_factory"),
+    "harmonic-surrogate": (SURROGATE, "pyraimd2.backends.harmonic", "surrogate_factory"),
 }
 
 _entry_point_cache: dict[str, BackendRegistration] | None = None
@@ -166,6 +172,22 @@ def assert_capabilities_satisfy(caps: EngineCapabilities,
         problems.append("requires an uncertainty estimate but declares none")
     if problems:
         raise CapabilityMismatchError(f"backend {name!r}: " + "; ".join(problems))
+
+
+def backend_factory(name: str) -> Callable[..., object]:
+    """The registered factory for ``name``, importing its module now.
+
+    Callers that need the factory itself (e.g. to inspect its signature
+    before calling :func:`create_backend`) use this; the same unknown-name
+    and conflict errors apply.
+    """
+    registrations = _registrations()
+    if name not in registrations:
+        known = ", ".join(sorted(registrations)) or "<none>"
+        raise BackendRegistryError(
+            f"unknown backend {name!r}; registered backends: {known}"
+        )
+    return registrations[name].loader()
 
 
 def create_backend(name: str, *, kind: str | None = None,

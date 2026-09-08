@@ -4,6 +4,12 @@ __version__ = "0.3.0"
 
 
 def main() -> None:
-    print(f"Pyramid {__version__} — Python wrapped Ab initio Molecular Dynamics")
-    print("Energetic force-error prediction, reference checks and extensible MD.")
-    print("See README.md and examples/energetic_loop.py to get started.")
+    """Console entry point for the ``pyramid`` / ``pyraimd2`` commands.
+
+    Imports are deferred so ``import pyraimd2`` stays free of heavy modules.
+    """
+    import sys
+
+    from pyraimd2.cli import main as cli_main
+
+    sys.exit(cli_main())

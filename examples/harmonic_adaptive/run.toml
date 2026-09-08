@@ -1,0 +1,56 @@
+# Pyramid configuration — harmonic offline demo (schema_version 1).
+# Units are part of the field names: angstrom, eV, eV/angstrom, fs, K.
+# Relative paths resolve against THIS file's directory.
+schema_version = 1
+
+[run]
+id = "harmonic-demo"
+directory = "runs/harmonic-demo"
+seed = 42
+
+[task]
+kind = "md"                       # singlepoint | relax | md
+mode = "adaptive"                 # reference | surrogate | adaptive
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 0.5
+steps = 20
+temperature_K = 300.0             # used only when the structure has no velocities
+velocity_seed = 7
+
+[reference]
+backend = "harmonic-reference"    # builtin analytic reference
+k = 1.0
+r0 = 0.9
+
+[surrogate]
+backend = "harmonic-surrogate"    # same well plus a deterministic force bias
+k = 1.0
+r0 = 0.9
+bias = 0.05
+
+[policy]
+name = "energetic"
+force_budget_eV_A = 0.1
+probe_steps_A = [0.02, 0.04]
+numerical_floor_eV_A = 0.001
+time_cap_fs = 3.0
+transverse_cap = 0.1
+
+[verification]
+probability = 0.1                 # independent checks over accepted evaluations
+failure_probability = 0.05
+tilt = 0.6931471805599453         # ln 2
+seed = 19
+
+[checkpoint]
+interval_steps = 5
+keep_generations = 2              # fixed by the 0.4 runtime
+
+[output]
+trajectory_interval_steps = 1
+summary_interval_steps = 10
