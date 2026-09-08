@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import pyraimd2
 from pyraimd2.cli import main as cli_main
 from pyraimd2.runtime.inspect import inspect_run
 from pyraimd2.workflows.templates import HARMONIC_CONFIG, HARMONIC_STRUCTURE
@@ -39,7 +40,7 @@ def help_text(capsys, *argv: str) -> str:
 
 def test_version(capsys) -> None:
     output = help_text(capsys, "--version")
-    assert "0.3.0" in output
+    assert pyraimd2.__version__ in output
 
 
 def test_help_offline_for_all_commands(capsys) -> None:
