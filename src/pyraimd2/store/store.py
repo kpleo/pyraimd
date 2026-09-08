@@ -6,6 +6,12 @@ engine label when present. Legacy runners use these records for restart;
 energetic restart additionally needs calibration and check state and is not
 implemented yet.
 
+Row formats are versioned: rows written by this version carry
+``data["schema_version"] == STORE_SCHEMA_VERSION`` (old fields kept verbatim,
+new fields additive); rows from older libraries simply lack the marker and
+stay readable — ``latest_state``, ``driving_label``, ``iter_labels`` and
+``iter_observations`` work on both formats without conversion.
+
 Note: use a ``.db`` file suffix — ASE maps it to its SQLite3 backend.
 """
 
@@ -20,6 +26,8 @@ from ase import Atoms
 
 from pyraimd2.engines.base import EngineResult
 from pyraimd2.surrogate.base import SurrogatePrediction
+
+STORE_SCHEMA_VERSION = 2
 
 
 class Store:
@@ -41,19 +49,26 @@ class Store:
         *,
         metadata: dict | None = None,
         driving: SurrogatePrediction | EngineResult | None = None,
+        label_id: str | None = None,
     ) -> int:
         """Append a step, preserving momenta and optional actual driving label.
 
         ``metadata`` holds additional method-specific records. ``driving``
         distinguishes corrected forces from the uncorrected prediction and
-        a reference label acquired only for checking. Legacy callers omit
-        both arguments and retain their original storage format.
+        a reference label acquired only for checking. ``label_id`` is the
+        durable identity of this row's engine label (WP02); it dedups label
+        consumption and model-update events. Legacy callers omit all three
+        keyword arguments and retain their original storage format, stamped
+        with the current ``STORE_SCHEMA_VERSION``.
         """
         data = {
+            "schema_version": STORE_SCHEMA_VERSION,
             "reason": reason,
             "surrogate": None if surrogate is None else _prediction_to_dict(surrogate),
             "engine": None if engine is None else _result_to_dict(engine),
         }
+        if label_id is not None:
+            data["engine_label_id"] = str(label_id)
         if metadata is not None:
             data["metadata"] = metadata
         if driving is not None:

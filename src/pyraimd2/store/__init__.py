@@ -1,5 +1,5 @@
-"""Append-only run store."""
+"""Store schema version constant."""
 
-from pyraimd2.store.store import Store
+from pyraimd2.store.store import STORE_SCHEMA_VERSION, Store
 
-__all__ = ["Store"]
+__all__ = ["STORE_SCHEMA_VERSION", "Store"]

@@ -36,6 +36,7 @@ from ase.calculators.calculator import Calculator, all_changes
 from ase.md.velocitydistribution import thermalize_momenta
 from ase.md.verlet import VelocityVerlet
 
+from pyraimd2 import __version__
 from pyraimd2.energetics import (
     DegenerateResponseError,
     DirectionalResponse,
@@ -56,7 +57,19 @@ from pyraimd2.runtime import (
     fingerprint_of,
     model_id_for,
 )
-from pyraimd2.store.store import Store
+from pyraimd2.runtime.events import (
+    EVALUATION_COMMITTED,
+    EVALUATION_PROPOSED,
+    EVENT_SCHEMA_VERSION,
+    MODEL_UPDATE,
+    RUN_END,
+    RUN_START,
+    RUN_SUMMARY,
+    TASK,
+    EventLog,
+)
+from pyraimd2.runtime.labels import LabelCache, atoms_input_hash
+from pyraimd2.store.store import STORE_SCHEMA_VERSION, Store
 from pyraimd2.surrogate.base import (
     Surrogate,
     SurrogatePrediction,
@@ -135,6 +148,9 @@ class _Pending:
     probe_records: list[dict] = field(default_factory=list)
     context: EvaluationContext | None = None
     model_generation: int = 0
+    label_id: str | None = None
+    label_task_id: str | None = None
+    label_attempt: int = 0
 
 
 @dataclass
@@ -142,6 +158,7 @@ class _CalibrationOrigin:
     atoms: Atoms
     index: int
     label: EngineResult
+    label_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -201,6 +218,15 @@ class EnergeticCalculator(Calculator):
     fixed-timestep assumption: each new uncached configuration advances the
     physical clock by exactly ``timestep_fs``. Supported workflows drive the
     calculator through an integrator that schedules explicit physical times.
+
+    With ``event_log`` (a :class:`pyraimd2.runtime.events.EventLog`), every
+    physical execution (reference anchor/refusal/probe/verification,
+    inference, training, I/O) is recorded as a cost-ledger task event with
+    durable task/label IDs, and proposals/commits/model updates become
+    idempotent logical events. With ``label_cache`` (default on, §5.4), a
+    verification check may reuse an exactly matching cached reference label
+    when the engine declares a fingerprint — the check counts normally with
+    zero new physical executions; unidentifiable backends get no cache.
     """
 
     implemented_properties: ClassVar[list[str]] = ["energy", "forces"]
@@ -224,6 +250,8 @@ class EnergeticCalculator(Calculator):
         tilt: float = math.log(2.0),
         direction: Direction | None = None,
         on_label: LabelCallback | None = None,
+        event_log: EventLog | None = None,
+        label_cache: bool = True,
     ) -> None:
         super().__init__()
         self.force_budget = _positive(force_budget, "force_budget")
@@ -277,6 +305,64 @@ class EnergeticCalculator(Calculator):
         self._deferred_record: dict | None = None
         self._evaluation_calls_before: dict | None = None
         self._results_model_generation: int | None = None
+        # WP02 run records: authoritative event log (optional — direct legacy
+        # use stays event-free), task/label ID counters, and the numeric
+        # label cache (§5.4; disabled unless the reference declares a
+        # fingerprint, i.e. its settings are reliably identifiable).
+        self._event_log = event_log
+        self._task_counter = 0
+        self._label_counter = 0
+        self._active_evaluation_id: int | None = None
+        self._label_cache = LabelCache(self._engine_fingerprint, enabled=label_cache)
+        self._emit(RUN_START, run_id=self.run_id,
+                   schema_version=STORE_SCHEMA_VERSION,
+                   event_schema_version=EVENT_SCHEMA_VERSION,
+                   software_version=__version__,
+                   reference_id=self._engine_fingerprint,
+                   model_id=self.model_id,
+                   surrogate_fingerprint=fingerprint_of(self.surrogate),
+                   policy={"force_budget_eV_A": self.force_budget,
+                           "timestep_fs": self.timestep_fs,
+                           "probe_steps_A": self.probe_steps.tolist(),
+                           "numerical_floor_eV_A": self.numerical_floor,
+                           "time_cap_fs": self.time_cap_fs,
+                           "transverse_cap": self.transverse_cap,
+                           "check_probability": self.check_probability,
+                           "check_seed": self.check_seed,
+                           "failure_probability": failure_probability,
+                           "tilt": tilt})
+
+    def _emit(self, event_type: str, **payload: object) -> int | None:
+        if self._event_log is None:
+            return None
+        return self._event_log.append(event_type, payload)
+
+    def _emit_once(self, key: str, event_type: str, **payload: object) -> int | None:
+        if self._event_log is None:
+            return None
+        return self._event_log.append_once(key, event_type, payload)
+
+    def _new_task_id(self) -> str:
+        self._task_counter += 1
+        return f"{self.run_id}-task-{self._task_counter}"
+
+    def _new_label_id(self) -> str:
+        self._label_counter += 1
+        return f"{self.run_id}-label-{self._label_counter}"
+
+    def _emit_task(self, *, task_id: str, attempt: int, operation: str,
+                   purpose: str | None, status: str, started_unix: float,
+                   elapsed_s: float, label_id: str | None = None,
+                   cache_hit: bool = False, error: str | None = None) -> None:
+        # Task events are the cost-ledger leaves; cpu/gpu/queue stay null
+        # when unknown rather than invented.
+        self._emit(TASK, task_id=task_id, attempt=attempt, operation=operation,
+                   purpose=purpose, status=status,
+                   evaluation_id=self._active_evaluation_id,
+                   started_unix=started_unix, elapsed_s=elapsed_s,
+                   cpu_cores=None, gpu=None, queue_s=None,
+                   source="energetic", label_id=label_id,
+                   cache_hit=cache_hit, error=error)
 
     @property
     def n_reference(self) -> int:
@@ -359,9 +445,24 @@ class EnergeticCalculator(Calculator):
                 raise
         return super().get_property(name, atoms, allow_calculation)
 
-    def _predict(self, atoms: Atoms) -> SurrogatePrediction:
+    def _predict(self, atoms: Atoms, purpose: str = "proposal") -> SurrogatePrediction:
         work = atoms.copy()
-        prediction = self.surrogate.predict(work)
+        task_id = self._new_task_id()
+        started_unix = time.time()
+        start = time.perf_counter()
+        try:
+            prediction = self.surrogate.predict(work)
+        except Exception as error:
+            self._emit_task(task_id=task_id, attempt=1, operation="inference",
+                            purpose=purpose, status="failed",
+                            started_unix=started_unix,
+                            elapsed_s=time.perf_counter() - start,
+                            error=repr(error))
+            raise
+        self._emit_task(task_id=task_id, attempt=1, operation="inference",
+                        purpose=purpose, status="success",
+                        started_unix=started_unix,
+                        elapsed_s=time.perf_counter() - start)
         if not _same_state(atoms, work):
             raise ValueError("surrogate.predict mutated its atomic input")
         energy, forces, stress = _label_arrays(prediction, len(atoms))
@@ -375,7 +476,16 @@ class EnergeticCalculator(Calculator):
             force_consistent=getattr(prediction, "force_consistent", None),
         )
 
-    def _reference(self, atoms: Atoms, purpose: str) -> EngineResult:
+    def _reference(self, atoms: Atoms, purpose: str, *,
+                   event_purpose: str | None = None,
+                   task_id: str | None = None,
+                   attempt: int = 1) -> tuple[EngineResult, str]:
+        """One reference execution; returns ``(label, durable label_id)``.
+
+        ``purpose`` keys the legacy success counters (anchor/probe/check);
+        ``event_purpose`` is the ledger vocabulary (anchor/refusal/probe/
+        verification/diagnostic) and defaults to the counter key mapping.
+        """
         # Reference settings identity is fixed for a run; check it before the
         # expensive call so a mid-run settings swap fails cheap, not after an
         # SCF whose label would silently mix conventions with older anchors.
@@ -384,23 +494,42 @@ class EnergeticCalculator(Calculator):
                 "reference settings identity changed mid-run; start a new run "
                 "instead of mixing labels from different reference settings"
             )
+        if task_id is None:
+            task_id = self._new_task_id()
+        ledger_purpose = {"check": "verification"}.get(purpose, purpose) \
+            if event_purpose is None else event_purpose
         work = atoms.copy()
+        started_unix = time.time()
+        start = time.perf_counter()
         try:
             result = self.engine.compute(work)
             if not _same_state(atoms, work):
                 raise ValueError("engine.compute mutated its atomic input")
             energy, forces, stress = _label_arrays(result, len(atoms))
             wall = _positive(result.wall_time_s, "reference wall_time_s", zero=True)
-        except EngineError:
-            raise
         except Exception as error:
+            self._emit_task(task_id=task_id, attempt=attempt, operation="reference",
+                            purpose=ledger_purpose, status="failed",
+                            started_unix=started_unix,
+                            elapsed_s=time.perf_counter() - start,
+                            error=repr(error))
+            if isinstance(error, EngineError):
+                raise
             raise EngineError(f"invalid {purpose} reference evaluation: {error}") from error
+        label_id = self._new_label_id()
         self.reference_calls[purpose] += 1
-        return EngineResult(
+        label = EngineResult(
             energy, forces, stress, wall,
             energy_kind=getattr(result, "energy_kind", EnergyKind.UNKNOWN),
             force_consistent=getattr(result, "force_consistent", None),
         )
+        self._emit_task(task_id=task_id, attempt=attempt, operation="reference",
+                        purpose=ledger_purpose, status="success",
+                        started_unix=started_unix,
+                        elapsed_s=time.perf_counter() - start,
+                        label_id=label_id)
+        self._label_cache.put(atoms, label, label_id)
+        return label, label_id
 
     def _directions(self, atoms: Atoms) -> np.ndarray | None:
         raw = atoms.get_velocities() if self.direction is None else self.direction(atoms.copy())
@@ -432,14 +561,15 @@ class EnergeticCalculator(Calculator):
                 for sign, displacements, residuals in ((1, plus_d, plus_r), (-1, minus_d, minus_r)):
                     probe = pending.atoms.copy()
                     probe.positions += sign * h * direction
-                    prediction = self._predict(probe)
-                    label = self._reference(probe, "probe")
+                    prediction = self._predict(probe, purpose="probe")
+                    label, probe_label_id = self._reference(probe, "probe")
                     displacement = probe.positions - pending.atoms.positions
                     displacements[d, h_index] = displacement
                     residuals[d, h_index] = prediction.forces + correction - label.forces
                     records.append({"direction": d, "step_A": float(h), "sign": sign,
                                     "phase": str(EvaluationPhase.PROBE),
                                     "evaluation_id": pending.index,
+                                    "label_id": probe_label_id,
                                     "displacement_A": displacement.tolist(),
                                     "base_energy_eV": prediction.energy,
                                     "reference_energy_eV": label.energy,
@@ -481,7 +611,9 @@ class EnergeticCalculator(Calculator):
         origin = self._deferred_origin
         if origin is None:
             return
-        prediction = self._predict(origin.atoms)
+        # Recalibration tasks belong to the origin evaluation's identity.
+        self._active_evaluation_id = origin.index
+        prediction = self._predict(origin.atoms, purpose="calibration")
         # Recalibration probes belong to the origin evaluation: they reuse its
         # identity and physical time (fixed-step value), never advancing the
         # clock, but run under the NEW model generation.
@@ -504,6 +636,7 @@ class EnergeticCalculator(Calculator):
         self._next_reason = "direction_unavailable_reference" if anchor is None else "reference_required"
 
     def _freeze(self, atoms: Atoms, index: int) -> _Pending:
+        self._active_evaluation_id = index
         prediction = self._predict(atoms)
         anchor = self._anchor
         if anchor is not None and anchor.model_generation != self._model_generation:
@@ -563,8 +696,33 @@ class EnergeticCalculator(Calculator):
                 "observed_coefficient_A2_eV": 2 * work / error**2 if error > 0 else None}
 
     def _finish(self, pending: _Pending) -> None:
+        self._active_evaluation_id = pending.index
         if (not pending.accepted or pending.checked) and pending.label is None:
-            pending.label = self._reference(pending.atoms, "check" if pending.checked else "anchor")
+            counter_purpose = "check" if pending.checked else "anchor"
+            event_purpose = ("verification" if pending.checked else
+                             "anchor" if pending.reason == "initial_reference"
+                             else "refusal")
+            if pending.checked:
+                # §5.4: the check draw already happened; a fully matching
+                # cached label (same reference settings, geometry and energy
+                # convention) may complete the verification — the check
+                # counts normally, new physical SCF executions: zero.
+                cached = self._label_cache.get(
+                    pending.atoms, engine_capabilities(self.engine).energy_kind)
+                if cached is not None:
+                    pending.label, pending.label_id = cached
+                    self._emit_task(task_id=self._new_task_id(), attempt=1,
+                                    operation="reference", purpose="verification",
+                                    status="cache_hit", started_unix=time.time(),
+                                    elapsed_s=0.0, label_id=pending.label_id,
+                                    cache_hit=True)
+            if pending.label is None:
+                if pending.label_task_id is None:
+                    pending.label_task_id = self._new_task_id()
+                pending.label_attempt += 1
+                pending.label, pending.label_id = self._reference(
+                    pending.atoms, counter_purpose, event_purpose=event_purpose,
+                    task_id=pending.label_task_id, attempt=pending.label_attempt)
         observed = self._observed(pending)
         violation = bool(observed["force_budget_exceeded"]) if pending.checked else None
         if not pending.accepted:
@@ -607,10 +765,26 @@ class EnergeticCalculator(Calculator):
             "calibration_deferred_until_after_callback": not pending.accepted and self.on_label is not None,
             "unusable_probe_records": pending.probe_records if new_anchor is None else [],
         }
-        self.store.append(self.run_id, pending.index - 1, pending.atoms,
-                          "ml" if pending.accepted else "dft",
-                          surrogate=pending.prediction, engine=pending.label,
-                          reason=pending.reason, metadata=metadata, driving=drive)
+        io_task_id = self._new_task_id()
+        io_started = time.time()
+        io_start = time.perf_counter()
+        try:
+            self.store.append(self.run_id, pending.index - 1, pending.atoms,
+                              "ml" if pending.accepted else "dft",
+                              surrogate=pending.prediction, engine=pending.label,
+                              reason=pending.reason, metadata=metadata, driving=drive,
+                              label_id=pending.label_id)
+        except Exception as error:
+            self._emit_task(task_id=io_task_id, attempt=1, operation="io",
+                            purpose="trajectory_append", status="failed",
+                            started_unix=io_started,
+                            elapsed_s=time.perf_counter() - io_start,
+                            error=repr(error))
+            raise
+        self._emit_task(task_id=io_task_id, attempt=1, operation="io",
+                        purpose="trajectory_append", status="success",
+                        started_unix=io_started,
+                        elapsed_s=time.perf_counter() - io_start)
         # Commit only after a valid label/calibration and a successful append.
         self.verification = bound
         self.n_evaluations += 1
@@ -626,6 +800,26 @@ class EnergeticCalculator(Calculator):
             self._next_reason = "direction_unavailable_reference" if new_anchor is None else "reference_required"
         self.results = {"energy": drive.energy, "forces": drive.forces.copy()}
         self._results_model_generation = self._model_generation
+        committed_payload = {
+            "context": None if pending.context is None else pending.context.as_dict(),
+            "route": "ml" if pending.accepted else "dft",
+            "reason": pending.reason,
+            "label_id": pending.label_id,
+            "driving_energy_eV": float(pending.energy),
+            "checked": pending.checked,
+            "violation": violation,
+            "observed": observed,
+            "verification": None if bound is None else bound.as_dict(),
+            "reference_calls_this_evaluation": {
+                key: count - pending.calls_before[key]
+                for key, count in self.reference_calls.items()},
+            "segment_id": None if anchor is None else anchor.segment,
+            "model_id": self.model_id,
+        }
+        if pending.index == 0:
+            committed_payload["input_hash"] = atoms_input_hash(pending.atoms)
+        self._emit_once(f"evaluation:{self.run_id}:{pending.index}",
+                        EVALUATION_COMMITTED, **committed_payload)
         self._pending = None
         self._deferred_record = None
         self._evaluation_calls_before = None
@@ -633,27 +827,50 @@ class EnergeticCalculator(Calculator):
             candidate = self._anchor
             self._anchor = None
             self._next_reason = "model_update_requires_recalibration"
+            training_task_id = self._new_task_id()
+            training_started = time.time()
+            training_start = time.perf_counter()
             try:
                 changed = self.on_label(LabelObservation(pending.index - 1, pending.atoms.copy(),
                                                         copy.deepcopy(pending.prediction),
-                                                        copy.deepcopy(pending.label)))
-            except Exception:
+                                                        copy.deepcopy(pending.label),
+                                                        label_id=pending.label_id))
+            except Exception as error:
+                self._emit_task(task_id=training_task_id, attempt=1,
+                                operation="training", purpose="model_update",
+                                status="failed", started_unix=training_started,
+                                elapsed_s=time.perf_counter() - training_start,
+                                label_id=pending.label_id, error=repr(error))
                 self.results = {}
                 self._callback_failed = True
                 raise
+            self._emit_task(task_id=training_task_id, attempt=1,
+                            operation="training", purpose="model_update",
+                            status="success", started_unix=training_started,
+                            elapsed_s=time.perf_counter() - training_start,
+                            label_id=pending.label_id)
             if changed is not False:
                 # Anything except exactly False declares a model change:
                 # advance the decision-layer generation so cached results,
                 # pending proposals and anchors from the old model cannot be
-                # reused for a new evaluation.
+                # reused for a new evaluation. The update event is idempotent
+                # under (origin label ID, origin evaluation) — a redelivered
+                # label never rewrites the same logical update.
                 self._model_generation += 1
+                self._emit_once(f"model-update:{pending.label_id}:eval-{pending.index}",
+                                MODEL_UPDATE,
+                                generation=self._model_generation,
+                                model_id=self.model_id,
+                                origin_evaluation_id=pending.index,
+                                origin_label_id=pending.label_id)
             if pending.accepted and changed is False:
                 self._anchor = candidate
                 if violation:
                     self._next_reason = "previous_independent_check_violation"
             elif not violation:
                 self._deferred_origin = _CalibrationOrigin(pending.atoms.copy(), pending.index,
-                                                          copy.deepcopy(pending.label))
+                                                          copy.deepcopy(pending.label),
+                                                          label_id=pending.label_id)
             if violation:
                 self._next_reason = "previous_independent_check_violation"
 
@@ -674,6 +891,19 @@ class EnergeticCalculator(Calculator):
                 self._evaluation_calls_before = self.reference_calls.copy()
             self._prepare_updated_model()
             self._pending = self._freeze(self.atoms, index)
+            # Persist the frozen proposal and check draw BEFORE any external
+            # computation of this evaluation (§5.3); idempotent per
+            # evaluation ID, so a retry never duplicates it.
+            self._emit_once(
+                f"proposal:{self.run_id}:{index}", EVALUATION_PROPOSED,
+                context=self._pending.context.as_dict(),
+                accepted=self._pending.accepted, reason=self._pending.reason,
+                forecasts=self._pending.forecasts,
+                checked=self._pending.checked, check_draw=self._pending.draw,
+                model_generation=self._pending.model_generation,
+                segment_id=(None if self._pending.anchor is None
+                            else self._pending.anchor.segment),
+            )
         elif (self._pending.index != index
               or self._pending.model_generation != self._model_generation
               or not _same_state(self._pending.atoms, self.atoms, momenta=True)):
@@ -740,6 +970,7 @@ class EnergeticRunner:
         failure_probability: float = 0.05, tilt: float = math.log(2.0),
         direction: Direction | None = None, on_label: LabelCallback | None = None,
         temperature_K: float = 300.0, velocity_seed: int = 0,
+        event_log: EventLog | None = None, label_cache: bool = True,
     ) -> None:
         temperature_K = _positive(temperature_K, "temperature_K", zero=True)
         self.calc = EnergeticCalculator(
@@ -747,7 +978,8 @@ class EnergeticRunner:
             probe_steps=probe_steps, numerical_floor=numerical_floor, time_cap_fs=time_cap_fs,
             transverse_cap=transverse_cap, check_probability=check_probability,
             check_seed=check_seed, failure_probability=failure_probability, tilt=tilt,
-            direction=direction, on_label=on_label,
+            direction=direction, on_label=on_label, event_log=event_log,
+            label_cache=label_cache,
         )
         self.calc._validate_atoms(atoms)
         if "momenta" not in atoms.arrays:
@@ -769,13 +1001,15 @@ class EnergeticRunner:
         start = time.perf_counter()
         try:
             self.dyn.run(int(n_steps))
-        except Exception:
+        except Exception as error:
             self._failed = True
+            self.calc._emit(RUN_END, run_id=self.calc.run_id, status="failed",
+                            reason=repr(error))
             raise
         n_evaluations = self.calc.n_evaluations - before[0]
         n_accepted = self.calc.n_accepted - before[1]
         calls = {key: count - before[4][key] for key, count in self.calc.reference_calls.items()}
-        return EnergeticRunSummary(
+        summary = EnergeticRunSummary(
             int(n_steps), n_evaluations, n_accepted, sum(calls.values()), calls["anchor"],
             calls["probe"], calls["check"], self.calc.n_violations - before[2],
             self.calc.n_calibrations - before[3],
@@ -783,6 +1017,13 @@ class EnergeticRunner:
             None if self.calc.verification is None else self.calc.verification.as_dict(),
             time.perf_counter() - start,
         )
+        # The outer wall time is measured directly here — never re-summed
+        # from nested task timings downstream.
+        self.calc._emit(RUN_SUMMARY, run_id=self.calc.run_id,
+                        n_steps=summary.n_steps, n_evaluations=summary.n_evaluations,
+                        n_accepted=summary.n_accepted, n_reference=summary.n_reference,
+                        wall_time_s=summary.wall_time_s)
+        return summary
 
     @classmethod
     def resume(cls, *args, **kwargs):

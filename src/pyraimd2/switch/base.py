@@ -50,9 +50,13 @@ class LabelObservation:
         atoms: Snapshot of the evaluated configuration.
         prediction: The surrogate's shadow prediction.
         label: The engine's label.
+        label_id: Durable identity of ``label`` (WP02); deduplicates label
+            consumption and model-update events. None for legacy producers
+            that do not assign label IDs.
     """
 
     step: int
     atoms: Atoms
     prediction: SurrogatePrediction
     label: EngineResult
+    label_id: str | None = None
