@@ -24,7 +24,7 @@ import numpy as np
 from ase import Atoms
 from ase.io import write as ase_write
 
-from pyraimd2.runtime.inspect import inspect_run
+from pyraimd2.runtime.inspect import _read_events, inspect_run
 from pyraimd2.store import Store
 
 
@@ -139,7 +139,8 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
                       interval_steps: int = 1,
                       only_step: int | None = None,
                       wrap: bool = False,
-                      complete_steps: set[int] | None = None) -> list[Atoms]:
+                      complete_steps: set[int] | None = None,
+                      committed: list | None = None) -> list[Atoms]:
     """Export frames in step order, thinned by evaluation id.
 
     ``interval_steps = k`` keeps every k-th committed evaluation (the
@@ -148,22 +149,36 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
     are marked, never zero-filled.  ``wrap=True`` wraps the continuous
     unwrapped store coordinates back into the cell for output.
 
-    With ``complete_steps`` given, only rows at a committed complete-step
-    boundary are exported (the initial evaluation at step -1 is always kept
-    and marked ``integration_phase = 'initial_evaluation'``). A committed
-    evaluation without its boundary is left as a computation record in the
-    store — it never masquerades as a completed trajectory frame.
+    With ``committed`` given (``Store.iter_committed`` pairs), frames come
+    from the authoritative commit→row binding only; orphan rows (written
+    but never committed) never become trajectory frames (A3).  Without it —
+    a run with no event log — all rows are exported as the legacy fallback:
+    no log does NOT mean provably no complete frames.
+
+    With ``complete_steps`` given (MD task kinds only), only rows at a
+    committed complete-step boundary are exported (the initial evaluation
+    at step -1 is always kept and marked ``integration_phase =
+    'initial_evaluation'``). A committed evaluation without its boundary is
+    left as a computation record in the store — it never masquerades as a
+    completed trajectory frame.  Relax and singlepoint tasks have no
+    integration steps: every committed evaluation is a complete record and
+    ``complete_steps`` must be None for them (A2).
     """
     if force_source not in FORCE_SOURCES:
         raise ExportError(
             f"force_source must be one of {list(FORCE_SOURCES)}, got "
             f"{force_source!r}")
-    rows = sorted(store._db.select(run_id=run_id),
-                  key=lambda r: int(r.key_value_pairs["step"]))
+    if committed is not None:
+        pairs = committed
+    else:
+        pairs = [(None, row) for row in
+                 sorted(store._db.select(run_id=run_id),
+                        key=lambda r: int(r.key_value_pairs["step"]))]
     frames: list[Atoms] = []
-    for row in rows:
+    for event, row in pairs:
         step = int(row.key_value_pairs["step"])
-        evaluation_id = step + 1
+        evaluation_id = (int((event.get("context") or {})["evaluation_id"])
+                         if event is not None else step + 1)
         if only_step is not None and step != only_step:
             continue
         if only_step is None and evaluation_id % interval_steps != 0:
@@ -172,6 +187,8 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
             continue
         frame = frame_from_row(row, run_id, force_source=force_source,
                                wrap=wrap, store=store)
+        frame.info["evaluation_id"] = evaluation_id
+        frame.info["row_id"] = int(row.id)
         frame.info["integration_phase"] = (
             "initial_evaluation" if step < 0 else "complete_step")
         frames.append(frame)
@@ -216,8 +233,21 @@ def export_run(run_dir: str | Path, *, force_source: str = "driving",
             "configuration first with `pyramid run`")
     run_id = infer_run_id(run_dir)
     store = Store(db_path)
+    events = _read_events(run_dir / "events.jsonl")
+    start = next((e for e in events if e.get("type") == "run_start"), None)
+    # Completion semantics are task-specific (A2): MD drivers (plain NVE,
+    # adaptive energetic) complete a step only at its STEP_COMPLETED
+    # boundary; relax and singlepoint commit complete records per
+    # evaluation and have no step boundaries.
+    driver = ((start or {}).get("workflow") or {}).get("driver")
+    md_kind = driver == "plain-nve" or (driver is None
+                                        and (start or {}).get("policy"))
+    complete_steps = completed_step_ids(run_dir) if md_kind else None
+    committed = (list(store.iter_committed(events, run_id))
+                 if events else None)
     frames = frames_from_store(store, run_id, force_source=force_source,
-                               complete_steps=completed_step_ids(run_dir))
+                               complete_steps=complete_steps,
+                               committed=committed)
     if not frames:
         raise ExportError(
             f"run {run_id!r} has no committed evaluations to export")

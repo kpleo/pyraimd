@@ -121,30 +121,60 @@ class Store:
         Energetic rows are logged mid-step and carry half-step momenta; the
         complete step's momenta are reconstructed from the row's driving
         force with the same kick ASE applies (``p += 0.5*dt*F``, no mass
-        division). Plain rows are logged after the step completes and are
-        returned as-is. The returned atoms carry ``momenta_source`` in
-        ``info`` ("complete_step_reconstructed", "complete_step_recorded" or
+        division). The initial evaluation is exempt: it stores the complete
+        initial momenta, not a mid-step state (A1). Plain rows are logged
+        after the step completes and are returned as-is. The returned atoms
+        carry ``momenta_source`` in ``info`` ("complete_step_reconstructed",
+        "complete_step_recorded", "initial_evaluation_record" or
         "force_evaluation_record") so downstream users can tell the phase
         apart instead of mistaking a half-step record for a complete step.
         """
         atoms = row.toatoms()
         atoms.calc = None
         metadata = row.data.get("metadata") or {}
+        context = metadata.get("context") or {}
+        is_initial = (context.get("phase") == "initial"
+                      or int(row.key_value_pairs["step"]) == -1)
         momenta_source = "force_evaluation_record"
         if metadata.get("method") == "energetic_force_error":
-            driving = row.data.get("driving")
-            if driving is not None and timestep_fs > 0:
-                from ase import units as _units
+            if is_initial:
+                momenta_source = "initial_evaluation_record"
+            else:
+                driving = row.data.get("driving")
+                if driving is not None and timestep_fs > 0:
+                    from ase import units as _units
 
-                forces = np.asarray(driving["forces"], dtype=float)
-                atoms.set_momenta(
-                    atoms.get_momenta()
-                    + 0.5 * timestep_fs * _units.fs * forces)
-                momenta_source = "complete_step_reconstructed"
+                    forces = np.asarray(driving["forces"], dtype=float)
+                    atoms.set_momenta(
+                        atoms.get_momenta()
+                        + 0.5 * timestep_fs * _units.fs * forces)
+                    momenta_source = "complete_step_reconstructed"
         else:
             momenta_source = "complete_step_recorded"
         atoms.info["momenta_source"] = momenta_source
         return atoms
+
+    def iter_committed(self, event_log: object | None, run_id: str,
+                       ) -> Iterator[tuple[dict, ase.db.row.AtomsRow]]:
+        """``(commit event, authoritative row)`` pairs in commit order.
+
+        This is the single commit-reading interface for export, inspect and
+        resume: the commit binds row_id/row_digest (R1), rows from before
+        that binding fall back to the legacy step lookup, and orphan rows
+        (written but never committed) are never returned — they stay in the
+        store as audit records only (A3).  Accepts an EventLog or a plain
+        iterable of event dicts; with no events there is nothing
+        authoritative to iterate and callers fall back to raw rows.
+        """
+        if event_log is None:
+            return
+        events = (event_log.iter_events() if hasattr(event_log, "iter_events")
+                  else event_log)
+        commits = [event for event in events
+                   if event.get("type") == "evaluation_committed"]
+        for event in sorted(commits, key=lambda e: int(e.get("seq", 0))):
+            evaluation_id = int((event.get("context") or {})["evaluation_id"])
+            yield event, self.committed_row(commits, run_id, evaluation_id)
 
     @staticmethod
     def row_digest(row: ase.db.row.AtomsRow) -> str:
@@ -176,9 +206,12 @@ class Store:
         rows from before that binding existed fall back to the legacy
         step lookup. An orphan row at the same step (a crash between the
         database write and the commit) is never returned by this path.
+        Accepts an EventLog or a plain iterable of event dicts.
         """
         if event_log is not None:
-            for event in event_log.iter_events():
+            events = (event_log.iter_events() if hasattr(event_log, "iter_events")
+                      else event_log)
+            for event in events:
                 if event.get("type") != "evaluation_committed":
                     continue
                 context = event.get("context") or {}

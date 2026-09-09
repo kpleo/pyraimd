@@ -125,34 +125,70 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
     run_summaries = [e for e in events if e.get("type") == RUN_SUMMARY]
     run_end = next((e for e in reversed(events) if e.get("type") == RUN_END), None)
     updates = [e for e in events if e.get("type") == MODEL_UPDATE]
+    complete_steps = {int(e["step_id"]) for e in events
+                      if e.get("type") == STEP_COMPLETED}
+    driver = ((start or {}).get("workflow") or {}).get("driver")
+    # Completion semantics are task-specific (A2/A4): MD drivers complete a
+    # step only at its boundary; relax/singlepoint commits are complete
+    # records themselves.
+    md_kind = driver == "plain-nve" or (driver is None
+                                        and (start or {}).get("policy"))
 
-    trajectory = {"n_rows": 0, "last_energy_eV": None, "last_temperature_K": None,
-                  "n_accepted": 0, "last_step": None}
+    trajectory = {"n_rows": 0, "n_committed": 0, "last_energy_eV": None,
+                  "last_temperature_K": None, "n_accepted": 0,
+                  "last_step": None}
+    last_evaluation = None
     db_path = _find_db(run_dir)
     if db_path is not None:
         store = Store(db_path)
         rows = sorted(store._db.select(run_id=run_id),
                       key=lambda r: int(r.key_value_pairs["step"]))
         trajectory["n_rows"] = len(rows)
-        if rows:
-            last = rows[-1]
-            trajectory["last_step"] = int(last.key_value_pairs["step"])
-            driving = last.data.get("driving")
-            if driving is not None:
-                trajectory["last_energy_eV"] = float(driving["energy"])
-            metadata = last.data.get("metadata") or {}
-            constraint = metadata.get("constraint") or {}
-            frame = store.complete_step_frame(
-                last, Store.row_timestep_fs(last) or 0.0)
-            trajectory["last_temperature_K"] = _temperature_K(
-                frame, n_fixed=int(constraint.get("n_fixed", 0)))
-            trajectory["n_accepted"] = sum(
-                r.key_value_pairs["route"] == "ml" for r in rows
-            )
+        pairs = list(store.iter_committed(events, run_id))
+        trajectory["n_committed"] = len(pairs)
+        trajectory["n_accepted"] = sum(
+            row.key_value_pairs["route"] == "ml" for _event, row in pairs)
+        if pairs:
+            # The current trajectory state is the last COMPLETE boundary
+            # (or the initial evaluation); the latest committed evaluation
+            # of any phase is reported separately with its phase marked (A4).
+            last_event, last_row = pairs[-1]
+            last_context_row = last_event.get("context") or {}
+            last_step_id = int(last_row.key_value_pairs["step"])
+            last_complete = (not md_kind) or last_step_id == -1 \
+                or last_step_id in complete_steps
+            driving = last_row.data.get("driving")
+            last_evaluation = {
+                "evaluation_id": int(last_context_row.get("evaluation_id",
+                                                         last_step_id + 1)),
+                "step_id": last_step_id,
+                "phase": last_context_row.get("phase"),
+                "physical_time_fs": last_context_row.get("physical_time_fs"),
+                "energy_eV": (None if driving is None
+                              else float(driving["energy"])),
+                "complete": bool(last_complete),
+            }
+            boundary = next(
+                ((event, row) for event, row in reversed(pairs)
+                 if (not md_kind)
+                 or int(row.key_value_pairs["step"]) == -1
+                 or int(row.key_value_pairs["step"]) in complete_steps),
+                None)
+            if boundary is not None:
+                _event, row = boundary
+                step = int(row.key_value_pairs["step"])
+                trajectory["last_step"] = step
+                driving = row.data.get("driving")
+                if driving is not None:
+                    trajectory["last_energy_eV"] = float(driving["energy"])
+                metadata = row.data.get("metadata") or {}
+                constraint = metadata.get("constraint") or {}
+                frame = store.complete_step_frame(
+                    row, Store.row_timestep_fs(row) or 0.0)
+                trajectory["last_temperature_K"] = _temperature_K(
+                    frame, n_fixed=int(constraint.get("n_fixed", 0)))
 
     last_context = (committed[-1].get("context") if committed else None) or {}
-    complete_steps = {int(e["step_id"]) for e in events
-                      if e.get("type") == STEP_COMPLETED}
     if (start or {}).get("event_schema_version") is not None:
         # Current writers emit one step_completed per finished integration
         # step; a committed evaluation without its boundary (a crash before
@@ -164,6 +200,20 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         # Older logs without step boundaries: approximate from the last
         # committed evaluation (may count a crashed mid-step evaluation).
         n_complete_steps = last_context["step_id"] + 1
+    if md_kind:
+        # Trajectory time comes from the last complete-step boundary (or the
+        # initial evaluation at t=0) — never from an unfinished tail
+        # evaluation (A4).
+        completed_times = [float(e["physical_time_fs"]) for e in events
+                           if e.get("type") == STEP_COMPLETED]
+        if completed_times:
+            physical_time_fs = completed_times[-1]
+        elif committed:
+            physical_time_fs = 0.0
+        else:
+            physical_time_fs = None
+    else:
+        physical_time_fs = last_context.get("physical_time_fs")
     checks = {"independent_checks": 0, "accepted_count": 0, "detected_count": 0,
               "bound": None, "probability": None}
     for event in committed:
@@ -190,7 +240,8 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         "reference_id": (start or {}).get("reference_id"),
         "n_evaluations": len(committed),
         "n_complete_steps": n_complete_steps,
-        "physical_time_fs": last_context.get("physical_time_fs"),
+        "physical_time_fs": physical_time_fs,
+        "last_evaluation": last_evaluation,
         "model_id": last_context.get("model_id", (start or {}).get("model_id")),
         "n_model_updates": len(updates),
         "trajectory": trajectory,
@@ -218,6 +269,7 @@ def format_inspection(info: dict) -> str:
          f"({info['n_model_updates']} updates)"),
         f"  last energy           : {info['trajectory']['last_energy_eV']} eV",
         f"  last temperature      : {info['trajectory']['last_temperature_K']} K",
+        f"  last evaluation       : {info['last_evaluation']}",
         (f"  reference (actual)    : {reference['actual_executions']} executions "
          f"({reference['successful_executions']} ok, "
          f"{reference['failed_attempts']} failed)"),

@@ -484,7 +484,7 @@ class _PlainDriver:
                 label.forces, dtype=float).tolist()
         # snapshot without the calculator: the db row must not resurrect a
         # SinglePointCalculator on read (export writes its own info/arrays)
-        self.store.append(
+        row_id = self.store.append(
             self.run_id, ctx.step_id, self.atoms.copy(), route,
             surrogate=label if self.section == "surrogate" else None,
             engine=label if self.section == "reference" else None,
@@ -492,10 +492,15 @@ class _PlainDriver:
             metadata={"context": ctx.as_dict(), "accepted": True,
                       "checked": False, "constraint": constraint_record},
             driving=driving, label_id=label_id)
+        # The commit binds the row it authorizes (row id + digest): an
+        # orphan row at the same step never becomes trajectory data (A3).
         self.event_log.append_once(
             f"evaluation:{self.run_id}:{evaluation_id}", EVALUATION_COMMITTED,
             {"run_id": self.run_id, "context": ctx.as_dict(), "route": route,
-             "checked": False, "verification": None})
+             "checked": False, "verification": None,
+             "row_id": int(row_id),
+             "row_digest": self.store.row_digest(
+                 self.store.row_by_id(int(row_id)))})
 
     def _fail(self, error: Exception, evaluation_id: int) -> None:
         self.event_log.append(TASK, {
@@ -752,18 +757,21 @@ def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         constraint_record = projection.as_dict()
         constraint_record["raw_forces_eV_A"] = np.asarray(
             label.forces, dtype=float).tolist()
-    store.append(config.run.id, -1, atoms.copy(),
-                 "dft" if section == "reference" else "ml",
-                 surrogate=label if section == "surrogate" else None,
-                 engine=label if section == "reference" else None,
-                 reason="singlepoint",
-                 metadata={"context": ctx.as_dict(), "accepted": True,
-                           "checked": False, "constraint": constraint_record},
-                 driving=driving, label_id=label_id)
+    row_id = store.append(config.run.id, -1, atoms.copy(),
+             "dft" if section == "reference" else "ml",
+             surrogate=label if section == "surrogate" else None,
+             engine=label if section == "reference" else None,
+             reason="singlepoint",
+             metadata={"context": ctx.as_dict(), "accepted": True,
+                       "checked": False, "constraint": constraint_record},
+             driving=driving, label_id=label_id)
     event_log.append_once(f"evaluation:{config.run.id}:0", EVALUATION_COMMITTED,
                           {"run_id": config.run.id, "context": ctx.as_dict(),
                            "route": "dft" if section == "reference" else "ml",
-                           "checked": False, "verification": None})
+                           "checked": False, "verification": None,
+                           "row_id": int(row_id),
+                           "row_digest": store.row_digest(
+                               store.row_by_id(int(row_id)))})
     event_log.append(RUN_SUMMARY, {
         "run_id": config.run.id, "n_steps": 0, "n_evaluations": 1,
         "n_accepted": 1,
@@ -854,12 +862,18 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         optimizer = FIRE(atoms)
     start = time.perf_counter()
 
+    last_frame_key: list = [None]
+
     def _record_frame() -> None:
         step = int(optimizer.nsteps)
         ctx = EvaluationContext(run_id=config.run.id, step_id=step - 1,
                                 evaluation_id=evaluations,
                                 phase=EvaluationPhase.OPTIMIZATION_TRIAL,
                                 physical_time_fs=0.0, model_id=model_id)
+        key = (step, evaluations)
+        if last_frame_key[0] == key:
+            return  # the terminal frame duplicates the last trial's commit
+        last_frame_key[0] = key
         label = atoms.calc.last_label
         driving = label
         constraint_record = None
@@ -871,15 +885,27 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
             constraint_record = projection.as_dict()
             constraint_record["raw_forces_eV_A"] = np.asarray(
                 label.forces, dtype=float).tolist()
-        store.append(config.run.id, step, atoms.copy(),
-                     "dft" if section == "reference" else "ml",
-                     surrogate=label if section == "surrogate" else None,
-                     engine=label if section == "reference" else None,
-                     reason="relax",
-                     metadata={"context": ctx.as_dict(), "accepted": True,
-                               "checked": False,
-                               "constraint": constraint_record},
-                     driving=driving)
+        label_id = (f"{config.run.id}-label-{evaluations}"
+                    if section == "reference" else None)
+        row_id = store.append(config.run.id, step, atoms.copy(),
+                              "dft" if section == "reference" else "ml",
+                              surrogate=label if section == "surrogate" else None,
+                              engine=label if section == "reference" else None,
+                              reason="relax",
+                              metadata={"context": ctx.as_dict(),
+                                        "accepted": True, "checked": False,
+                                        "constraint": constraint_record},
+                              driving=driving, label_id=label_id,
+                              dedupe=True)
+        # Every exported frame is a committed record: bind the row like the
+        # MD drivers do, so export reads commit→row identity (A2/A3).
+        event_log.append_once(
+            f"evaluation:{config.run.id}:{evaluations}", EVALUATION_COMMITTED,
+            {"run_id": config.run.id, "context": ctx.as_dict(),
+             "route": "dft" if section == "reference" else "ml",
+             "checked": False, "verification": None,
+             "row_id": int(row_id),
+             "row_digest": store.row_digest(store.row_by_id(int(row_id)))})
 
     optimizer.attach(_record_frame, interval=1)
     try:
