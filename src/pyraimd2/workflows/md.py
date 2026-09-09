@@ -43,6 +43,7 @@ from pyraimd2.loop.energetic import EnergeticRunSummary
 from pyraimd2.runtime.checkpoint import CheckpointManager
 from pyraimd2.runtime.context import EvaluationContext, EvaluationPhase
 from pyraimd2.runtime.events import (
+    ATTEMPT_LEDGER_PHYSICAL_V1,
     EVALUATION_COMMITTED,
     EVENT_SCHEMA_VERSION,
     RESUMED,
@@ -404,6 +405,7 @@ class _PlainDriver:
             "run_id": self.run_id,
             "schema_version": STORE_SCHEMA_VERSION,
             "event_schema_version": EVENT_SCHEMA_VERSION,
+            "attempt_ledger": ATTEMPT_LEDGER_PHYSICAL_V1,
             "software_version": __version__,
             "reference_id": engine_fp,
             "model_id": self.model_id,
@@ -445,12 +447,16 @@ class _PlainDriver:
                      else "inference")
         label_id = (f"{self.run_id}-label-{evaluation_id}"
                     if self.section == "reference" else None)
+        # A cache hit bills the access time (this lookup), never the old
+        # execution's wall time (B3); a real calculation bills its own.
+        elapsed = (float(getattr(label, "wall_time_s", 0.0) or measured)
+                   if calculated else measured)
         self.event_log.append(TASK, {
             "task_id": task_id, "attempt": 1,
             "operation": operation, "purpose": "md",
             "status": "success" if calculated else "cache_hit",
             "started_unix": started_unix,
-            "elapsed_s": float(getattr(label, "wall_time_s", 0.0) or measured),
+            "elapsed_s": elapsed,
             "cpu_cores": None, "gpu": None, "queue_s": None,
             "source": "workflow", "evaluation_id": evaluation_id,
             "label_id": label_id, "cache_hit": not calculated})
@@ -550,6 +556,7 @@ class _PlainDriver:
             "last_event_seq": self.event_log.last_seq,
             "store_schema_version": STORE_SCHEMA_VERSION,
             "event_schema_version": EVENT_SCHEMA_VERSION,
+            "attempt_ledger": ATTEMPT_LEDGER_PHYSICAL_V1,
             "software_version": __version__,
         })
         return generation
@@ -697,6 +704,7 @@ def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
     event_log.append(RUN_START, {
         "run_id": config.run.id, "schema_version": STORE_SCHEMA_VERSION,
         "event_schema_version": EVENT_SCHEMA_VERSION,
+        "attempt_ledger": ATTEMPT_LEDGER_PHYSICAL_V1,
         "software_version": __version__,
         "reference_id": (fingerprint_of(backend) if section == "reference"
                          else None),
@@ -814,6 +822,7 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
     event_log.append(RUN_START, {
         "run_id": config.run.id, "schema_version": STORE_SCHEMA_VERSION,
         "event_schema_version": EVENT_SCHEMA_VERSION,
+        "attempt_ledger": ATTEMPT_LEDGER_PHYSICAL_V1,
         "software_version": __version__,
         "reference_id": (fingerprint_of(backend) if section == "reference"
                          else None),
@@ -912,6 +921,18 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         converged = bool(optimizer.run(fmax=config.relax.fmax_eV_A,
                                        steps=config.relax.steps))
     except Exception as error:
+        # The evaluation that was running still closes its one logical task
+        # record — same task id the attempt carries, no renumbering (B3).
+        event_log.append(TASK, {
+            "task_id": f"{config.run.id}-task-{task_counter + 1}",
+            "attempt": 1,
+            "operation": "reference" if section == "reference" else "inference",
+            "purpose": "relax", "status": "failed",
+            "started_unix": time.time(),
+            "elapsed_s": time.perf_counter() - start,
+            "cpu_cores": None, "gpu": None, "queue_s": None,
+            "source": "workflow", "evaluation_id": evaluations + 1,
+            "label_id": None, "cache_hit": False, "error": repr(error)})
         event_log.append(RUN_END, {"run_id": config.run.id,
                                    "status": "failed", "reason": repr(error)})
         event_log.close()

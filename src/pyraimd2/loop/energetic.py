@@ -79,6 +79,7 @@ from pyraimd2.runtime.checkpoint import (
     rng_state_to_json,
 )
 from pyraimd2.runtime.events import (
+    ATTEMPT_LEDGER_PHYSICAL_V1,
     EVALUATION_COMMITTED,
     EVALUATION_PROPOSED,
     EVENT_SCHEMA_VERSION,
@@ -93,6 +94,7 @@ from pyraimd2.runtime.events import (
     TASK,
     UPDATE_REJECTED,
     EventLog,
+    EventLogError,
     physical_attempt,
 )
 from pyraimd2.runtime.labels import LabelCache, atoms_input_hash
@@ -435,6 +437,7 @@ class EnergeticCalculator(Calculator):
             self._emit(RUN_START, run_id=self.run_id,
                        schema_version=STORE_SCHEMA_VERSION,
                        event_schema_version=EVENT_SCHEMA_VERSION,
+                       attempt_ledger=ATTEMPT_LEDGER_PHYSICAL_V1,
                        software_version=__version__,
                        reference_id=self._engine_fingerprint,
                        model_id=self.model_id,
@@ -1025,7 +1028,7 @@ class EnergeticCalculator(Calculator):
                             started_unix=started_unix,
                             elapsed_s=time.perf_counter() - start,
                             error=repr(error))
-            if isinstance(error, EngineError):
+            if isinstance(error, (EngineError, EventLogError)):
                 raise
             raise EngineError(f"invalid {purpose} reference evaluation: {error}") from error
         label_id = self._new_label_id()

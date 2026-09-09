@@ -52,6 +52,12 @@ UPDATE_REJECTED = "update_rejected"
 PHYSICAL_ATTEMPT = "physical_attempt"
 PHYSICAL_IO = "physical_io"
 
+# RUN_START marker naming the attempt-ledger protocol a log follows.
+# summarize_tasks reads NEW logs by this marker — never by whether an
+# attempt happened to be recorded (B3: a fresh log whose first request
+# failed before any launch has zero attempts and is still new-semantics).
+ATTEMPT_LEDGER_PHYSICAL_V1 = "physical_attempt_v1"
+
 
 def accepts_request_id(backend: object, method: str) -> bool:
     """True when ``backend.<method>`` takes a ``request_id`` keyword — the
@@ -66,6 +72,22 @@ def accepts_request_id(backend: object, method: str) -> bool:
         return False
 
 
+# Sink attach points on a self-reporting engine, in preference order.  The
+# shared convention (0.4.1): an engine accepting ``request_id`` must expose
+# one of these attributes (None when unconnected); a wrapper holding an
+# event log connects it for the duration of the call.  Passing request_id
+# to an engine with no sink at all would hide internal retries from the
+# ledger, so that combination is refused before launch (B2).
+_SINK_ATTRIBUTES = ("attempt_sink", "event_log", "_event_log")
+
+
+def _sink_attribute(backend: object) -> str | None:
+    for name in _SINK_ATTRIBUTES:
+        if hasattr(backend, name):
+            return name
+    return None
+
+
 @contextlib.contextmanager
 def physical_attempt(backend: object, event_log: EventLog | None, *,
                      operation: str, request_id: str,
@@ -76,13 +98,30 @@ def physical_attempt(backend: object, event_log: EventLog | None, *,
     A ``task`` event is the *logical* request; an ``attempt`` event
     (``record="physical_attempt"``) is one real launch.  A backend whose
     ``<method>`` accepts ``request_id`` reports every launch itself — the
-    context manager yields the keyword to pass through.  Any other backend
-    gets exactly one attempt recorded around the call.  A self-reporting
-    backend that raises before launching anything records no attempt — a
-    precheck failure is not a physical execution.
+    context manager yields the keyword to pass through, connecting the
+    run's event log as the attempt sink for the call when the engine's own
+    sink is unconnected.  Any other backend gets exactly one attempt
+    recorded around the call.  A self-reporting backend that raises before
+    launching anything records no attempt — a precheck failure is not a
+    physical execution.
     """
     if accepts_request_id(backend, method):
-        yield {"request_id": request_id}
+        attach = _sink_attribute(backend)
+        if attach is None:
+            raise EventLogError(
+                f"{type(backend).__name__} accepts request_id but exposes no "
+                "attempt sink (attempt_sink/event_log); the combination would "
+                "hide internal retries from the ledger — refusing before launch")
+        sink = getattr(backend, attach)
+        if sink is not None or event_log is None:
+            yield {"request_id": request_id}
+            return
+        # Explicitly connect the run's log as this call's attempt sink.
+        setattr(backend, attach, event_log)
+        try:
+            yield {"request_id": request_id}
+        finally:
+            setattr(backend, attach, sink)
         return
     if event_log is None:
         yield {}

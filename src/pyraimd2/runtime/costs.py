@@ -55,7 +55,17 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
                 event.get("record", PHYSICAL_ATTEMPT) == PHYSICAL_ATTEMPT:
             attempts_by_parent.setdefault(
                 str(event.get("request_id")), []).append(event)
-    has_attempts = bool(attempts_by_parent)
+    # New-semantics logs are recognized by the explicit RUN_START marker,
+    # never by whether an attempt happened to be recorded (B3): a fresh log
+    # whose first request failed before any launch has zero attempts and is
+    # still new-semantics.  Attempt events without the marker (mixed or
+    # imported logs) also select the new semantics.
+    has_attempts = any(
+        e.get("type") == ATTEMPT
+        and e.get("record", PHYSICAL_ATTEMPT) == PHYSICAL_ATTEMPT
+        for e in events) or any(
+        e.get("type") == "run_start" and e.get("attempt_ledger") is not None
+        for e in events)
     by: dict[tuple[str, str | None], dict] = {}
     reference = {
         "logical_requests": 0,
