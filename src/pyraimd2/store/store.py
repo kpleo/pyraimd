@@ -17,6 +17,8 @@ Note: use a ``.db`` file suffix — ASE maps it to its SQLite3 backend.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -50,6 +52,7 @@ class Store:
         metadata: dict | None = None,
         driving: SurrogatePrediction | EngineResult | None = None,
         label_id: str | None = None,
+        dedupe: bool = False,
     ) -> int:
         """Append a step, preserving momenta and optional actual driving label.
 
@@ -60,7 +63,21 @@ class Store:
         consumption and model-update events. Legacy callers omit all three
         keyword arguments and retain their original storage format, stamped
         with the current ``STORE_SCHEMA_VERSION``.
+
+        With ``dedupe=True`` and a ``label_id``, an existing row at the same
+        (run_id, step) carrying the same ``engine_label_id`` is returned
+        instead of appended: the write is idempotent under a committed
+        label identity, so a crash between the database write and the
+        authoritative commit event never forks the evaluation into two
+        divergent rows. A *different* label at the same step is a genuine
+        re-execution and always appends; the commit event then binds its
+        row explicitly (see :meth:`row_digest`).
         """
+        if dedupe and label_id is not None:
+            for row in self._db.select(run_id=run_id):
+                if (int(row.key_value_pairs["step"]) == step
+                        and row.data.get("engine_label_id") == str(label_id)):
+                    return int(row.id)
         data = {
             "schema_version": STORE_SCHEMA_VERSION,
             "reason": reason,
@@ -79,6 +96,61 @@ class Store:
         return int(
             self._db.write(atoms, run_id=run_id, step=int(step), route=route, data=data)
         )
+
+    def row_by_id(self, row_id: int) -> ase.db.row.AtomsRow:
+        """Fetch one row by its database id (the commit-bound identity)."""
+        return self._db.get(id=int(row_id))
+
+    @staticmethod
+    def row_digest(row: ase.db.row.AtomsRow) -> str:
+        """Content digest of a row's identity payload, bound into commits.
+
+        Covers run/step/route, the durable label ID and the driving label
+        values — enough to detect a commit pointing at different content
+        than the row it names.
+        """
+        data = row.data
+        driving = data.get("driving") or {}
+        payload = {
+            "run_id": row.key_value_pairs.get("run_id"),
+            "step": int(row.key_value_pairs["step"]),
+            "route": row.key_value_pairs.get("route"),
+            "engine_label_id": data.get("engine_label_id"),
+            "driving_energy": driving.get("energy"),
+            "driving_forces": np.asarray(driving.get("forces", []),
+                                         dtype=float).tolist(),
+        }
+        canonical = json.dumps(payload, sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:24]
+
+    def committed_row(self, event_log: object | None, run_id: str,
+                      evaluation_id: int) -> ase.db.row.AtomsRow:
+        """Resolve the row for a committed evaluation through its commit.
+
+        The authoritative commit event binds ``row_id`` (and ``row_digest``);
+        rows from before that binding existed fall back to the legacy
+        step lookup. An orphan row at the same step (a crash between the
+        database write and the commit) is never returned by this path.
+        """
+        if event_log is not None:
+            for event in event_log.iter_events():
+                if event.get("type") != "evaluation_committed":
+                    continue
+                context = event.get("context") or {}
+                if int(context.get("evaluation_id", -2)) != evaluation_id:
+                    continue
+                row_id = event.get("row_id")
+                if row_id is not None:
+                    row = self.row_by_id(int(row_id))
+                    expected = event.get("row_digest")
+                    if expected is not None and self.row_digest(row) != expected:
+                        raise RuntimeError(
+                            f"commit for evaluation {evaluation_id} binds row "
+                            f"{row_id} whose content no longer matches its "
+                            "recorded digest; the store looks tampered with")
+                    return row
+                break
+        return self._row_at_step(run_id, evaluation_id - 1)
 
     def latest_state(self, run_id: str) -> tuple[Atoms, int]:
         """Return ``(atoms, step)`` of the last logged MD step of ``run_id``.
@@ -207,6 +279,8 @@ def _prediction_to_dict(prediction: SurrogatePrediction) -> dict:
         "forces": np.asarray(prediction.forces, dtype=float),
         "stress": None if prediction.stress is None else np.asarray(prediction.stress, dtype=float),
         "uncertainty": np.asarray(prediction.uncertainty, dtype=float),
+        "energy_kind": str(prediction.energy_kind),
+        "force_consistent": prediction.force_consistent,
     }
 
 
@@ -216,4 +290,6 @@ def _result_to_dict(result: EngineResult) -> dict:
         "forces": np.asarray(result.forces, dtype=float),
         "stress": None if result.stress is None else np.asarray(result.stress, dtype=float),
         "wall_time_s": float(result.wall_time_s),
+        "energy_kind": str(result.energy_kind),
+        "force_consistent": result.force_consistent,
     }

@@ -629,6 +629,35 @@ class EnergeticCalculator(Calculator):
                             "forces": np.array(arrays["driving_forces"], dtype=float)}
             self._results_model_generation = self._model_generation
 
+    def _rebuild_label_cache(self, store: Store) -> None:
+        """Repopulate the numeric label cache from durable store rows.
+
+        Every row with an engine payload and a durable label ID supplies one
+        exact cache entry keyed by (geometry, reference identity, energy
+        kind).  The reference identity itself is validated separately at
+        resume; a cache entry that no longer matches the current reference
+        simply never hits, because the key carries the stored energy kind
+        and the same engine fingerprint.
+        """
+        if not self._label_cache.enabled:
+            return
+        for row in store._db.select(run_id=self.run_id):
+            label_id = row.data.get("engine_label_id")
+            payload = row.data.get("engine")
+            if label_id is None or payload is None:
+                continue
+            atoms = row.toatoms()
+            label = EngineResult(
+                float(payload["energy"]),
+                np.asarray(payload["forces"], dtype=float),
+                None if payload.get("stress") is None
+                else np.asarray(payload["stress"], dtype=float),
+                float(payload.get("wall_time_s", 0.0)),
+                energy_kind=payload.get("energy_kind", EnergyKind.UNKNOWN),
+                force_consistent=payload.get("force_consistent"),
+            )
+            self._label_cache.put(atoms, label, str(label_id))
+
     def _replay_committed(self, event: dict, row: object) -> None:
         """Apply one committed evaluation from its records, never recompute.
 
@@ -747,6 +776,11 @@ class EnergeticCalculator(Calculator):
                   if anchor_rec is not None else None)
         context = EvaluationContext(**proposal["context"])
         self._deferred_record = proposal.get("deferred_record")
+        if proposal.get("check_rng_after") is not None:
+            # Continue the check stream exactly after this evaluation's
+            # consumed draw; without it the next fresh draw repeats the
+            # persisted one (F01).
+            self._rng.bit_generator.state = proposal["check_rng_after"]
         return _Pending(
             atoms, int(context.evaluation_id), prediction, anchor,
             bool(proposal["accepted"]), proposal["reason"],
@@ -1230,11 +1264,11 @@ class EnergeticCalculator(Calculator):
         io_started = time.time()
         io_start = time.perf_counter()
         try:
-            self.store.append(self.run_id, pending.index - 1, pending.atoms,
-                              "ml" if pending.accepted else "dft",
-                              surrogate=pending.prediction, engine=pending.label,
-                              reason=pending.reason, metadata=metadata, driving=drive,
-                              label_id=pending.label_id)
+            row_id = self.store.append(self.run_id, pending.index - 1, pending.atoms,
+                                       "ml" if pending.accepted else "dft",
+                                       surrogate=pending.prediction, engine=pending.label,
+                                       reason=pending.reason, metadata=metadata, driving=drive,
+                                       label_id=pending.label_id, dedupe=True)
         except Exception as error:
             self._emit_task(task_id=io_task_id, attempt=1, operation="io",
                             purpose="trajectory_append", status="failed",
@@ -1267,6 +1301,11 @@ class EnergeticCalculator(Calculator):
             "route": "ml" if pending.accepted else "dft",
             "reason": pending.reason,
             "label_id": pending.label_id,
+            # The commit binds the exact row it authorizes; an orphan row at
+            # the same step from a crash between append and commit is never
+            # authoritative (F03).
+            "row_id": int(row_id),
+            "row_digest": self.store.row_digest(self.store.row_by_id(int(row_id))),
             "driving_energy_eV": float(pending.energy),
             "checked": pending.checked,
             "violation": violation,
@@ -1412,6 +1451,11 @@ class EnergeticCalculator(Calculator):
                 accepted=self._pending.accepted, reason=self._pending.reason,
                 forecasts=self._pending.forecasts,
                 checked=self._pending.checked, check_draw=self._pending.draw,
+                # The bit-generator state after this evaluation's draw:
+                # resuming this pending continues the check stream after the
+                # consumed draw instead of re-drawing it (F01).
+                check_rng_after=(None if self._pending.draw is None else
+                                 rng_state_to_json(self._rng.bit_generator.state)),
                 frozen_energy_eV=self._pending.energy,
                 frozen_forces_eV_A=(None if self._pending.forces is None
                                     else self._pending.forces.tolist()),
@@ -1477,16 +1521,28 @@ def _check_resume_safety(events: list[dict], updater: object) -> None:
 
 
 def _replay_window(calc: EnergeticCalculator, store: Store, events: list[dict], *,
-                   updater: object, models_dir: Path) -> dict | None:
+                   cursor: int, updater: object, models_dir: Path) -> dict | None:
     """Replay committed events after a checkpoint cursor in original order.
 
     Returns the last uncommitted proposal event (the frozen decision to
     resume with the same check draw), or None. Replayed commits apply their
     recorded values only — no re-sampling, no re-training, no re-consuming.
+    ``events`` is the full log; the consumed-label set is built from the
+    whole history, because a label first consumed before the checkpoint and
+    only *reused* in the window must not be flagged as never consumed (F07).
     """
+    consumed_anywhere: set[str] = set()
+    for event in events:
+        event_type = event.get("type")
+        if event_type == LABEL_CONSUMED:
+            consumed_anywhere.add(str(event["label_id"]))
+        elif event_type == MODEL_UPDATE:
+            consumed_anywhere.add(str(event["origin_label_id"]))
     tail_proposal = None
     unconsumed: set[str] = set()
     for event in events:
+        if int(event.get("seq", 0)) <= cursor:
+            continue
         event_type = event.get("type")
         if event_type == TASK:
             calc._task_counter = max(calc._task_counter,
@@ -1509,8 +1565,9 @@ def _replay_window(calc: EnergeticCalculator, store: Store, events: list[dict], 
             tail_proposal = event
         elif event_type == EVALUATION_COMMITTED:
             tail_proposal = None
-            row = store._row_at_step(
-                calc.run_id, int(event["context"]["evaluation_id"]) - 1)
+            row = store.committed_row(
+                calc._event_log, calc.run_id,
+                int(event["context"]["evaluation_id"]))
             calc._replay_committed(event, row)
             if updater is not None and event.get("label_id") is not None:
                 unconsumed.add(str(event["label_id"]))
@@ -1518,6 +1575,9 @@ def _replay_window(calc: EnergeticCalculator, store: Store, events: list[dict], 
             calc._replay_label_event(event, store, updater, models_dir)
             unconsumed.discard(str(event.get("label_id")
                                        or event.get("origin_label_id")))
+    # A label first consumed anywhere in the history (including before the
+    # checkpoint) and only reused in the window is not a consumption loss.
+    unconsumed -= consumed_anywhere
     if unconsumed:
         raise ResumeError(
             f"labels {sorted(unconsumed)} were committed but their consumption "
@@ -1771,9 +1831,14 @@ class EnergeticRunner:
         cursor = int(manifest["last_event_seq"])
         if _is_stateful(updater) and state["updater_state"] is not None:
             updater.load_state_dict(state["updater_state"])
-        tail = _replay_window(calc, store,
-                              [e for e in events if int(e["seq"]) > cursor],
+        tail = _replay_window(calc, store, events, cursor=cursor,
                               updater=updater, models_dir=run_dir / "models")
+        # Rebuild the numeric label cache from durable records: rows carrying
+        # an engine payload and a durable label ID fully determine (geometry,
+        # reference identity, energy kind) -> label ID. Without this, a cold
+        # cache re-executes the same reference and assigns a NEW label ID,
+        # silently re-consuming and re-training (F02).
+        calc._rebuild_label_cache(store)
         runner = cls.__new__(cls)
         runner.calc = calc
         runner.run_dir = run_dir
@@ -1798,7 +1863,7 @@ class EnergeticRunner:
         driving_forces = (np.array(arrays["driving_forces"], dtype=float)
                           if driving_energy is not None else None)
         if last_eval >= 1:
-            row = store._row_at_step(run_id, last_eval - 1)
+            row = store.committed_row(event_log, run_id, last_eval)
             atoms.positions = row.toatoms().positions
             driving_energy, driving_forces = store.driving_label(run_id, last_eval - 1)
             # ASE's velocity-Verlet kick adds 0.5*dt*F to the momenta (no
