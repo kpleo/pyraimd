@@ -6,10 +6,17 @@ continuation state. Artifacts are written once and never edited — a second
 publish under the same model ID must carry identical content, otherwise it
 is an error (history is never clobbered). The write is atomic: temporary
 file, fsync, then rename, so readers never see a half-written artifact.
+
+Integrity: :func:`artifact_digest` is computed over the artifact's canonical
+content (everything but the volatile write time) and is bound into the
+commit event and the checkpoint by the caller — outside the rewritable
+artifact file itself. Loading verifies that digest, the schema version and
+the parent/generation chain before any state is applied.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -20,6 +27,14 @@ MODEL_ARTIFACT_FORMAT_VERSION = 1
 
 class ModelRegistryError(RuntimeError):
     """A model artifact cannot be published or read honestly."""
+
+
+def artifact_digest(record: dict) -> str:
+    """Content digest of an artifact record, excluding volatile metadata."""
+    comparable = {key: value for key, value in record.items()
+                  if key != "written_unix"}
+    canonical = json.dumps(comparable, sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:24]
 
 
 class ModelRegistry:

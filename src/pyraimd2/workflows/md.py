@@ -574,9 +574,10 @@ def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
 # singlepoint and relax tasks
 
 
-def _plain_backend(config: PyramidConfig, run_dir: Path) -> object:
+def _plain_backend(config: PyramidConfig, run_dir: Path, *,
+                   event_log: EventLog | None = None) -> object:
     return (create_configured_backend("reference", config.reference,
-                                      run_dir=run_dir)
+                                      run_dir=run_dir, event_log=event_log)
             if config.task.mode == "reference"
             else create_configured_backend("surrogate", config.surrogate,
                                            run_dir=run_dir))
@@ -896,12 +897,33 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             f"checkpoint under {run_dir} belongs to driver "
             f"{state.get('driver')!r}/{state.get('section')!r}, not to a "
             f"plain {config.task.mode!r} run; resume requires the same run")
-    backend = _plain_backend(config, run_dir)
-    if config.task.mode == "reference" and \
-            fingerprint_of(backend) != state.get("engine_fingerprint"):
-        raise WorkflowError(
-            "reference backend identity does not match the checkpoint; "
-            "resume requires the same physical settings")
+    event_log = EventLog(run_dir, force=force_unlock)
+    try:
+        backend = _plain_backend(config, run_dir, event_log=event_log)
+        if config.task.mode == "reference" and \
+                fingerprint_of(backend) != state.get("engine_fingerprint"):
+            raise WorkflowError(
+                "reference backend identity does not match the checkpoint; "
+                "resume requires the same physical settings")
+        if config.task.mode == "surrogate":
+            # Same alignment as the reference path: the model identity and the
+            # immutable integration settings are compared before anything is
+            # written or advanced; a physical change means a new run (or fork).
+            if model_id_for(backend, 0) != state.get("model_id"):
+                raise WorkflowError(
+                    f"surrogate identity does not match the checkpoint "
+                    f"({state.get('model_id')!r} vs "
+                    f"{model_id_for(backend, 0)!r}); resume requires the same "
+                    "model — start a new run, or fork from the checkpoint")
+            if float(state.get("timestep_fs", -1.0)) != \
+                    float(config.dynamics.timestep_fs):
+                raise WorkflowError(
+                    f"timestep_fs changed from {state.get('timestep_fs')} to "
+                    f"{config.dynamics.timestep_fs} fs; resume continues the same "
+                    "integration settings — start a new run, or fork")
+    except Exception:
+        event_log.close()
+        raise
     current = _complete_steps(run_dir, config.run.id)
     if current < int(state["nsteps"]):
         raise WorkflowError(
@@ -938,7 +960,6 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
     constraint = state.get("constraint")
     if constraint is not None:
         atoms.set_constraint(FixAtoms(indices=list(constraint["indices"])))
-    event_log = EventLog(run_dir, force=force_unlock)
     task_counter = int(state["task_counter"])
     for event in event_log.iter_events():
         if event.get("type") == TASK:

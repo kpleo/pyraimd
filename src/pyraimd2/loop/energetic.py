@@ -95,7 +95,11 @@ from pyraimd2.runtime.events import (
     EventLog,
 )
 from pyraimd2.runtime.labels import LabelCache, atoms_input_hash
-from pyraimd2.runtime.models import ModelRegistry
+from pyraimd2.runtime.models import (
+    MODEL_ARTIFACT_FORMAT_VERSION,
+    ModelRegistry,
+    artifact_digest,
+)
 from pyraimd2.runtime.updater import StatefulUpdater
 from pyraimd2.store.store import STORE_SCHEMA_VERSION, Store
 from pyraimd2.surrogate.base import (
@@ -748,6 +752,29 @@ class EnergeticCalculator(Calculator):
             raise ResumeError(
                 f"model artifact for {event['model_id']!r} is missing or "
                 "incomplete; automatic resume stops here as pending")
+        problems: list[str] = []
+        if artifact.get("model_id") != event["model_id"]:
+            problems.append("model_id mismatch with the commit")
+        if int(artifact.get("format_version", -1)) != MODEL_ARTIFACT_FORMAT_VERSION:
+            problems.append("unsupported artifact schema version")
+        if int(artifact.get("generation", -1)) != int(event["generation"]):
+            problems.append("generation mismatch with the commit")
+        expected_parent = model_id_for(self.surrogate, self._model_generation)
+        if artifact.get("parent_model_id") != expected_parent:
+            problems.append(
+                f"parent chain mismatch: artifact names "
+                f"{artifact.get('parent_model_id')!r}, the replayed chain "
+                f"expects {expected_parent!r}")
+        committed_digest = event.get("artifact_digest")
+        if committed_digest is not None and \
+                artifact_digest(artifact) != committed_digest:
+            problems.append(
+                "artifact content does not match the digest bound into the "
+                "commit; the artifact looks tampered with")
+        if problems:
+            raise ResumeError(
+                f"model artifact for {event['model_id']!r} failed "
+                "verification: " + "; ".join(problems))
         updater.load_state_dict(artifact["updater_state"])
         self._model_generation = int(event["generation"])
         self._anchor = None
@@ -1390,6 +1417,13 @@ class EnergeticCalculator(Calculator):
                 }
                 if self._model_publisher is not None:
                     self._model_publisher(self.model_id, artifact)
+                # The artifact's content digest is bound into the commit —
+                # outside the rewritable artifact file — so a tampered
+                # artifact is detected at load time (R2).
+                artifact_digest_value = artifact_digest(
+                    {"model_id": self.model_id,
+                     "format_version": MODEL_ARTIFACT_FORMAT_VERSION,
+                     **artifact})
                 self._emit_once(f"model-update:{pending.label_id}:eval-{pending.index}",
                                 MODEL_UPDATE,
                                 generation=self._model_generation,
@@ -1398,6 +1432,7 @@ class EnergeticCalculator(Calculator):
                                 origin_label_id=pending.label_id,
                                 origin_violation=bool(violation),
                                 label_ids=artifact["label_ids"],
+                                artifact_digest=artifact_digest_value,
                                 updater_state=updater_state)
             else:
                 # Label consumed without a model change: the updater's
@@ -1717,6 +1752,11 @@ class EnergeticRunner:
             return None
         generation = self._checkpoints.next_generation()
         state, arrays = self.calc._checkpoint_payload(self.atoms)
+        model_artifact_digest = None
+        if self._model_registry is not None:
+            artifact = self._model_registry.read(self.calc.model_id)
+            if artifact is not None:
+                model_artifact_digest = artifact_digest(artifact)
         self._checkpoints.write(generation, state, arrays, {
             "run_id": self.calc.run_id,
             "nsteps": self.dyn.nsteps,
@@ -1726,6 +1766,7 @@ class EnergeticRunner:
             "store_schema_version": STORE_SCHEMA_VERSION,
             "event_schema_version": EVENT_SCHEMA_VERSION,
             "software_version": __version__,
+            "model_artifact_digest": model_artifact_digest,
         })
         return generation
 
@@ -1819,6 +1860,18 @@ class EnergeticRunner:
             raise ResumeError(
                 "the checkpoint references an updater state; supply the same "
                 "stateful updater to resume")
+        checkpoint_digest = manifest.get("model_artifact_digest")
+        if checkpoint_digest is not None:
+            artifact = _model_artifact(run_dir / "models", state["model_id"])
+            if artifact is None:
+                raise ResumeError(
+                    f"the checkpoint names a model artifact for "
+                    f"{state['model_id']!r} that is missing or unreadable")
+            if artifact_digest(artifact) != checkpoint_digest:
+                raise ResumeError(
+                    f"model artifact for {state['model_id']!r} does not match "
+                    "the digest bound into the checkpoint; it looks tampered "
+                    "with — resume refuses to load it")
         store = Store(run_dir / "trajectory.db")
         event_log = EventLog(run_dir, force=event_log_force)
         policy = dict(state["policy"])
