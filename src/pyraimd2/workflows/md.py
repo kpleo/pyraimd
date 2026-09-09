@@ -36,7 +36,7 @@ from ase.md.verlet import VelocityVerlet
 
 from pyraimd2 import __version__
 from pyraimd2.config import PyramidConfig, load_resolved_config
-from pyraimd2.engines.base import EngineError
+from pyraimd2.engines.base import EngineError, EngineResult
 from pyraimd2.loop import EnergeticRunner
 from pyraimd2.loop.constraints import validate_constraints
 from pyraimd2.loop.energetic import EnergeticRunSummary
@@ -57,6 +57,7 @@ from pyraimd2.runtime.identity import fingerprint_of, model_id_for
 from pyraimd2.runtime.inspect import inspect_run
 from pyraimd2.store import Store
 from pyraimd2.store.store import STORE_SCHEMA_VERSION
+from pyraimd2.surrogate.base import SurrogatePrediction
 from pyraimd2.workflows.setup import (
     RunOutputs,
     WorkflowError,
@@ -177,6 +178,7 @@ def _policy_kwargs(config: PyramidConfig) -> dict:
         "numerical_floor": policy.numerical_floor_eV_A,
         "time_cap_fs": policy.time_cap_fs,
         "transverse_cap": policy.transverse_cap,
+        "force_metric": policy.force_metric,
         "check_probability": verification.probability,
         "check_seed": verification.seed,
         "failure_probability": verification.failure_probability,
@@ -291,6 +293,37 @@ class _BackendCalculator(Calculator):
             self._on_evaluation(label)
 
 
+def _label_from_row(row: object, section: str) -> object | None:
+    """Rebuild the boundary label object from a committed store row.
+
+    A resumed run's first step can legitimately hit ASE's calculator cache
+    (zero displacement at a stationary boundary), leaving ``last_label``
+    unset; the committed boundary row carries the same payload a continuous
+    run would have recorded.
+    """
+    key = "engine" if section == "reference" else "surrogate"
+    payload = row.data.get(key)
+    if payload is None:
+        return None
+    stress = payload.get("stress")
+    common = {
+        "energy": float(payload["energy"]),
+        "forces": np.asarray(payload["forces"], dtype=float),
+        "stress": None if stress is None else np.asarray(stress, dtype=float),
+        "energy_kind": payload.get("energy_kind", "unknown"),
+        "force_consistent": payload.get("force_consistent"),
+    }
+    if section == "reference":
+        return EngineResult(wall_time_s=float(payload.get("wall_time_s", 0.0)),
+                            **common)
+    uncertainty = payload.get("uncertainty")
+    return SurrogatePrediction(
+        uncertainty=(np.asarray(uncertainty, dtype=float)
+                     if uncertainty is not None
+                     else np.full(len(common["forces"]), np.nan)),
+        **common)
+
+
 class _PlainDriver:
     """Velocity-Verlet NVE over one fixed backend, with energetic-style
     store rows and event records (no anchors, probes or checks).
@@ -385,6 +418,11 @@ class _PlainDriver:
             physical_time_fs=evaluation_id * self.config.dynamics.timestep_fs,
             model_id=self.model_id)
         label = self.atoms.calc.last_label
+        if label is None:
+            raise WorkflowError(
+                f"no {self.section} label for evaluation {evaluation_id}: "
+                "the backend produced no record for this state — refusing "
+                "to commit an empty payload")
         route = "dft" if self.section == "reference" else "ml"
         label_id = (f"{self.run_id}-label-{evaluation_id}"
                     if self.section == "reference" else None)
@@ -642,14 +680,25 @@ def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         "cpu_cores": None, "gpu": None, "queue_s": None,
         "source": "workflow", "evaluation_id": 0,
         "label_id": label_id, "cache_hit": False})
+    projection = validate_constraints(atoms)
+    driving = label
+    constraint_record = None
+    if projection is not None:
+        # Raw physical forces stay in the backend payload; the driving
+        # force is the constraint-projected one, same as in MD runs.
+        driving = dataclasses.replace(
+            label, forces=projection.project_forces(label.forces))
+        constraint_record = projection.as_dict()
+        constraint_record["raw_forces_eV_A"] = np.asarray(
+            label.forces, dtype=float).tolist()
     store.append(config.run.id, -1, atoms.copy(),
                  "dft" if section == "reference" else "ml",
                  surrogate=label if section == "surrogate" else None,
                  engine=label if section == "reference" else None,
                  reason="singlepoint",
                  metadata={"context": ctx.as_dict(), "accepted": True,
-                           "checked": False},
-                 driving=label, label_id=label_id)
+                           "checked": False, "constraint": constraint_record},
+                 driving=driving, label_id=label_id)
     event_log.append_once(f"evaluation:{config.run.id}:0", EVALUATION_COMMITTED,
                           {"run_id": config.run.id, "context": ctx.as_dict(),
                            "route": "dft" if section == "reference" else "ml",
@@ -660,9 +709,10 @@ def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         "n_reference": 1 if section == "reference" else 0,
         "wall_time_s": elapsed, "stopped_early": False})
     event_log.close()
+    driving_forces = np.asarray(driving.forces, dtype=float)
     if verbose:
         print(f"singlepoint ({section}): energy {float(label.energy):.10f} eV, "
-              f"max |F| {float(np.linalg.norm(forces, axis=1).max()):.6f} eV/A")
+              f"max |F| {float(np.linalg.norm(driving_forces, axis=1).max()):.6f} eV/A")
         print(f"run directory: {run_dir}")
     return WorkflowResult(run_dir=run_dir, run_id=config.run.id,
                           mode=section, steps_completed=0, steps_this_call=0,
@@ -722,6 +772,7 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
 
     atoms.calc = _BackendCalculator(backend, section,
                                     on_evaluation=_on_evaluation)
+    projection = validate_constraints(atoms)
     if config.relax.optimizer == "bfgs":
         from ase.optimize import BFGS
 
@@ -739,14 +790,25 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                                 phase=EvaluationPhase.OPTIMIZATION_TRIAL,
                                 physical_time_fs=0.0, model_id=model_id)
         label = atoms.calc.last_label
+        driving = label
+        constraint_record = None
+        if projection is not None:
+            # Raw physical forces stay in the backend payload; the driving
+            # force is the constraint-projected one the optimizer used.
+            driving = dataclasses.replace(
+                label, forces=projection.project_forces(label.forces))
+            constraint_record = projection.as_dict()
+            constraint_record["raw_forces_eV_A"] = np.asarray(
+                label.forces, dtype=float).tolist()
         store.append(config.run.id, step, atoms.copy(),
                      "dft" if section == "reference" else "ml",
                      surrogate=label if section == "surrogate" else None,
                      engine=label if section == "reference" else None,
                      reason="relax",
                      metadata={"context": ctx.as_dict(), "accepted": True,
-                               "checked": False},
-                     driving=label)
+                               "checked": False,
+                               "constraint": constraint_record},
+                     driving=driving)
 
     optimizer.attach(_record_frame, interval=1)
     try:
@@ -759,20 +821,30 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         raise
     _record_frame()
     wall = time.perf_counter() - start
-    final_forces = np.asarray(atoms.calc.results["forces"], dtype=float)
+    # The convergence metric is the one the optimizer used: the maximum
+    # single-atom force norm after constraints are applied (ASE's
+    # get_forces zeroes fixed DOFs). The raw all-atom value — which
+    # includes reaction forces on fixed atoms — is recorded alongside.
+    final_forces = np.asarray(atoms.get_forces(), dtype=float)
     final_fmax = float(np.linalg.norm(final_forces, axis=1).max())
+    raw_fmax = float(np.linalg.norm(
+        np.asarray(atoms.calc.results["forces"], dtype=float), axis=1).max())
     event_log.append(RUN_SUMMARY, {
         "run_id": config.run.id, "n_steps": int(optimizer.nsteps),
         "n_evaluations": evaluations, "n_accepted": evaluations,
         "n_reference": evaluations if section == "reference" else 0,
         "wall_time_s": wall, "stopped_early": False,
-        "converged": converged, "final_fmax_eV_A": final_fmax})
+        "converged": converged, "final_fmax_eV_A": final_fmax,
+        "raw_all_atom_fmax_eV_A": raw_fmax})
     event_log.close()
     if verbose:
         status = "converged" if converged else "not converged"
         print(f"relax ({section}, {config.relax.optimizer}): {status} in "
               f"{optimizer.nsteps} steps — final max |F| "
               f"{final_fmax:.6f} eV/A (target {config.relax.fmax_eV_A} eV/A)")
+        if projection is not None:
+            print(f"  raw all-atom max |F| {raw_fmax:.6f} eV/A "
+                  "(includes reaction forces on fixed atoms)")
         print(f"run directory: {run_dir}")
     return WorkflowResult(run_dir=run_dir, run_id=config.run.id,
                           mode=section, steps_completed=int(optimizer.nsteps),
@@ -957,6 +1029,9 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
         atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
         driving_energy = float(state["driving_energy_eV"])
         driving_forces = np.array(arrays["driving_forces"], dtype=float)
+        store = Store(run_dir / "trajectory.db")
+        row = store._row_at_step(config.run.id, -1)  # the initial evaluation
+    boundary_label = _label_from_row(row, config.task.mode)
     constraint = state.get("constraint")
     if constraint is not None:
         atoms.set_constraint(FixAtoms(indices=list(constraint["indices"])))
@@ -978,6 +1053,10 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
     driver.atoms.calc.results = {
         "energy": float(driving_energy),
         "forces": np.asarray(driving_forces, dtype=float).copy()}
+    # If the first resumed step does not move the atoms (a stationary
+    # boundary), ASE legitimately skips calculate() and last_label would
+    # stay unset; the committed boundary row is the same label.
+    driver.atoms.calc.last_label = boundary_label
     event_log.append(RESUMED, {
         "run_id": config.run.id, "driver": "plain-nve",
         "from_event_seq": int(manifest["last_event_seq"]),

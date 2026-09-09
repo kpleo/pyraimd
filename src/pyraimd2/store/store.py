@@ -102,6 +102,51 @@ class Store:
         return self._db.get(id=int(row_id))
 
     @staticmethod
+    def row_timestep_fs(row: ase.db.row.AtomsRow) -> float | None:
+        """Timestep recorded for the row's evaluation, when reconstructible."""
+        metadata = row.data.get("metadata") or {}
+        if metadata.get("timestep_fs"):
+            return float(metadata["timestep_fs"])
+        context = metadata.get("context") or {}
+        time_fs = context.get("physical_time_fs")
+        evaluation_id = context.get("evaluation_id")
+        if time_fs and evaluation_id and int(evaluation_id) > 0:
+            return float(time_fs) / int(evaluation_id)
+        return None
+
+    def complete_step_frame(self, row: ase.db.row.AtomsRow,
+                            timestep_fs: float) -> Atoms:
+        """Complete-step view of one store row, without touching the record.
+
+        Energetic rows are logged mid-step and carry half-step momenta; the
+        complete step's momenta are reconstructed from the row's driving
+        force with the same kick ASE applies (``p += 0.5*dt*F``, no mass
+        division). Plain rows are logged after the step completes and are
+        returned as-is. The returned atoms carry ``momenta_source`` in
+        ``info`` ("complete_step_reconstructed", "complete_step_recorded" or
+        "force_evaluation_record") so downstream users can tell the phase
+        apart instead of mistaking a half-step record for a complete step.
+        """
+        atoms = row.toatoms()
+        atoms.calc = None
+        metadata = row.data.get("metadata") or {}
+        momenta_source = "force_evaluation_record"
+        if metadata.get("method") == "energetic_force_error":
+            driving = row.data.get("driving")
+            if driving is not None and timestep_fs > 0:
+                from ase import units as _units
+
+                forces = np.asarray(driving["forces"], dtype=float)
+                atoms.set_momenta(
+                    atoms.get_momenta()
+                    + 0.5 * timestep_fs * _units.fs * forces)
+                momenta_source = "complete_step_reconstructed"
+        else:
+            momenta_source = "complete_step_recorded"
+        atoms.info["momenta_source"] = momenta_source
+        return atoms
+
+    @staticmethod
     def row_digest(row: ase.db.row.AtomsRow) -> str:
         """Content digest of a row's identity payload, bound into commits.
 

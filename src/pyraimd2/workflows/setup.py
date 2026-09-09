@@ -50,6 +50,7 @@ from pyraimd2.store import Store
 from pyraimd2.surrogate.base import assert_compatible_energy_contract
 from pyraimd2.workflows.export import (
     append_extxyz,
+    completed_step_ids,
     frame_from_row,
     frames_from_store,
     write_extxyz,
@@ -467,7 +468,9 @@ class RunOutputs:
     def regenerate_trajectory(self) -> None:
         frames = frames_from_store(self._store(), self.run_id,
                                    force_source="driving",
-                                   interval_steps=self.trajectory_interval)
+                                   interval_steps=self.trajectory_interval,
+                                   complete_steps=completed_step_ids(
+                                       self.run_dir))
         if frames:
             write_extxyz(self.trajectory_path, frames)
 
@@ -480,7 +483,8 @@ class RunOutputs:
         store = self._store()
         row = store._row_at_step(self.run_id, evaluation_id - 1)
         append_extxyz(self.trajectory_path,
-                      frame_from_row(row, self.run_id, force_source="driving"))
+                      frame_from_row(row, self.run_id, force_source="driving",
+                                     store=store))
 
     def write_summaries(self) -> None:
         info = inspect_run(self.run_dir, run_id=self.run_id)

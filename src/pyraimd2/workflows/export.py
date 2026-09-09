@@ -55,24 +55,61 @@ def _select_forces(data: dict, route: str, force_source: str):
             True, label_id)
 
 
+def _row_timestep_fs(row) -> float | None:
+    return Store.row_timestep_fs(row)
+
+
+def completed_step_ids(run_dir: str | Path) -> set[int]:
+    """Step indices with a committed complete-step boundary (STEP_COMPLETED).
+
+    An evaluation committed without its boundary (a crash before the second
+    half-kick) is a computation record, not a completed step. With no event
+    log, the empty set is returned and callers fall back to store rows.
+    """
+    import json
+
+    path = Path(run_dir) / "events.jsonl"
+    if not path.exists():
+        return set()
+    completed = set()
+    lines = [line.strip() for line in path.read_text().splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            if index == len(lines) - 1:
+                break  # torn tail from a crash: never a committed boundary
+            raise
+        if event.get("type") == "step_completed":
+            completed.add(int(event["step_id"]))
+    return completed
+
+
 def frame_from_row(row, run_id: str, *, force_source: str,
-                   wrap: bool = False) -> Atoms:
+                   wrap: bool = False, timestep_fs: float | None = None,
+                   store: Store | None = None) -> Atoms:
     """One export frame from one store row (see module docstring for the
     missing-data marking rules).
 
     Coordinates in the store are continuous unwrapped positions; pass
     ``wrap=True`` to export them wrapped back into the cell instead (the
-    store itself is never rewritten).
+    store itself is never rewritten). Momenta are the complete-step values:
+    mid-step (half-step) records are reconstructed with the row's driving
+    force and marked in ``info['momenta_source']`` — the original record is
+    never overwritten.
     """
     data = row.data
     route = str(row.key_value_pairs["route"])
     step = int(row.key_value_pairs["step"])
     energy, forces, available, label_id = _select_forces(data, route,
                                                          force_source)
-    atoms = row.toatoms()
-    # rows whose atoms carried a calculator (plain-mode snapshots) reattach
-    # it on read; the export writes info/arrays itself, so detach it
-    atoms.calc = None
+    if store is not None:
+        atoms = store.complete_step_frame(row, timestep_fs
+                                          if timestep_fs is not None
+                                          else (_row_timestep_fs(row) or 0.0))
+    else:
+        atoms = row.toatoms()
+        atoms.calc = None
     if wrap:
         atoms.wrap()
         atoms.info["coordinates"] = "wrapped"
@@ -101,7 +138,8 @@ def frame_from_row(row, run_id: str, *, force_source: str,
 def frames_from_store(store: Store, run_id: str, *, force_source: str,
                       interval_steps: int = 1,
                       only_step: int | None = None,
-                      wrap: bool = False) -> list[Atoms]:
+                      wrap: bool = False,
+                      complete_steps: set[int] | None = None) -> list[Atoms]:
     """Export frames in step order, thinned by evaluation id.
 
     ``interval_steps = k`` keeps every k-th committed evaluation (the
@@ -109,6 +147,12 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
     row stored at that step index.  Missing forces for the requested source
     are marked, never zero-filled.  ``wrap=True`` wraps the continuous
     unwrapped store coordinates back into the cell for output.
+
+    With ``complete_steps`` given, only rows at a committed complete-step
+    boundary are exported (the initial evaluation at step -1 is always kept
+    and marked ``integration_phase = 'initial_evaluation'``). A committed
+    evaluation without its boundary is left as a computation record in the
+    store — it never masquerades as a completed trajectory frame.
     """
     if force_source not in FORCE_SOURCES:
         raise ExportError(
@@ -124,8 +168,13 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
             continue
         if only_step is None and evaluation_id % interval_steps != 0:
             continue
-        frames.append(frame_from_row(row, run_id, force_source=force_source,
-                                     wrap=wrap))
+        if complete_steps is not None and step >= 0 and step not in complete_steps:
+            continue
+        frame = frame_from_row(row, run_id, force_source=force_source,
+                               wrap=wrap, store=store)
+        frame.info["integration_phase"] = (
+            "initial_evaluation" if step < 0 else "complete_step")
+        frames.append(frame)
     return frames
 
 
@@ -167,7 +216,8 @@ def export_run(run_dir: str | Path, *, force_source: str = "driving",
             "configuration first with `pyramid run`")
     run_id = infer_run_id(run_dir)
     store = Store(db_path)
-    frames = frames_from_store(store, run_id, force_source=force_source)
+    frames = frames_from_store(store, run_id, force_source=force_source,
+                               complete_steps=completed_step_ids(run_dir))
     if not frames:
         raise ExportError(
             f"run {run_id!r} has no committed evaluations to export")

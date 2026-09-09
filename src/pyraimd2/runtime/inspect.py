@@ -26,6 +26,7 @@ from pyraimd2.runtime.events import (
     RUN_END,
     RUN_START,
     RUN_SUMMARY,
+    STEP_COMPLETED,
     EventLogError,
 )
 from pyraimd2.store.store import Store
@@ -49,13 +50,19 @@ def _read_events(path: Path) -> list[dict]:
     return events
 
 
-def _temperature_K(atoms) -> float | None:
+def _temperature_K(atoms, n_fixed: int = 0) -> float | None:
+    """Instantaneous temperature from momenta over the free degrees of
+    freedom. With FixAtoms, the fixed coordinates carry no momentum and no
+    kinetic share — the divisor is the actual unconstrained DOF, not 3N."""
     momenta = atoms.get_momenta()
     masses = atoms.get_masses()
     if not len(atoms) or not np.isfinite(momenta).all():
         return None
+    dof = 3 * (len(atoms) - int(n_fixed))
+    if dof <= 0:
+        return None
     kinetic = float((momenta**2 / (2.0 * masses[:, None])).sum())
-    return 2.0 * kinetic / (3.0 * len(atoms) * units.kB)
+    return 2.0 * kinetic / (dof * units.kB)
 
 
 def _find_db(run_dir: Path) -> Path | None:
@@ -117,7 +124,8 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
                   "n_accepted": 0, "last_step": None}
     db_path = _find_db(run_dir)
     if db_path is not None:
-        rows = sorted(Store(db_path)._db.select(run_id=run_id),
+        store = Store(db_path)
+        rows = sorted(store._db.select(run_id=run_id),
                       key=lambda r: int(r.key_value_pairs["step"]))
         trajectory["n_rows"] = len(rows)
         if rows:
@@ -126,12 +134,30 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
             driving = last.data.get("driving")
             if driving is not None:
                 trajectory["last_energy_eV"] = float(driving["energy"])
-            trajectory["last_temperature_K"] = _temperature_K(last.toatoms())
+            metadata = last.data.get("metadata") or {}
+            constraint = metadata.get("constraint") or {}
+            frame = store.complete_step_frame(
+                last, Store.row_timestep_fs(last) or 0.0)
+            trajectory["last_temperature_K"] = _temperature_K(
+                frame, n_fixed=int(constraint.get("n_fixed", 0)))
             trajectory["n_accepted"] = sum(
                 r.key_value_pairs["route"] == "ml" for r in rows
             )
 
     last_context = (committed[-1].get("context") if committed else None) or {}
+    complete_steps = {int(e["step_id"]) for e in events
+                      if e.get("type") == STEP_COMPLETED}
+    if (start or {}).get("event_schema_version") is not None:
+        # Current writers emit one step_completed per finished integration
+        # step; a committed evaluation without its boundary (a crash before
+        # the last half-kick) is not a complete step.
+        n_complete_steps = len(complete_steps)
+    elif last_context.get("step_id") is None:
+        n_complete_steps = None
+    else:
+        # Older logs without step boundaries: approximate from the last
+        # committed evaluation (may count a crashed mid-step evaluation).
+        n_complete_steps = last_context["step_id"] + 1
     checks = {"independent_checks": 0, "accepted_count": 0, "detected_count": 0,
               "bound": None, "probability": None}
     for event in committed:
@@ -157,8 +183,7 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         "event_schema_version": (start or {}).get("event_schema_version"),
         "reference_id": (start or {}).get("reference_id"),
         "n_evaluations": len(committed),
-        "n_complete_steps": (None if last_context.get("step_id") is None
-                             else last_context["step_id"] + 1),
+        "n_complete_steps": n_complete_steps,
         "physical_time_fs": last_context.get("physical_time_fs"),
         "model_id": last_context.get("model_id", (start or {}).get("model_id")),
         "n_model_updates": len(updates),
