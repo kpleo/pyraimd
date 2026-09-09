@@ -43,8 +43,10 @@ command line.
 - `frames_from_store(store, run_id, *, force_source, committed=None, ...)`
   — convert rows to frames. Pass the `(event, row)` pairs from
   `Store.iter_committed` to select committed rows. Omitting `committed`
-  selects raw/legacy rows; `complete_steps` alone does not exclude orphaned
-  rows sharing a step number. Prefer `export_run` for a run directory.
+  selects raw/legacy rows (orphans included); `complete_steps` without
+  `committed` is refused, because step numbers cannot pick the
+  authoritative row. Prefer `export_run`/`frames_for_run` for a run
+  directory.
 - Result/record types: `WorkflowResult`, `RunOutputs`. Errors: `WorkflowError`,
   `ExportError`.
 
