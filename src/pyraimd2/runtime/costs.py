@@ -32,7 +32,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from pyraimd2.runtime.events import ATTEMPT, PHYSICAL_ATTEMPT, PHYSICAL_IO, TASK
+from pyraimd2.runtime.events import (
+    ATTEMPT,
+    ATTEMPT_FAILED_STATUSES,
+    PHYSICAL_ATTEMPT,
+    PHYSICAL_IO,
+    TASK,
+)
 
 REFERENCE_PURPOSES = ("anchor", "refusal", "probe", "verification", "diagnostic")
 
@@ -69,6 +75,7 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
     by: dict[tuple[str, str | None], dict] = {}
     reference = {
         "logical_requests": 0,
+        "actual_executions": 0,
         "successful_executions": 0,
         "failed_attempts": 0,
         "cache_hits": 0,
@@ -104,16 +111,23 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
             reference["logical_requests"] += 1
             reference["cache_hits"] += int(status == "cache_hit")
             if children:
+                # Every launched attempt is one actual execution, whatever
+                # its terminal status; only "success" completes successfully
+                # (R3).
+                reference["actual_executions"] += len(children)
                 reference["successful_executions"] += sum(
                     1 for child in children if child.get("status") == "success")
                 reference["failed_attempts"] += sum(
-                    1 for child in children if child.get("status") == "failed")
+                    1 for child in children
+                    if child.get("status") in ATTEMPT_FAILED_STATUSES)
             elif status == "success":
+                reference["actual_executions"] += 1
                 reference["successful_executions"] += 1
             elif status == "failed" and not has_attempts:
                 # Legacy logs (no attempt records anywhere): a failed task
                 # was the failed execution itself.  With attempt records, a
                 # childless failed task never launched (precheck failure).
+                reference["actual_executions"] += 1
                 reference["failed_attempts"] += 1
         elif operation in counts:
             counts[operation] += 1
@@ -121,16 +135,15 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
         for child in children:
             total_elapsed += float(child.get("elapsed_s") or 0.0)
             # Orphan attempts (their task event was lost to a crash between
-            # the launch and the commit) are still real physical cost.
+            # the launch and the commit) are still real physical cost, by
+            # the same terminal rules as parented attempts (R3).
             if parent_id not in seen_task_ids and \
                     child.get("operation") == "reference":
+                reference["actual_executions"] += 1
                 reference["successful_executions"] += int(
                     child.get("status") == "success")
                 reference["failed_attempts"] += int(
-                    child.get("status") == "failed")
-    reference["actual_executions"] = (
-        reference["successful_executions"] + reference["failed_attempts"]
-    )
+                    child.get("status") in ATTEMPT_FAILED_STATUSES)
     return {
         "total_elapsed_s": total_elapsed,
         "by": sorted(by.values(),
