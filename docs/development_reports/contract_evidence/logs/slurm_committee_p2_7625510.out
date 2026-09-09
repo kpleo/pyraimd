@@ -1,0 +1,17 @@
+=== process 2 (retry): fresh process resume and fidelity checks ===
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+Using float64 for MACECalculator, which is slower but more accurate. Recommended for geometry optimization.
+{
+  "artifact_exists": true,
+  "artifact_arrays_npz": true,
+  "artifact_has_placeholders": true,
+  "n_consumed": 3,
+  "n_updates": 1,
+  "guard_payload_has_cell": true,
+  "guard_payload_pbc": true,
+  "prediction_energy_match": 1.0,
+  "prediction_forces_max_abs_diff": 1.3877787807814457e-17,
+  "member_weights_match": true,
+  "energy_shifts_match": true,
+  "passed": true
+}

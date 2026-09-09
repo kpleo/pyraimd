@@ -7,26 +7,34 @@ workflow: singlepoint → relax → 6-step NVE in the two plain modes
 constrained-workflow materials users run every day; short by design, no
 thermodynamic conclusions.
 
-## Adaptive mode: not supported for this recipe in 0.4.0
+## Adaptive mode: supported after contract verification (2026-09-09)
 
-Do **not** run `run-md-adaptive.toml` expecting a calculation: the adaptive
-combination is rejected at `pyramid validate` by the WP01 energy-convention
-contract. QE with Marzari-Vanderbilt smearing on a metallic slab reports
-its energy as `free_energy`, while the MACE surrogate reports `energy`;
-anchored bookkeeping may not mix the two quantities, so validation stops
-before any SCF. The recorded rejection message is in
-`docs/development_reports/wp08_evidence/al/contract-evidence.txt`. The
-config is kept in the directory so the limitation is reproducible:
+The adaptive combination was previously rejected at `pyramid validate` by
+the energy-convention contract: QE with Marzari-Vanderbilt smearing on a
+metallic slab reports `free_energy`, while the MACE surrogate reports
+`energy`. The contract is now refined (INDEPENDENT_REVIEW_20260909 §5):
+each side's reported scalar must be consistent with its own forces, and a
+cross-kind combination additionally requires both sides strictly verified
+— equal kind strings are not required.
+
+For this recipe the correspondence was verified directly: the variational
+free energy differentiates to the reported forces within 3.6e-5 eV/A
+(central differences, h = 1e-3 A, two free-layer directions, tolerance
+preset at 5e-4 eV/A). The verified run is `run-md-adaptive.toml` (the
+evidence pack is `docs/development_reports/contract_evidence/`):
 
 ```sh
-pyramid validate run-md-adaptive.toml   # exits with the contract error (by design)
+pyramid validate run-md-adaptive.toml   # energy contract: compatible_cross_kind
+pyramid run run-md-adaptive.toml        # 6-step adaptive NVE
+pyramid resume runs/al-adaptive --steps 2
 ```
 
-Lifting the limitation requires the refined reference-functional contract
-sketched in INDEPENDENT_REVIEW_20260909 §5 (verified force–energy
-consistency per side, explicit reference functional identity) — a deliberate
-change, not a config tweak. Until then the supported workflow for this
-recipe is the plain one below.
+Measured on the verified 4+2-step run: 6 complete steps, 4 of 7
+evaluations accepted against the reference (budget 0.15 eV/A, checks at
+p = 1.0, no violations), 19 actual reference executions (ledger:
+logical = physical, 0 failed, 0 cache hits). The previous rejection
+message stays in `docs/development_reports/wp08_evidence/al/
+contract-evidence.txt` as the pre-refinement record.
 
 ## Inputs needed on the target machine
 

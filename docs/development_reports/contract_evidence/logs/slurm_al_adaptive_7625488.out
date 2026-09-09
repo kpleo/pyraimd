@@ -1,0 +1,151 @@
+=== validate: cross-kind contract now passes ===
+configuration : /data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/run-md-adaptive-c1.toml (schema_version 1)
+task          : md / adaptive
+structure     : Al17, 17 atoms, pbc=[True, True, False], momenta thermalized at 300.0 K (velocity_seed 7)
+reference   : qe (energy_kind=free_energy, force_consistent=True, forces_conservative=True, stress_available=True)
+surrogate   : mace (energy_kind=energy, force_consistent=True, forces_conservative=True, stress_available=True, uncertainty_available=False)
+energy contract: compatible_cross_kind
+run directory : /data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/runs/al-adaptive-c1
+dynamics      : 4 steps x 1.0 fs, checkpoint every 3 steps
+verification  : independent checks p=1.0 (seed 19)
+validate: OK
+=== adaptive 4 steps ===
+pyramid run: al-adaptive-c1 — adaptive NVE, 4 steps x 1.0 fs
+run directory: /data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/runs/al-adaptive-c1
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+Using float64 for MACECalculator, which is slower but more accurate. Recommended for geometry optimization.
+  step 2/4 (t = 2.00 fs)
+  step 4/4 (t = 4.00 fs)
+run completed: 4 complete steps
+  evaluations 5, accepted 3 (60%), violations 0
+  reference calls 13 (anchor 2, probe 8, check 3); wall time 1078.24 s
+  outputs: /data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/runs/al-adaptive-c1/summary.json, summary.csv, trajectory.extxyz
+=== resume +2 (fresh process) ===
+resume: run al-adaptive-c1 is at complete step 4; running 2 additional steps (target 6)
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+Using float64 for MACECalculator, which is slower but more accurate. Recommended for geometry optimization.
+  step 6/6 (t = 6.00 fs)
+resume done: run is now at complete step 6
+  evaluations 2, accepted 1 (50%), violations 0
+  reference calls 6 (anchor 1, probe 4, check 1); wall time 517.21 s
+  outputs: runs/al-adaptive-c1/summary.json, summary.csv, trajectory.extxyz
+=== inspect + export ===
+{
+  "run_id": "al-adaptive-c1",
+  "schema_version": 2,
+  "event_schema_version": 1,
+  "reference_id": "qe-pbe-d3:b5880bfa70564c2d",
+  "n_evaluations": 7,
+  "n_complete_steps": 6,
+  "physical_time_fs": 6.0,
+  "model_id": "mace-mp:/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/mace-mpa-0-medium.model:cpu:float64#g0",
+  "n_model_updates": 0,
+  "trajectory": {
+    "n_rows": 7,
+    "last_energy_eV": -9134.782084180346,
+    "last_temperature_K": 288.1129973349058,
+    "n_accepted": 4,
+    "last_step": 5
+  },
+  "checks": {
+    "independent_checks": 4,
+    "accepted_count": 4,
+    "detected_count": 0,
+    "bound": 0.0,
+    "probability": 1.0
+  },
+  "cost": {
+    "total_elapsed_s": 1594.5368515341543,
+    "by": [
+      {
+        "operation": "inference",
+        "purpose": "probe",
+        "count": 12,
+        "elapsed_s": 6.771679229103029,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "inference",
+        "purpose": "proposal",
+        "count": 7,
+        "elapsed_s": 94.32978757983074,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "io",
+        "purpose": "trajectory_append",
+        "count": 7,
+        "elapsed_s": 0.17186181666329503,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "anchor",
+        "count": 1,
+        "elapsed_s": 81.64652057318017,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "probe",
+        "count": 12,
+        "elapsed_s": 940.5043349596672,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "refusal",
+        "count": 2,
+        "elapsed_s": 152.12789989216253,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "verification",
+        "count": 4,
+        "elapsed_s": 319.22782165696844,
+        "failed": 0,
+        "cache_hits": 0
+      }
+    ],
+    "reference": {
+      "logical_requests": 19,
+      "successful_executions": 19,
+      "failed_attempts": 0,
+      "cache_hits": 0,
+      "actual_executions": 19
+    },
+    "counts": {
+      "inference": 19,
+      "training": 0,
+      "io": 7
+    }
+  },
+  "wall_time_s": 517.2129096430726,
+  "last_checkpoint": {
+    "generation": 3,
+    "nsteps": 6,
+    "physical_time_fs": 6.0,
+    "last_event_seq": 99,
+    "valid": true
+  },
+  "failure": null,
+  "events": {
+    "count": 100,
+    "last_seq": 100
+  }
+}
+wrote 7 frames (driving forces) to runs/al-adaptive-c1/export-driving.extxyz
+=== actual SCF count from the attempt ledger ===
+{
+  "logical_reference_requests": 19,
+  "physical_attempts": 19,
+  "failed_attempts": 0,
+  "cache_hits": 0
+}

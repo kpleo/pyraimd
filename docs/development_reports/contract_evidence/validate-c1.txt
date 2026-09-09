@@ -1,0 +1,10 @@
+configuration : /data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/run-md-adaptive-c1.toml (schema_version 1)
+task          : md / adaptive
+structure     : Al17, 17 atoms, pbc=[True, True, False], momenta thermalized at 300.0 K (velocity_seed 7)
+reference   : qe (energy_kind=free_energy, force_consistent=True, forces_conservative=True, stress_available=True)
+surrogate   : mace (energy_kind=energy, force_consistent=True, forces_conservative=True, stress_available=True, uncertainty_available=False)
+energy contract: compatible_cross_kind
+run directory : /data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/runs/al-adaptive-c1
+dynamics      : 4 steps x 1.0 fs, checkpoint every 3 steps
+verification  : independent checks p=1.0 (seed 19)
+validate: OK

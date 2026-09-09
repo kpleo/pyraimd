@@ -107,10 +107,21 @@ updates. Materials validation landed with the two QE + MACE recipes below
   ATOMIC_SPECIES lines (long absolute paths overflow QE's card-line buffer).
   With smearing, the QE engine now honestly declares `free_energy` (the `!`
   value is the variational free energy); it was previously mislabeled `energy`.
-  Because the energy-kind contract refuses to mix a smeared reference
-  (`free_energy`) with a potential-energy surrogate (`energy`), **adaptive MD
-  with a metallic smeared reference is not supported in 0.4.0**; plain
-  single-backend workflows are unaffected.
+- The energy contract is refined per the independent review (section 5):
+  each side's reported scalar must be consistent with its own forces, and a
+  cross-kind combination (e.g. a smeared QE `free_energy` reference with a
+  potential-energy MACE surrogate) is allowed when both sides strictly
+  declare force-energy consistency and conservative forces — equal kind
+  strings are no longer required, and an unverified (`unknown`) side can
+  never make such a combination pass. Validated on the Al(111) recipe:
+  QE's variational free energy differentiates to its forces within
+  3.6e-5 eV/A (central differences, preset tolerance 5e-4), and a short
+  adaptive run with resume completes with a ledger-consistent cost record.
+- Tensor updater states persist as digest placeholders plus npz sidecars
+  (model artifacts, checkpoints and the event log), so committee
+  fine-tune states survive publish, checkpointing and fresh-process
+  resume; verified end-to-end with a real MACE-MPA-0 committee on the
+  Al(111) recipe (one accepted update, byte-exact restore).
 - Current 0.4.0 limits by design: NVE only (NVT is 0.4.1), FixAtoms only,
   `checkpoint.keep_generations` fixed at 2, and adaptive mode only for
   `task.kind = "md"`.

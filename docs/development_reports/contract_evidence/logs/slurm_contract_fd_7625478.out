@@ -1,0 +1,55 @@
+=== contract unit smoke (updated code on the remote env) ===
+.................                                                        [100%]
+=============================== warnings summary ===============================
+tests/unit/test_runtime_contract.py: 130 warnings
+  /data/home/df103967/df103967/cloud_projects/pyraimd2/envs/py312/lib/python3.12/site-packages/ase/atoms.py:432: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    a.shape = (-1,) + shape
+
+tests/unit/test_runtime_contract.py: 153 warnings
+  /data/home/df103967/df103967/cloud_projects/pyraimd2/envs/py312/lib/python3.12/site-packages/ase/db/sqlite.py:179: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    array.shape = shape
+
+tests/unit/test_runtime_contract.py: 105 warnings
+  /data/home/df103967/df103967/cloud_projects/pyraimd2/envs/py312/lib/python3.12/site-packages/ase/db/core.py:793: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    a.shape = shape
+
+tests/unit/test_runtime_contract.py::test_unchanged_coordinates_new_step_advances_physical_time
+  /data/home/df103967/df103967/cloud_projects/pyraimd2/envs/py312/lib/python3.12/site-packages/ase/md/md.py:128: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    self.masses.shape = (-1, 1)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+17 passed, 389 warnings in 0.42s
+=== FD verification (5 SCF) ===
+{
+  "base_energy_eV": -9134.775595897463,
+  "directions": [
+    {
+      "atom": 8,
+      "axis": 0,
+      "fd_eV_A": -0.01115666873374721,
+      "minus_F_dot_u_eV_A": -0.011151903689912538,
+      "passed": true,
+      "residual_eV_A": 4.765043834672328e-06
+    },
+    {
+      "atom": 16,
+      "axis": 1,
+      "fd_eV_A": 0.027959698854829185,
+      "minus_F_dot_u_eV_A": 0.027995458875734923,
+      "passed": true,
+      "residual_eV_A": 3.576002090573821e-05
+    }
+  ],
+  "energy_kind": "free_energy",
+  "engine_name": "qe-pbe-d3",
+  "fingerprint": "qe-pbe-d3:9a4b6b847f82ff3b",
+  "force_consistent": true,
+  "h_A": 0.001,
+  "n_scf": 5,
+  "passed": true,
+  "tolerance_eV_A": 0.0005
+}

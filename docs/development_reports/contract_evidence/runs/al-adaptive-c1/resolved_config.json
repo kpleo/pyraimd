@@ -1,0 +1,106 @@
+{
+  "checkpoint": {
+    "interval_steps": 3,
+    "keep_generations": 2
+  },
+  "constraints": {
+    "fix_atoms_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "dynamics": {
+    "ensemble": "nve",
+    "steps": 4,
+    "temperature_K": 300.0,
+    "timestep_fs": 1.0,
+    "velocity_seed": 7
+  },
+  "output": {
+    "summary_interval_steps": 2,
+    "trajectory_interval_steps": 1
+  },
+  "policy": {
+    "force_budget_eV_A": 0.15,
+    "force_metric": "active_dofs_max_atom",
+    "name": "energetic",
+    "numerical_floor_eV_A": 0.001,
+    "probe_steps_A": [
+      0.02,
+      0.04
+    ],
+    "time_cap_fs": 2.0,
+    "transverse_cap": 0.1
+  },
+  "reference": {
+    "backend": "qe",
+    "options": {
+      "conv_thr": 1e-08,
+      "degauss": 0.02,
+      "ecutrho": 400.0,
+      "ecutwfc": 50.0,
+      "kpts": [
+        4,
+        4,
+        1
+      ],
+      "metallic": true,
+      "pseudo_dir": "/tmp/ps",
+      "pseudos": {
+        "Al": "/tmp/ps/Al.pbe-n-kjpaw_psl.1.0.0.UPF"
+      },
+      "pw_cmd": [
+        "mpirun",
+        "-np",
+        "28",
+        "pw.x"
+      ],
+      "smearing": "mv"
+    }
+  },
+  "relax": {
+    "fmax_eV_A": 0.05,
+    "optimizer": "fire",
+    "steps": 200
+  },
+  "run": {
+    "directory": "/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/runs/al-adaptive-c1",
+    "id": "al-adaptive-c1",
+    "seed": 42
+  },
+  "schema_version": 1,
+  "structure": {
+    "file": "/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/structure.extxyz"
+  },
+  "surrogate": {
+    "backend": "mace",
+    "options": {
+      "default_dtype": "float64",
+      "device": "cpu",
+      "model": "/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/mace-mpa-0-medium.model"
+    }
+  },
+  "task": {
+    "kind": "md",
+    "mode": "adaptive"
+  },
+  "units": {
+    "energy": "eV",
+    "force": "eV/angstrom",
+    "length": "angstrom",
+    "temperature": "K",
+    "time": "fs"
+  },
+  "verification": {
+    "failure_probability": 0.05,
+    "probability": 1.0,
+    "seed": 19,
+    "tilt": 0.6931471805599453
+  }
+}

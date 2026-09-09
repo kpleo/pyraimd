@@ -1,0 +1,25 @@
+=== process 1: 2 labels -> 1 update -> tensor artifact ===
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+Using float64 for MACECalculator, which is slower but more accurate. Recommended for geometry optimization.
+finetune member=0 epoch=0/2 loss=0.250738
+finetune member=0 epoch=1/2 loss=0.245201
+finetune member=1 epoch=0/2 loss=0.235438
+finetune member=1 epoch=1/2 loss=0.230101
+{
+  "n_evaluations": 3,
+  "n_reference": 11,
+  "n_consumed": 3,
+  "n_updates": 1,
+  "n_rejected": 0,
+  "model_generation": 1,
+  "model_id": "committee:2x[/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/mace-mpa-0-medium.model]:seed=0:perturbation=0.01:filters=readout#g1",
+  "boundary_step": 1,
+  "prediction_energy_eV": -9134.819620452943,
+  "energy_shifts": [
+    -9075.847499220448,
+    -9074.430236958318
+  ]
+}
+=== process 2: fresh process resume and fidelity checks ===
+cuequivariance or cuequivariance_torch is not available. Cuequivariance acceleration will be disabled.
+Using float64 for MACECalculator, which is slower but more accurate. Recommended for geometry optimization.

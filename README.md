@@ -168,13 +168,20 @@ Support claims come in three classes; nothing is implied beyond its class.
     complete cost record (21 actual reference executions across the run).
   - `examples/al_surface_qe_mace/` (17-atom Al(111) slab, bottom two layers
     fixed with FixAtoms): surrogate singlepoint and relaxation, plain
-    reference-only and surrogate-only NVE, and plain checkpoint/resume.
+    reference-only and surrogate-only NVE, plain checkpoint/resume, and —
+    since the refined energy contract — a short adaptive NVE with resume
+    (6 complete steps, 4 of 7 evaluations accepted against the reference,
+    budget 0.15 eV/A, checks at p = 1.0, no violations; 19 actual reference
+    executions).
   Short runs by design: they demonstrate mechanics and accounting, not
-  thermodynamics or speed-ups. Not supported in 0.4.0: **adaptive mode with a
-  metallic (smeared) reference** — such a reference honestly reports a
-  variational free energy, the surrogate reports a potential energy, and the
-  energy-kind contract refuses to mix them at validation time rather than
-  silently degrading. Plain (single-backend) workflows are unaffected.
+  thermodynamics or speed-ups. Adaptive mode with a metallic (smeared)
+  reference is supported when both sides pass the refined contract: each
+  side's reported scalar must be consistent with its own forces — QE's
+  variational free energy was verified against its forces by central
+  finite differences on this slab (residuals <= 3.6e-5 eV/A, tolerance
+  5e-4) — and the reference identity pins the smearing type/width, XC and
+  pseudopotential content. Combinations with an unverified side stay
+  rejected; `unknown` declarations are never treated as verified.
 
 ## The energetic MD loop
 

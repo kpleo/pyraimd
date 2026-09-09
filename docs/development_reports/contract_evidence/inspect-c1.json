@@ -1,0 +1,111 @@
+{
+  "run_id": "al-adaptive-c1",
+  "schema_version": 2,
+  "event_schema_version": 1,
+  "reference_id": "qe-pbe-d3:b5880bfa70564c2d",
+  "n_evaluations": 7,
+  "n_complete_steps": 6,
+  "physical_time_fs": 6.0,
+  "model_id": "mace-mp:/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/contract_al/mace-mpa-0-medium.model:cpu:float64#g0",
+  "n_model_updates": 0,
+  "trajectory": {
+    "n_rows": 7,
+    "last_energy_eV": -9134.782084180346,
+    "last_temperature_K": 288.1129973349058,
+    "n_accepted": 4,
+    "last_step": 5
+  },
+  "checks": {
+    "independent_checks": 4,
+    "accepted_count": 4,
+    "detected_count": 0,
+    "bound": 0.0,
+    "probability": 1.0
+  },
+  "cost": {
+    "total_elapsed_s": 1594.5368515341543,
+    "by": [
+      {
+        "operation": "inference",
+        "purpose": "probe",
+        "count": 12,
+        "elapsed_s": 6.771679229103029,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "inference",
+        "purpose": "proposal",
+        "count": 7,
+        "elapsed_s": 94.32978757983074,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "io",
+        "purpose": "trajectory_append",
+        "count": 7,
+        "elapsed_s": 0.17186181666329503,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "anchor",
+        "count": 1,
+        "elapsed_s": 81.64652057318017,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "probe",
+        "count": 12,
+        "elapsed_s": 940.5043349596672,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "refusal",
+        "count": 2,
+        "elapsed_s": 152.12789989216253,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "verification",
+        "count": 4,
+        "elapsed_s": 319.22782165696844,
+        "failed": 0,
+        "cache_hits": 0
+      }
+    ],
+    "reference": {
+      "logical_requests": 19,
+      "successful_executions": 19,
+      "failed_attempts": 0,
+      "cache_hits": 0,
+      "actual_executions": 19
+    },
+    "counts": {
+      "inference": 19,
+      "training": 0,
+      "io": 7
+    }
+  },
+  "wall_time_s": 517.2129096430726,
+  "last_checkpoint": {
+    "generation": 3,
+    "nsteps": 6,
+    "physical_time_fs": 6.0,
+    "last_event_seq": 99,
+    "valid": true
+  },
+  "failure": null,
+  "events": {
+    "count": 100,
+    "last_seq": 100
+  }
+}
