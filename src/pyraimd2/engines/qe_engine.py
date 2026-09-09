@@ -986,8 +986,10 @@ class QeEngine:
             self._emit_attempt(record, request_id=request_id)
             raise QeEngineError(message, retryable=True) from None
         record["process_s"] = time.perf_counter() - process_t0
-        record["wall_time_s"] = time.perf_counter() - t0
         record["returncode"] = proc.returncode
+        # The stage is fixed before any read that can fail: a failure handler
+        # must never reference an uninitialized phase and mask the real error.
+        phase = "read"
         try:
             text = out_path.read_text(errors="replace")
             phase = "process"
@@ -1016,16 +1018,19 @@ class QeEngine:
             check_qe_run_text(text, len(atoms))
             result = parse_qe_output(text)
         except QeEngineError as error:
+            record["wall_time_s"] = time.perf_counter() - t0
             record.update(status="failed", failure_kind=phase, error=str(error))
             self._emit_attempt(record, request_id=request_id)
             raise
         except Exception as error:
             # The process ran: whatever went wrong afterwards (unreadable
-            # output, OS errors) is still a physical execution — record it.
+            # output, OS errors) is still a physical execution — record it,
+            # with the original error as the cause.
+            record["wall_time_s"] = time.perf_counter() - t0
             record.update(status="failed", failure_kind=phase, error=repr(error))
             self._emit_attempt(record, request_id=request_id)
             raise QeEngineError(
-                f"output processing failed in {attempt_dir}: {error}",
+                f"output {phase} failed in {attempt_dir}: {error}",
                 retryable=True,
             ) from error
 
@@ -1046,12 +1051,14 @@ class QeEngine:
             # The SCF and its parse succeeded; the provenance sidecar did not.
             # The attempt is terminated as post-processing failed — distinct
             # from both — and the label is not delivered without it.
+            record["wall_time_s"] = time.perf_counter() - t0
             record.update(status="post_processing_failed",
                           failure_kind="post_processing", error=repr(error))
             self._emit_attempt(record, request_id=request_id)
             raise QeEngineError(
                 f"density manifest could not be written in {attempt_dir}: {error}"
             ) from error
+        record["wall_time_s"] = time.perf_counter() - t0
         record.update(status="success", error=None)
         self._emit_attempt(record, request_id=request_id)
         return EngineResult(

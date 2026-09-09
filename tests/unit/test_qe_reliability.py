@@ -896,3 +896,40 @@ def test_density_copy_interval_is_nested_inside_the_attempt_span(tmp_path: Path)
     assert attempt["started_unix"] <= io["started_unix"] <= io_end
     assert io_end <= attempt_end + 1e-6  # nested: never a missing interval
     assert attempt["process_elapsed_s"] is not None
+
+
+def test_unreadable_output_is_a_terminal_traceable_failure(tmp_path: Path) -> None:
+    """The fake starts, replaces its stdout path with a directory, writes
+    the fixture into the still-open fd and exits 0. The engine's output
+    read then fails — and the launched attempt must still end in a
+    terminal, traceable state: one launch, one failed attempt event with
+    the read failure as cause, no running record, no UnboundLocalError."""
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        "rm -f pw.out && mkdir pw.out\n"
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                     max_retries=0),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(EngineError) as excinfo:
+            engine.compute(_si(), label="unreadable")
+    assert counter.read_text().strip() == "1"  # exactly one launch
+    error = excinfo.value
+    assert isinstance(error, EngineError)  # contract error, never UnboundLocalError
+    assert "read" in str(error)
+    assert isinstance(error.__cause__, IsADirectoryError)  # cause preserved
+    events = _attempt_events(tmp_path / "run")
+    assert len(events) == 1
+    assert events[0]["status"] == "failed"
+    assert events[0]["failure_kind"] == "read"
+    assert events[0]["error"]  # never an empty error on a terminated attempt
+    record = engine.last_attempt_records[-1]
+    assert record["status"] == "failed" and record["failure_kind"] == "read"
+    assert record["error"] and record["returncode"] == 0
