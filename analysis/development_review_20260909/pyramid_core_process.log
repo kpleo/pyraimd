@@ -1,0 +1,2 @@
+{"case": "cross_process_complete_boundary", "position_momentum_bitwise_equal": true, "draws_equal": true, "repeated_properties_no_new_evaluation": true, "checked_driving_not_replaced": true}
+{"case": "cross_process_pending_rng", "draws": [0.2616121342493164, 0.2616121342493164, 0.2984911434141233], "path": "/tmp/pyramid-core-review-j457hs21/pending"}

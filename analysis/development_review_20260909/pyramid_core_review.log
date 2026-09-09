@@ -1,0 +1,7 @@
+{"case": "pending_rng", "continuous": [0.2616121342493164, 0.2984911434141233, 0.8142257405942803], "path": "/tmp/pyramid-core-review-bw8r99dy/rng-crash", "restored": [0.2616121342493164, 0.2616121342493164, 0.2984911434141233]}
+{"case": "cache_consumed", "consumed": 1, "error": "labels ['r-label-1'] were committed but their consumption state was never persisted; automatic resume stops here as pending", "hits": [[1, "r-label-1"], [2, "r-label-1"]], "path": "/tmp/pyramid-core-review-bw8r99dy/cache-crash"}
+{"case": "db_event_window", "event_label": "r-label-7", "path": "/tmp/pyramid-core-review-bw8r99dy/row-crash", "read_by_step_label": "r-label-6", "rows": [{"db_id": 2, "label_id": "r-label-6"}, {"db_id": 3, "label_id": "r-label-7"}]}
+{"after": {"calls": 1, "k": 0.81}, "after_id": "review-harmonic-v1#g1", "artifact_count": 0, "case": "publish_failure", "model_update_events": 0, "old_id": "review-harmonic-v1#g0", "parent": {"calls": 0, "k": 0.8}, "path": "/tmp/pyramid-core-review-bw8r99dy/publish-failure", "updates": 1}
+{"after": {"calls": 1, "k": 0.81}, "case": "validation_failure", "error": "candidate cannot infer", "n_rejected": 0, "parent": {"calls": 0, "k": 0.8}}
+{"case": "training_structure", "published": true, "seen": [{"cell": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], "charges": [0.0], "magmoms": [0.0], "pbc": [false, false, false]}]}
+ARTIFACT_ROOT /tmp/pyramid-core-review-bw8r99dy

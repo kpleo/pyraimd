@@ -1,0 +1,4 @@
+{"case": "artifact_corrupt", "event_k": 0.81, "loaded": 9.9, "model_id": "review-harmonic-v1#g1", "path": "/tmp/pyramid-core-review-1tw1t4d1/artifact-corrupt", "recorded": 0.81}
+{"after_two": {"deferred_origin": 1, "n_calibrations": 1, "segment": 1}, "case": "tail_recalibration", "final_calibrations_control": 2, "final_calibrations_resumed": 2, "path": "/tmp/pyramid-core-review-1tw1t4d1/tail-recalibration", "probe_executions_control": 8, "probe_executions_resumed": 8}
+{"case": "torn_event_tail", "error": "corrupt event at /tmp/pyramid-core-review-1tw1t4d1/event-tail/events.jsonl:26: Expecting value: line 1 column 39 (char 38)", "has_valid_checkpoint": true, "path": "/tmp/pyramid-core-review-1tw1t4d1/event-tail"}
+{"case": "cache_lost_retraining", "continuous_consumed": 1, "continuous_k": 0.8, "continuous_updates": 0, "path": "/tmp/pyramid-core-review-1tw1t4d1/cache-training", "resumed_consumed": 2, "resumed_k": 0.81, "resumed_updates": 1}

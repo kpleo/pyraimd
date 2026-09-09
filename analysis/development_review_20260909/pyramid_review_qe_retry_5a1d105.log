@@ -1,0 +1,8 @@
+{"case": "environment", "artifacts": "/tmp/pyramid-review-retry-dlxqo2d6"}
+pw.x attempt-1 failed in /tmp/pyramid-review-retry-dlxqo2d6/nc/eval-000000 (pw.x exited with code 1 in /tmp/pyramid-review-retry-dlxqo2d6/nc/eval-000000/attempt-1; tail:); retrying (1/3)
+pw.x attempt-2 failed in /tmp/pyramid-review-retry-dlxqo2d6/nc/eval-000000 (pw.x exited with code 1 in /tmp/pyramid-review-retry-dlxqo2d6/nc/eval-000000/attempt-2; tail:); retrying (2/3)
+pw.x attempt-3 failed in /tmp/pyramid-review-retry-dlxqo2d6/nc/eval-000000 (pw.x exited with code 1 in /tmp/pyramid-review-retry-dlxqo2d6/nc/eval-000000/attempt-3; tail:); retrying (3/3)
+{"case": "nonconvergence_nonzero_exit", "attempts": 4, "retryable": [true, true, true, true], "error": "QeEngineError"}
+pw.x attempt-1 failed in /private/tmp/pyramid-review-retry-dlxqo2d6/run/calculations/eval-000000 (pw.x exited with code 139 in /private/tmp/pyramid-review-retry-dlxqo2d6/run/calculations/eval-000000/attempt-1; tail:); retrying (1/1)
+{"case": "inner_attempts_outer_ledger", "attempt_directories": 2, "task_events": [{"operation": "reference", "attempt": 1, "status": "success"}], "ledger": {"logical_requests": 1, "successful_executions": 1, "failed_attempts": 0, "cache_hits": 0, "actual_executions": 1}}
+{"case": "relative_pseudo_dir", "hash_exists": true, "status": "FAIL", "error_type": "QeEngineError", "error": "pw.x exited with code 1 in runs/eval-000000/attempt-1; tail:\nError in routine read_pseudo: missing pseudo in subprocess cwd"}
