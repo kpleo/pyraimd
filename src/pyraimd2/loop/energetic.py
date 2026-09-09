@@ -858,11 +858,15 @@ class EnergeticCalculator(Calculator):
             # outcome is frozen in this proposal (anchor record, counters);
             # the replayed origin must not trigger it a second time (C4).
             self._deferred_origin = None
-        if proposal.get("segment") is not None:
-            # The recalibration that ran before this uncommitted proposal
-            # advanced these counters but is committed nowhere else.  They
-            # are applied when the rebuilt evaluation commits — exactly once,
-            # and never into a checkpoint written before that commit (C4).
+        if proposal.get("segment") is not None \
+                and self._deferred_record is not None:
+            # A *deferred* recalibration that completed before this proposal
+            # advanced these counters but is committed nowhere else, so the
+            # frozen values restore it when the rebuilt evaluation commits —
+            # exactly once.  Proposals without a deferred calibration (e.g.
+            # the reference route, whose calibration runs later in _finish)
+            # must NOT restore: their frozen counters are older than the
+            # calibration their own commit is about to complete (R6).
             pending_counters = (int(proposal["segment"]),
                                 int(proposal["n_calibrations"]))
         else:
