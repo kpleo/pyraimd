@@ -11,12 +11,18 @@ from pyraimd2.surrogate.base import SurrogateCapabilities, SurrogatePrediction
 
 
 class AseSurrogate:
-    """Model-independent adapter; a single calculator supplies no committee spread."""
+    """Model-independent adapter; a single calculator supplies no committee spread.
+
+    The fingerprint is the wrapped engine's (parameters and model-file
+    content, never just ``calculator.name``); it is None when the calculator
+    state cannot be identified, unless an explicit ``identity`` is given.
+    """
 
     def __init__(self, calculator: Calculator, *, force_consistent: bool = False,
-                 include_stress: bool = False) -> None:
+                 include_stress: bool = False,
+                 identity: str | None = None) -> None:
         self._engine = AseEngine(calculator, force_consistent=force_consistent,
-                                 include_stress=include_stress)
+                                 include_stress=include_stress, identity=identity)
 
     @property
     def capabilities(self) -> SurrogateCapabilities:
@@ -30,8 +36,11 @@ class AseSurrogate:
         )
 
     @property
-    def fingerprint(self) -> str:
-        return f"ase-surrogate:{self._engine.fingerprint}"
+    def fingerprint(self) -> str | None:
+        engine_fingerprint = self._engine.fingerprint
+        if engine_fingerprint is None:
+            return None  # unknown identity, honestly undeclared
+        return f"ase-surrogate:{engine_fingerprint}"
 
     def predict(self, atoms: Atoms) -> SurrogatePrediction:
         result = self._engine.compute(atoms)

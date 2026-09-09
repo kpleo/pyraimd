@@ -402,3 +402,311 @@ def test_density_copy_is_charged_to_the_cost_ledger(tmp_path: Path) -> None:
     assert "first-000000" in task["provenance"]["from"]
     summary = summarize_tasks(events)
     assert summary["counts"]["io"] == 1
+
+
+# --- electronic state: mapped explicitly or rejected before launch --------
+
+
+def test_collinear_spin_mapped_like_the_ase_path(tmp_path: Path) -> None:
+    """Initial magmoms must reach the input: nspin=2, one species per
+    (element, magmom) group, starting_magnetization per species — the same
+    mapping ASE's espresso writer produces for the same Atoms."""
+    atoms = _si()
+    atoms.set_initial_magnetic_moments([1.0, -1.0])
+    out = tmp_path / "pw.in"
+    write_qe_input(out, atoms, QeConfig(pseudo_dir="/pseudo"))
+    text = out.read_text()
+    assert "nspin = 2" in text
+    assert "ntyp = 2" in text
+    assert "starting_magnetization(1) = 1.0" in text
+    assert "starting_magnetization(2) = -1.0" in text
+    species = text.split("ATOMIC_SPECIES\n")[1].split("CELL_PARAMETERS")[0]
+    assert "Si " in species and "Si2 " in species
+    position_lines = [line.strip() for line in
+                      text.split("ATOMIC_POSITIONS angstrom\n")[1].splitlines()]
+    assert position_lines[0].startswith("Si ")
+    assert position_lines[1].startswith("Si2 ")
+
+
+def test_zero_magmoms_keep_single_species(tmp_path: Path) -> None:
+    atoms = _si()
+    atoms.set_initial_magnetic_moments([0.0, 0.0])
+    out = tmp_path / "pw.in"
+    write_qe_input(out, atoms, QeConfig(pseudo_dir="/pseudo"))
+    text = out.read_text()
+    assert "nspin" not in text and "ntyp = 1" in text
+
+
+def test_noncollinear_magmoms_rejected_before_launch(tmp_path: Path) -> None:
+    """An electronic state this input path cannot express must fail before
+    any subprocess, never degrade into a different physical system."""
+    counter = tmp_path / "calls.txt"
+    body = ("#!/bin/bash\n"
+            f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+            f"cat {FIXTURE.resolve()}\n")
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+        run_root=tmp_path / "runs",
+    )
+    atoms = _si()
+    atoms.set_initial_magnetic_moments([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    with pytest.raises(EngineError, match="noncollinear"):
+        engine.compute(atoms, label="nc")
+    assert not counter.exists()  # nothing was ever launched
+
+
+def test_net_charge_mapped_to_tot_charge(tmp_path: Path) -> None:
+    atoms = _si()
+    atoms.set_initial_charges([0.5, -0.25])
+    out = tmp_path / "pw.in"
+    write_qe_input(out, atoms, QeConfig(pseudo_dir="/pseudo"))
+    assert "tot_charge = 0.25" in out.read_text()
+
+
+# --- stricter parser / success contract -------------------------------------
+
+
+def test_duplicate_force_atom_index_rejected(tmp_path: Path) -> None:
+    """A force block repeating atom 1 and skipping atom 2 (right line count,
+    wrong indices) does not describe this system: reject, never relabel."""
+    import re as _re
+
+    text = _re.sub(r"(atom\s+)2(\s+type)", r"\g<1>1\2", FIXTURE.read_text())
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path, f"#!/bin/bash\ncat <<'EOF'\n{text}\nEOF\n"),
+                 max_retries=0),
+        run_root=tmp_path / "runs",
+    )
+    with pytest.raises(EngineError, match="indices"):
+        engine.compute(_si(), label="dup")
+
+
+def test_overflow_stress_rejected_as_engine_error(tmp_path: Path) -> None:
+    """********** overflow markers must fail as an invalid label — never a
+    raw ValueError past the engine boundary."""
+    import re as _re
+
+    text, n = _re.subn(r"(total   stress[^\n]*\n\s*)\S+", r"\g<1>**********",
+                       FIXTURE.read_text(), count=1)
+    assert n == 1
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path, f"#!/bin/bash\ncat <<'EOF'\n{text}\nEOF\n"),
+                 max_retries=0),
+        run_root=tmp_path / "runs",
+    )
+    with pytest.raises(EngineError, match="unparseable|parse"):
+        engine.compute(_si(), label="badstress")
+    assert engine.last_attempt_records[-1]["status"] == "failed"
+
+
+def test_missing_stress_block_rejected(tmp_path: Path) -> None:
+    """tstress is always requested and capabilities declare stress: a
+    completed run without the stress block is incomplete, not stress=None."""
+    text = FIXTURE.read_text()
+    cut = text[: text.index("total   stress  (Ry/bohr**3)")] + "\nJOB DONE.\n"
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path, f"#!/bin/bash\ncat <<'EOF'\n{cut}\nEOF\n"),
+                 max_retries=0),
+        run_root=tmp_path / "runs",
+    )
+    with pytest.raises(EngineError, match="stress block"):
+        engine.compute(_si(), label="nostress")
+
+
+# --- retry classification ----------------------------------------------------
+
+
+def test_nonconvergence_with_nonzero_exit_is_not_retried(tmp_path: Path) -> None:
+    """convergence NOT achieved + exit 1 is still deterministic: the exit
+    code must not reclassify it as transient."""
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        "echo 'convergence NOT achieved after 200 iterations'\n"
+        "exit 1\n"
+    )
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body), max_retries=3),
+        run_root=tmp_path / "runs",
+    )
+    with pytest.raises(EngineError, match="did not converge"):
+        engine.compute(_si(), label="nc")
+    assert counter.read_text().strip() == "1"
+    assert engine.last_attempt_records[0]["retryable"] is False
+
+
+# --- path normalization -------------------------------------------------------
+
+
+def test_relative_pseudo_dir_resolved_once_at_construction(tmp_path: Path,
+                                                           monkeypatch) -> None:
+    """The fingerprint hashes pseudo files in the parent; pw.x reads them in
+    the attempt directory. A relative pseudo_dir must be resolved once, at
+    construction, so both see the same directory."""
+    pseudo_dir = tmp_path / "project" / "pseudos"
+    pseudo_dir.mkdir(parents=True)
+    (pseudo_dir / "Si.UPF").write_text("fake UPF content")
+    reader = (
+        "#!/bin/bash\n"
+        'in=""; while [ $# -gt 0 ]; do '
+        'if [ "$1" = "-in" ]; then in="$2"; shift 2; else shift; fi; done\n'
+        "dir=$(sed -n \"s/.*pseudo_dir = '\\([^']*\\)'.*/\\1/p\" \"$in\")\n"
+        '[ -f "$dir/Si.UPF" ] || { echo "pseudo unreadable in subprocess"; exit 9; }\n'
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    monkeypatch.chdir(tmp_path / "project")
+    engine = QeEngine(
+        QeConfig(pseudo_dir="pseudos", pseudos={"Si": "Si.UPF"},
+                 pw_cmd=_fake_pwx(tmp_path / "fake", reader)),
+        run_root=tmp_path / "runs",
+    )
+    assert Path(engine.config.pseudo_dir).is_absolute()
+    result = engine.compute(_si(), label="rel")
+    assert result.forces.shape == (2, 3)
+    # The hashed identity and the launched input point at the same files.
+    assert pseudo_identities(engine.config)["Si"]["sha256"] is not None
+    pw_in = next((tmp_path / "runs").glob("rel-*/attempt-1/pw.in"))
+    assert str(pseudo_dir.resolve()) in pw_in.read_text()
+
+
+# --- attempt events: every real launch, nothing pre-launch --------------------
+
+
+def _attempt_events(log_dir: Path) -> list[dict]:
+    with EventLog(log_dir) as log:
+        return [e for e in log.iter_events() if e.get("type") == "attempt"]
+
+
+def test_attempt_event_per_real_launch_grouped_by_request(tmp_path: Path) -> None:
+    """First attempt fails transiently, second succeeds: two physical
+    executions under one logical request (ledger raw material: actual=2,
+    failed=1 alongside the workflow's logical span=1)."""
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        'if [ "$n" -eq 1 ]; then echo "launcher hiccup"; exit 139; fi\n'
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                     max_retries=1),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        result = engine.compute(_si(), label="flaky", request_id="run-task-7")
+    events = _attempt_events(tmp_path / "run")
+    assert len(events) == 2
+    assert [e["status"] for e in events] == ["failed", "success"]
+    assert {e["request_id"] for e in events} == {"run-task-7"}
+    assert [e["attempt"] for e in events] == [1, 2]
+    assert all(e["record"] == "physical_attempt" for e in events)
+    assert events[0]["returncode"] == 139
+    assert all(e["elapsed_s"] is not None and e["elapsed_s"] >= 0 for e in events)
+    assert events[0]["error"] and events[1]["error"] is None
+    # wall_time_s is the physical total across attempts, not only the last.
+    total = sum(e["elapsed_s"] for e in events)
+    assert result.wall_time_s == pytest.approx(total, rel=1e-6)
+
+
+def test_pre_launch_rejection_emits_no_attempt_event(tmp_path: Path) -> None:
+    """A failure rejected before any process starts (unknown species here)
+    is not a physical execution and must not be counted as one."""
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo", pseudos={"Si": "Si.UPF"},
+                     pw_cmd=_fake_pwx(tmp_path, _fixture_cat())),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(EngineError, match="no pseudopotential"):
+            engine.compute(Atoms("O2", positions=[[0, 0, 0], [0, 0, 1.2]],
+                                 cell=[8.0] * 3, pbc=True))
+    assert _attempt_events(tmp_path / "run") == []
+    assert engine.last_attempt_records[-1]["status"] == "failed"
+
+
+def test_density_io_event_carries_request_and_nesting_marker(tmp_path: Path) -> None:
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo",
+                     pw_cmd=_fake_pwx(tmp_path, _fixture_cat_with_save()),
+                     startpot_file=True),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        engine.compute(_si(), label="first")
+        engine.compute(_si(), label="second")
+    with EventLog(tmp_path / "run") as log:
+        events = list(log.iter_events())
+    io_events = [e for e in events if e.get("type") == "task"
+                 and e.get("purpose") == "density_copy"]
+    assert len(io_events) == 1
+    assert io_events[0]["record"] == "physical_io"
+    assert io_events[0]["request_id"]
+    attempts = [e for e in events if e.get("type") == "attempt"]
+    assert len(attempts) == 2
+    # The io event is nested inside the second attempt's request span.
+    assert io_events[0]["request_id"] == attempts[1]["request_id"]
+
+
+def test_failed_attempt_record_never_left_running(tmp_path: Path) -> None:
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path, "#!/bin/bash\necho garbage; exit 3\n"),
+                 max_retries=0),
+        run_root=tmp_path / "runs",
+    )
+    with pytest.raises(EngineError):
+        engine.compute(_si(), label="x")
+    record = engine.last_attempt_records[-1]
+    assert record["status"] == "failed" and record["error"]
+
+
+def test_logical_vs_physical_aggregation_convention(tmp_path: Path) -> None:
+    """The ledger contract the core consumer aggregates: outer task spans
+    (type "task", operation "reference") are logical requests; engine
+    attempt events (type "attempt", record "physical_attempt") are physical
+    executions. Fail-then-succeed must read logical=1, actual=2, failed=1 —
+    the engine emits exactly the raw material for it."""
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        'if [ "$n" -eq 1 ]; then echo "launcher hiccup"; exit 139; fi\n'
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                     max_retries=1),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        # What a workflow does around one logical request (outer span).
+        started = time.time()
+        result = engine.compute(_si(), label="x", request_id="run-task-1")
+        log.append("task", {
+            "task_id": "run-task-1", "attempt": 1, "operation": "reference",
+            "purpose": "singlepoint", "status": "success",
+            "started_unix": started, "elapsed_s": 0.0,
+            "cpu_cores": None, "gpu": None, "queue_s": None,
+            "source": "workflow", "evaluation_id": 0,
+            "label_id": None, "cache_hit": False})
+    with EventLog(tmp_path / "run") as log:
+        events = list(log.iter_events())
+    logical = [e for e in events if e.get("type") == "task"
+               and e.get("operation") == "reference"]
+    physical = [e for e in events if e.get("type") == "attempt"
+                and e.get("record") == "physical_attempt"]
+    assert len(logical) == 1
+    assert len(physical) == 2
+    assert sum(e["status"] == "failed" for e in physical) == 1
+    assert all(e["request_id"] == logical[0]["task_id"] for e in physical)
+    assert result.wall_time_s == pytest.approx(
+        sum(e["elapsed_s"] for e in physical), rel=1e-6)
