@@ -27,24 +27,38 @@ forces differentiate. Without smearing that is the total energy
 variational free energy, so a metallic config declares
 ``energy_kind="free_energy"`` — both are force-consistent.
 
+Electronic state is mapped, never silently dropped: collinear initial
+magnetic moments turn on ``nspin = 2`` with one species per
+(element, magmom) group (ASE's mapping, raw ``starting_magnetization``
+values for QE >= 7.3); a nonzero net charge becomes ``tot_charge``;
+noncollinear moments are rejected before launch.
+
 SCF success is a combination, never the returncode alone: exit code 0,
 the ``JOB DONE.`` marker present, no ``convergence NOT achieved`` marker,
-and a complete parse (energy + full force block, right atom count, finite
-values). Output is parsed from the pw.x stdout text: the
-``! total energy`` (Ry) of the last complete SCF block, the ``Forces
+no QE ``Error in routine`` banner, and a complete parse (energy + ordered
+1..nat force block + full finite stress block — tstress is always
+requested). Both QE adapters clear exactly this bar
+(:func:`check_qe_run_text`). Output is parsed from the pw.x stdout text:
+the ``! total energy`` (Ry) of the last complete SCF block, the ``Forces
 acting on atoms`` block (Ry/bohr) that follows it, and the 3x3 stress
 block (Ry/bohr^3) after that — energy, forces and stress always come from
 the same block, never mixed across blocks. Fortran ``D`` exponents are
-converted.
+converted, and overflow markers (``**********``) fail as invalid labels.
 
-Retries are bounded (``max_retries``) and classified: timeouts, crashes
-and truncated output are retryable; deterministic input problems (missing
-pseudopotential, singular cell, a QE ``Error in routine`` banner) and SCF
-non-convergence of an identical input are not — rerunning them would only
-burn cost. A failed chained-density start always gets its single
+Retries are bounded (``max_retries``) and classified from the output
+first: SCF non-convergence and QE error banners are deterministic — never
+retried, whatever the exit code; timeouts, crashes and truncated output
+are retryable. A failed chained-density start always gets its single
 atomic-start retry (different input), as before. On timeout the whole
 process group is killed (``start_new_session`` + ``killpg``), so an
 mpirun-wrapped pw.x leaves no orphaned ranks behind.
+
+Cost recording: with an event log attached, every real subprocess launch
+emits one ``attempt`` event (grouped by ``request_id``; failures rejected
+before launch emit none), and ``EngineResult.wall_time_s`` is the physical
+total across attempts. Density-copy I/O is emitted as ``task`` events with
+``record="physical_io"``; its time is nested inside the attempt span and
+must not be summed on top.
 
 Density warm start (``startpot_file=True``): before launch the engine
 looks for a compatible density of known origin — ``density_source`` first,
@@ -111,7 +125,7 @@ DEFAULT_PSEUDOS: dict[str, str] = {
 
 _ENERGY_RE = re.compile(r"^!\s+total energy\s+=\s+([-+0-9.EeDd]+)\s+Ry", re.MULTILINE)
 _FORCE_LINE_RE = re.compile(
-    r"^\s*atom\s+\d+\s+type\s+\d+\s+force\s*=\s*"
+    r"^\s*atom\s+(\d+)\s+type\s+\d+\s+force\s*=\s*"
     r"([-+0-9.EeDd]+)\s+([-+0-9.EeDd]+)\s+([-+0-9.EeDd]+)\s*$"
 )
 
@@ -131,6 +145,18 @@ _DISPERSION_SLUGS = {
 def _to_float(token: str) -> float:
     """Parse a QE number, accepting Fortran ``D``/``d`` exponents."""
     return float(token.replace("D", "E").replace("d", "e"))
+
+
+def _qe_float(token: str, what: str) -> float:
+    """:func:`_to_float` that reports unparseable fields as EngineError.
+
+    Overflow markers (``**********``) must fail as an invalid label, never
+    leak a raw ValueError past the engine boundary.
+    """
+    try:
+        return _to_float(token)
+    except ValueError:
+        raise EngineError(f"pw.x printed an unparseable {what}: {token!r}") from None
 
 
 def valence_from_upf(path: Path) -> float:
@@ -198,6 +224,62 @@ def _species(atoms: Atoms) -> list[str]:
     return list(seen)
 
 
+def _initial_magmoms(atoms: Atoms) -> np.ndarray | None:
+    """Collinear initial magnetic moments, or None when unset/all zero.
+
+    Noncollinear moments (an (N, 3) array) describe an electronic state this
+    fixed input path does not map; they are rejected before launch rather
+    than silently dropped.
+    """
+    if not atoms.has("initial_magmoms"):
+        return None
+    magmoms = np.asarray(atoms.get_initial_magnetic_moments())
+    if magmoms.ndim != 1:
+        raise QeEngineError(
+            "noncollinear initial magnetic moments are not supported by this "
+            "input path (nspin=4/noncolin); use a backend that maps them"
+        )
+    if not np.isfinite(magmoms).all():
+        raise QeEngineError("initial magnetic moments must be finite")
+    if not np.any(magmoms):
+        return None
+    return magmoms
+
+
+def _total_charge(atoms: Atoms) -> float:
+    """Net initial charge; QE expresses exactly this as ``tot_charge``."""
+    if not atoms.has("initial_charges"):
+        return 0.0
+    charges = np.asarray(atoms.get_initial_charges(), dtype=float)
+    if not np.isfinite(charges).all():
+        raise QeEngineError("initial charges must be finite")
+    return float(charges.sum())
+
+
+def _species_groups(atoms: Atoms) -> tuple[list[tuple[str, str, float | None]], list[str]]:
+    """(label, element, magmom) groups plus the per-atom label list.
+
+    Without spin there is one group per element (label = symbol). With
+    collinear spin, atoms are grouped by (element, magmom) — the same
+    mapping ASE's espresso writer uses — and the second and later groups of
+    an element get a numeric suffix (Si, Si2, ...).
+    """
+    magmoms = _initial_magmoms(atoms)
+    symbols = atoms.get_chemical_symbols()
+    groups: list[tuple[str, str, float | None]] = []
+    key_to_label: dict[tuple[str, float | None], str] = {}
+    for index, sym in enumerate(symbols):
+        mag = None if magmoms is None else float(magmoms[index])
+        key = (sym, mag)
+        if key not in key_to_label:
+            same_element = sum(1 for _, element, _ in groups if element == sym)
+            label = sym if same_element == 0 else f"{sym}{same_element + 1}"
+            key_to_label[key] = label
+            groups.append((label, sym, mag))
+    return groups, [key_to_label[(sym, None if magmoms is None else float(magmoms[i]))]
+                    for i, sym in enumerate(symbols)]
+
+
 def recipe_name(config: QeConfig) -> str:
     """``qe-<xc>[-<dispersion>]``: the engine name, stating the recipe."""
     name = f"qe-{config.xc.lower()}"
@@ -208,27 +290,44 @@ def recipe_name(config: QeConfig) -> str:
 
 
 def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
-    """Write the configured pw.x scf input for ``atoms`` (ibrav=0, explicit cell)."""
-    species = _species(atoms)
-    missing = [s for s in species if s not in cfg.pseudos]
+    """Write the configured pw.x scf input for ``atoms`` (ibrav=0, explicit cell).
+
+    Electronic state is mapped explicitly, never dropped: collinear initial
+    magnetic moments turn on ``nspin = 2`` with one species per
+    (element, magmom) group and ``starting_magnetization`` per species (raw
+    magmom values, the QE >= 7.3 convention ASE's writer also uses); a
+    nonzero net charge becomes ``tot_charge``. Noncollinear moments are
+    rejected by :func:`_initial_magmoms` before this input exists.
+    """
+    groups, atom_labels = _species_groups(atoms)
+    missing = [element for _, element, _ in groups if element not in cfg.pseudos]
     if missing:
         raise QeEngineError(f"no pseudopotential configured for species: {missing}")
     if abs(np.linalg.det(atoms.cell)) < 1e-8:
         raise QeEngineError("QeEngine requires a non-singular cell (ibrav=0)")
+    total_charge = _total_charge(atoms)
+    spin_polarized = any(mag is not None for _, _, mag in groups)
 
     lines: list[str] = []
     lines.append("&CONTROL\n")
     lines.append(f"  calculation = 'scf'\n  prefix = '{QE_PREFIX}'\n")
-    lines.append(f"  pseudo_dir = '{cfg.pseudo_dir}'\n  outdir = './tmp'\n")
+    lines.append(f"  pseudo_dir = '{Path(cfg.pseudo_dir).expanduser().resolve()}'\n")
+    lines.append("  outdir = './tmp'\n")
     lines.append("  tprnfor = .true.\n  tstress = .true.\n/\n")
     lines.append("&SYSTEM\n  ibrav = 0\n")
-    lines.append(f"  nat = {len(atoms)}\n  ntyp = {len(species)}\n")
+    lines.append(f"  nat = {len(atoms)}\n  ntyp = {len(groups)}\n")
     lines.append(f"  ecutwfc = {cfg.ecutwfc}\n  ecutrho = {cfg.ecutrho}\n")
     lines.append(f"  input_dft = '{cfg.xc}'\n")
     if cfg.dispersion is not None:
         lines.append(f"  vdw_corr = '{cfg.dispersion}'\n")
     if cfg.nbnd is not None:
         lines.append(f"  nbnd = {cfg.nbnd}\n")
+    if spin_polarized:
+        lines.append("  nspin = 2\n")
+        for sidx, (_, _, mag) in enumerate(groups, start=1):
+            lines.append(f"  starting_magnetization({sidx}) = {mag}\n")
+    if total_charge != 0.0:
+        lines.append(f"  tot_charge = {total_charge}\n")
     if cfg.metallic:
         lines.append(
             f"  occupations = 'smearing'\n  smearing = '{cfg.smearing}'\n  degauss = {cfg.degauss}\n"
@@ -245,26 +344,26 @@ def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
         lines.append("  startingpot = 'file'\n")
     lines.append(f"  electron_maxstep = {cfg.electron_maxstep}\n/\n")
     lines.append("ATOMIC_SPECIES\n")
-    pseudo_dir = Path(cfg.pseudo_dir).resolve()
-    for sym in species:
-        mass = atomic_masses[chemical_symbols.index(sym)]
+    pseudo_dir = Path(cfg.pseudo_dir).expanduser().resolve()
+    for label, element, _ in groups:
+        mass = atomic_masses[chemical_symbols.index(element)]
         # Pseudopotentials inside pseudo_dir are named by basename: QE parses
         # ATOMIC_SPECIES lines with a limited buffer, and a long absolute
         # path silently truncates into an unreadable pseudo filename.
-        pseudo_path = Path(cfg.pseudos[sym])
+        pseudo_path = Path(cfg.pseudos[element])
         try:
             filename = (str(pseudo_path.name)
                         if pseudo_path.parent.resolve() == pseudo_dir
                         else str(pseudo_path))
         except OSError:
             filename = str(pseudo_path)
-        lines.append(f"  {sym} {mass:.4f} {filename}\n")
+        lines.append(f"  {label} {mass:.4f} {filename}\n")
     lines.append("CELL_PARAMETERS angstrom\n")
     for row in atoms.cell:
         lines.append(f"  {row[0]:.10f} {row[1]:.10f} {row[2]:.10f}\n")
     lines.append("ATOMIC_POSITIONS angstrom\n")
-    for sym, pos in zip(atoms.get_chemical_symbols(), atoms.positions):
-        lines.append(f"  {sym} {pos[0]:.10f} {pos[1]:.10f} {pos[2]:.10f}\n")
+    for label, pos in zip(atom_labels, atoms.positions):
+        lines.append(f"  {label} {pos[0]:.10f} {pos[1]:.10f} {pos[2]:.10f}\n")
     if cfg.kpts is None:
         lines.append("K_POINTS gamma\n")
     else:
@@ -283,7 +382,7 @@ def parse_qe_output(text: str) -> EngineResult:
     energies = list(_ENERGY_RE.finditer(text))
     if not energies:
         raise EngineError("pw.x output has no '! total energy' line (SCF never finished?)")
-    energy_ev = _to_float(energies[-1].group(1)) * RY_EV
+    energy_ev = _qe_float(energies[-1].group(1), "total energy") * RY_EV
     if not np.isfinite(energy_ev):
         raise EngineError("pw.x reported a non-finite total energy")
 
@@ -293,14 +392,23 @@ def parse_qe_output(text: str) -> EngineResult:
             "pw.x output has no force block after the last energy (tprnfor missing?)"
         )
     rows: list[list[float]] = []
+    indices: list[int] = []
     for line in text[block_start:].splitlines()[1:]:
         match = _FORCE_LINE_RE.match(line)
         if match:
-            rows.append([_to_float(component) for component in match.groups()])
+            indices.append(int(match.group(1)))
+            rows.append([_qe_float(component, "force component")
+                         for component in match.groups()[1:]])
         elif rows:
             break  # end of the contiguous atom block
     if not rows:
         raise EngineError("pw.x force block after the last energy is empty")
+    # QE numbers force lines 1..nat in order; a duplicated or skipped index
+    # means the block does not describe this system one-to-one.
+    if indices != list(range(1, len(rows) + 1)):
+        raise EngineError(
+            f"pw.x force block atom indices are not 1..{len(rows)} in order: {indices}"
+        )
     forces_ry_bohr = np.array(rows)
     if not np.isfinite(forces_ry_bohr).all():
         raise EngineError("pw.x reported non-finite forces")
@@ -314,7 +422,9 @@ def parse_qe_output(text: str) -> EngineResult:
         for line in text[idx:].splitlines()[1:4]:
             parts = line.split()
             if len(parts) >= 3:
-                stress_rows.append([_to_float(parts[0]), _to_float(parts[1]), _to_float(parts[2])])
+                stress_rows.append([_qe_float(parts[0], "stress component"),
+                                    _qe_float(parts[1], "stress component"),
+                                    _qe_float(parts[2], "stress component")])
         if len(stress_rows) == 3:
             s = np.array(stress_rows)  # QE compression-positive, Ry/bohr^3
             if not np.isfinite(s).all():
@@ -400,6 +510,103 @@ def _settings_digest(config: QeConfig, *, path_kind: str) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def normalize_config_paths(config: QeConfig) -> QeConfig:
+    """Resolve path inputs against the construction-time cwd.
+
+    ``pseudo_dir`` is hashed by the parent process but read by pw.x in the
+    attempt directory; a relative value must be resolved once, at engine
+    construction, so the fingerprint and the subprocess see the same
+    directory. Both QE adapters normalize through this one helper.
+    """
+    updates: dict[str, str] = {
+        "pseudo_dir": str(Path(config.pseudo_dir).expanduser().resolve())
+    }
+    if config.density_source is not None:
+        updates["density_source"] = str(
+            Path(config.density_source).expanduser().resolve()
+        )
+    return dataclasses.replace(config, **updates)
+
+
+def allocate_run_dir(run_root: Path, base: str) -> Path:
+    """Atomically claim the next free ``<base>-NNNNNN`` directory.
+
+    The numbering scans the run root, so a fresh instance or process
+    (resume, a second workflow) continues instead of colliding; the mkdir
+    itself is the atomic claim — on a race the scan repeats. Shared by both
+    QE adapters.
+    """
+    run_root.mkdir(parents=True, exist_ok=True)
+    while True:
+        taken = []
+        for path in run_root.iterdir():
+            if not path.is_dir():
+                continue
+            head, _, tail = path.name.rpartition("-")
+            if head and tail.isdigit():
+                taken.append(int(tail))
+        directory = run_root / f"{base}-{max(taken, default=-1) + 1:06d}"
+        try:
+            directory.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        return directory
+
+
+def classify_qe_failure_text(text: str) -> str | None:
+    """Deterministic-failure marker in pw.x output, or None.
+
+    "nonconverged" and "input_error" never benefit from a rerun of the same
+    input; anything else (crash, truncation, launcher failure) may be
+    transient. Both QE adapters classify with this one function.
+    """
+    if "convergence NOT achieved" in text:
+        return "nonconverged"
+    if _QE_ERROR_BANNER_RE.search(text) is not None:
+        return "input_error"
+    return None
+
+
+def check_qe_run_text(text: str, nat: int, *, require_stress: bool = True) -> None:
+    """The shared QE success contract, applied to one run's stdout text.
+
+    Both QE adapters must clear exactly this bar before a label exists:
+    completion marker, no non-convergence marker, no QE error banner, and a
+    complete parse — energy, an ordered 1..nat force block and (stress is
+    always requested on these paths) a full finite stress block. Raises
+    :class:`QeEngineError` with the retry classification of the failure.
+    """
+    kind = classify_qe_failure_text(text)
+    if kind == "nonconverged":
+        # Identical input converges identically: rerunning only burns cost.
+        raise QeEngineError("pw.x SCF did not converge")
+    if kind == "input_error":
+        # A QE error banner is a deterministic input/physics problem.
+        raise QeEngineError("pw.x reported a deterministic input error "
+                            "(Error in routine banner)")
+    if "JOB DONE." not in text:
+        # No completion marker means truncated output (killed job, full
+        # disk), however the process exited: not a valid label.
+        raise QeEngineError("pw.x output has no JOB DONE. marker; output incomplete",
+                            retryable=True)
+    try:
+        result = parse_qe_output(text)
+    except EngineError as error:
+        raise QeEngineError(f"pw.x output did not parse completely: {error}",
+                            retryable=True) from error
+    if result.forces.shape != (nat, 3):
+        raise QeEngineError(
+            f"parsed force shape {result.forces.shape} != ({nat}, 3)"
+        )
+    if require_stress and result.stress is None:
+        # tstress is always requested on these paths and capabilities declare
+        # stress: a completed run without the stress block is incomplete.
+        raise QeEngineError(
+            "pw.x completed without a stress block although tstress was "
+            "requested; the declared stress capability cannot be honored"
+        )
+
+
 @dataclass(frozen=True)
 class DensitySource:
     """A verified density artifact of known origin, ready to be copied."""
@@ -450,24 +657,82 @@ def load_density_source(origin_dir: Path, *, engine: QeEngine,
     return DensitySource(origin_dir=origin_dir, save_dir=save_dir, manifest=manifest), ""
 
 
+def _stage_density_into(density: DensitySource, attempt_dir: Path, *,
+                        event_log: object | None, request_id: str,
+                        io_counter: int) -> tuple[float, int]:
+    """Copy the verified .save tree into an attempt's writable outdir.
+
+    The source stays read-only by convention: two computations never share
+    one writable .save. Returns (elapsed_s, bytes_copied); when an event log
+    is attached the copy is recorded as an io task event (``record"=
+    "physical_io"``) whose time is nested inside the attempt span — consumers
+    must not add both. Shared by both QE adapters.
+    """
+    destination = attempt_dir / "tmp" / f"{QE_PREFIX}.save"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    started_unix = time.time()
+    t0 = time.perf_counter()
+    shutil.copytree(density.save_dir, destination)
+    elapsed = time.perf_counter() - t0
+    nbytes = sum(
+        f.stat().st_size for f in destination.rglob("*") if f.is_file()
+    )
+    if event_log is not None:
+        event_log.append(
+            "task",
+            {
+                "task_id": f"{request_id}-io-{io_counter}",
+                "attempt": 1,
+                "operation": "io",
+                "purpose": "density_copy",
+                "record": "physical_io",
+                "request_id": request_id,
+                "status": "success",
+                "evaluation_id": None,
+                "started_unix": started_unix,
+                "elapsed_s": elapsed,
+                "cpu_cores": None,
+                "gpu": None,
+                "queue_s": None,
+                "source": "qe-engine",
+                "provenance": {
+                    "from": str(density.origin_dir),
+                    "from_fingerprint": density.manifest.get("reference_fingerprint"),
+                    "to": str(destination),
+                    "bytes": nbytes,
+                },
+            },
+        )
+    return elapsed, nbytes
+
+
 class QeEngine:
     """Periodic DFT labels from Quantum ESPRESSO pw.x (Engine protocol).
 
     ``event_log`` is optional: any object with ``append(event_type, payload)``
-    following the WP02 task-event schema. When attached, density-copy I/O is
-    recorded as ``io`` task events (origin/destination/bytes in the
-    ``provenance`` field); the engine only calls the interface, it does not
-    depend on the runtime package.
+    following the run event schema. When attached, every real subprocess
+    launch is emitted as one ``attempt`` event (fields: ``request_id``,
+    ``attempt``, ``status``, ``started_unix``, ``elapsed_s``, ``returncode``,
+    ``directory``, ``start``, optional ``error``) and density-copy I/O as
+    ``task`` events with ``record="physical_io"`` — the engine only calls the
+    interface, it does not depend on the runtime package. Failures rejected
+    before a process starts (input validation, staging) emit no attempt
+    event: they are not physical executions. ``compute`` accepts an optional
+    ``request_id`` naming the parent logical request; without one the engine
+    generates its own so attempts stay grouped per call.
     """
 
     def __init__(self, config: QeConfig, run_root: str | Path, *,
                  event_log: object | None = None) -> None:
-        self.config = config
+        # Path inputs are fixed against the construction-time cwd: the
+        # fingerprint and the subprocess must resolve the same files.
+        self.config = normalize_config_paths(config)
         self.run_root = Path(run_root)
         self.run_root.mkdir(parents=True, exist_ok=True)
         self._event_log = event_log
         self._last_density_dir: Path | None = None
         self._io_counter = 0
+        self._request_counter = 0
         self.last_attempt_records: list[dict] = []
         self.last_density_decision: dict | None = None
 
@@ -493,23 +758,39 @@ class QeEngine:
         digest = _settings_digest(self.config, path_kind="qe-subprocess")
         return f"{self.name}:{digest}"
 
-    def _next_call_index(self) -> int:
-        """Next free ``*-NNNNNN`` index on this run root: a fresh process
-        (resume, a second workflow call) continues the global numbering
-        instead of colliding with earlier attempts sharing the run root."""
-        suffixes = []
-        for path in self.run_root.iterdir():
-            if not path.is_dir():
-                continue
-            head, _, tail = path.name.rpartition("-")
-            if head and tail.isdigit():
-                suffixes.append(int(tail))
-        return max(suffixes, default=-1) + 1
+    def _emit_attempt(self, record: dict, *, request_id: str,
+                      started_unix: float, returncode: int | None) -> None:
+        """One event per real process launch (R6): the ledger's physical
+        executions, grouped under the parent logical request."""
+        if self._event_log is None:
+            return
+        self._event_log.append(
+            "attempt",
+            {
+                "record": "physical_attempt",
+                "operation": "reference",
+                "purpose": "scf",
+                "request_id": request_id,
+                "attempt": record["attempt"],
+                "status": record["status"],
+                "started_unix": started_unix,
+                "elapsed_s": record.get("wall_time_s"),
+                "returncode": returncode,
+                "directory": record["directory"],
+                "start": record["start"],
+                "source": "qe-engine",
+                "error": record.get("error"),
+            },
+        )
 
-    def compute(self, atoms: Atoms, label: str | None = None) -> EngineResult:
+    def compute(self, atoms: Atoms, label: str | None = None, *,
+                request_id: str | None = None) -> EngineResult:
         base = "eval" if label is None else str(label).replace("/", "_")
-        run_dir = self.run_root / f"{base}-{self._next_call_index():06d}"
+        run_dir = allocate_run_dir(self.run_root, base)
         self.last_attempt_records = []
+        if request_id is None:
+            self._request_counter += 1
+            request_id = f"qe-request-{self._request_counter}"
 
         density: DensitySource | None = None
         if self.config.startpot_file:
@@ -530,6 +811,7 @@ class QeEngine:
                 result = self._attempt(
                     atoms, run_dir / f"attempt-{attempt}", attempt_config,
                     density=density if use_density else None,
+                    request_id=request_id,
                 )
             except QeEngineError as error:
                 record = self.last_attempt_records[-1]
@@ -560,10 +842,25 @@ class QeEngine:
                         flush=True,
                     )
                 continue
+            except Exception:
+                # Never leave an attempt record "running", whatever failed.
+                self.last_attempt_records[-1].update(status="failed", retryable=False)
+                raise
             record = self.last_attempt_records[-1]
             record.update(status="success", error=None, retryable=None)
             self._last_density_dir = run_dir / f"attempt-{attempt}"
-            return result
+            # wall_time_s is the physical total of this call: every attempt,
+            # not only the last successful one.
+            total_wall = sum(r.get("wall_time_s", 0.0)
+                             for r in self.last_attempt_records)
+            return EngineResult(
+                energy=result.energy,
+                forces=result.forces,
+                stress=result.stress,
+                wall_time_s=total_wall,
+                energy_kind=result.energy_kind,
+                force_consistent=result.force_consistent,
+            )
 
     def _resolve_density(self, atoms: Atoms) -> DensitySource | None:
         """Pick a compatible known-origin density, or decide atomic up front."""
@@ -588,7 +885,8 @@ class QeEngine:
         return None
 
     def _attempt(self, atoms: Atoms, attempt_dir: Path, config: QeConfig, *,
-                 density: DensitySource | None = None) -> EngineResult:
+                 density: DensitySource | None = None,
+                 request_id: str) -> EngineResult:
         attempt_dir.mkdir(parents=True, exist_ok=False)
         record: dict = {
             "attempt": len(self.last_attempt_records) + 1,
@@ -603,7 +901,9 @@ class QeEngine:
         copy_elapsed_s = 0.0
         copy_bytes = 0
         if density is not None:
-            copy_elapsed_s, copy_bytes = self._stage_density(density, attempt_dir)
+            copy_elapsed_s, copy_bytes = self._stage_density(
+                density, attempt_dir, request_id=request_id
+            )
             record["density_from"] = str(density.origin_dir)
             record["density_copy_s"] = copy_elapsed_s
             record["density_copy_bytes"] = copy_bytes
@@ -614,6 +914,7 @@ class QeEngine:
         out_path = (attempt_dir / "pw.out").resolve()
         write_qe_input(in_path, atoms, config)
 
+        started_unix = time.time()
         t0 = time.perf_counter()
         with out_path.open("w") as fh:
             proc = subprocess.Popen(
@@ -627,43 +928,56 @@ class QeEngine:
                 proc.wait(timeout=config.timeout_s)
             except subprocess.TimeoutExpired:
                 self._kill_process_group(proc)
-                raise QeEngineError(
-                    f"pw.x timed out after {config.timeout_s:.0f}s in {attempt_dir}; "
-                    "process group killed",
-                    retryable=True,
-                ) from None
+                record["wall_time_s"] = time.perf_counter() - t0
+                message = (f"pw.x timed out after {config.timeout_s:.0f}s in "
+                           f"{attempt_dir}; process group killed")
+                record.update(status="failed", error=message)
+                self._emit_attempt(record, request_id=request_id,
+                                   started_unix=started_unix, returncode=None)
+                raise QeEngineError(message, retryable=True) from None
         wall = time.perf_counter() - t0
-        text = out_path.read_text(errors="replace")
-        if proc.returncode != 0:
-            raise QeEngineError(
-                f"pw.x exited with code {proc.returncode} in {attempt_dir}; tail:\n"
-                + "\n".join(text.splitlines()[-15:]),
-                # A QE error banner is a deterministic input/physics problem;
-                # anything else (segfault, launcher failure) may be transient.
-                retryable=_QE_ERROR_BANNER_RE.search(text) is None,
-            )
-        if "convergence NOT achieved" in text:
-            # Identical input converges identically: rerunning only burns cost.
-            raise QeEngineError(f"pw.x SCF did not converge in {attempt_dir}")
-        if "JOB DONE." not in text:
-            # Exit 0 without the completion marker means the output is
-            # truncated (killed job, full disk): not a valid label.
-            raise QeEngineError(
-                f"pw.x in {attempt_dir} exited cleanly but has no JOB DONE. "
-                "marker; output incomplete",
-                retryable=True,
-            )
+        record["wall_time_s"] = wall
+        returncode = proc.returncode
         try:
+            text = out_path.read_text(errors="replace")
+            if returncode != 0:
+                # Classify from the output first: a deterministic failure
+                # (non-convergence, QE error banner) must not be retried just
+                # because the process also exited nonzero.
+                kind = classify_qe_failure_text(text)
+                if kind == "nonconverged":
+                    raise QeEngineError(
+                        f"pw.x SCF did not converge in {attempt_dir} "
+                        f"(exit code {returncode})"
+                    )
+                if kind == "input_error":
+                    raise QeEngineError(
+                        f"pw.x exited with code {returncode} in {attempt_dir} after a "
+                        "deterministic input error; tail:\n"
+                        + "\n".join(text.splitlines()[-15:])
+                    )
+                raise QeEngineError(
+                    f"pw.x exited with code {returncode} in {attempt_dir}; tail:\n"
+                    + "\n".join(text.splitlines()[-15:]),
+                    retryable=True,
+                )
+            check_qe_run_text(text, len(atoms))
             result = parse_qe_output(text)
-        except EngineError as error:
+        except QeEngineError as error:
+            record.update(status="failed", error=str(error))
+            self._emit_attempt(record, request_id=request_id,
+                               started_unix=started_unix, returncode=returncode)
+            raise
+        except Exception as error:
+            # The process ran: whatever went wrong afterwards (unreadable
+            # output, OS errors) is still a physical execution — record it.
+            record.update(status="failed", error=repr(error))
+            self._emit_attempt(record, request_id=request_id,
+                               started_unix=started_unix, returncode=returncode)
             raise QeEngineError(
-                f"pw.x output in {attempt_dir} did not parse completely: {error}",
+                f"post-execution processing failed in {attempt_dir}: {error}",
                 retryable=True,
             ) from error
-        if result.forces.shape != (len(atoms), 3):
-            raise QeEngineError(
-                f"parsed force shape {result.forces.shape} != ({len(atoms)}, 3)"
-            )
 
         write_density_manifest(
             attempt_dir, engine=self, atoms=atoms,
@@ -677,7 +991,9 @@ class QeEngine:
                 }
             ),
         )
-        record["wall_time_s"] = wall
+        record.update(status="success", error=None)
+        self._emit_attempt(record, request_id=request_id,
+                           started_unix=started_unix, returncode=returncode)
         return EngineResult(
             energy=result.energy,
             forces=result.forces,
@@ -704,48 +1020,15 @@ class QeEngine:
             pass
 
     def _stage_density(self, density: DensitySource,
-                       attempt_dir: Path) -> tuple[float, int]:
-        """Copy the verified .save tree into this attempt's writable outdir.
-
-        The source stays read-only by convention: two computations never share
-        one writable .save. Returns (elapsed_s, bytes_copied); the copy is
-        recorded as an io task event when an event log is attached.
-        """
-        destination = attempt_dir / "tmp" / f"{QE_PREFIX}.save"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        started_unix = time.time()
-        t0 = time.perf_counter()
-        shutil.copytree(density.save_dir, destination)
-        elapsed = time.perf_counter() - t0
-        nbytes = sum(
-            f.stat().st_size for f in destination.rglob("*") if f.is_file()
-        )
+                       attempt_dir: Path, *,
+                       request_id: str) -> tuple[float, int]:
+        """Copy the verified .save tree into this attempt's writable outdir
+        (shared staging; see :func:`_stage_density_into`)."""
         self._io_counter += 1
-        if self._event_log is not None:
-            self._event_log.append(
-                "task",
-                {
-                    "task_id": f"qe-io-{self._io_counter}",
-                    "attempt": 1,
-                    "operation": "io",
-                    "purpose": "density_copy",
-                    "status": "success",
-                    "evaluation_id": None,
-                    "started_unix": started_unix,
-                    "elapsed_s": elapsed,
-                    "cpu_cores": None,
-                    "gpu": None,
-                    "queue_s": None,
-                    "source": "qe-engine",
-                    "provenance": {
-                        "from": str(density.origin_dir),
-                        "from_fingerprint": density.manifest.get("reference_fingerprint"),
-                        "to": str(destination),
-                        "bytes": nbytes,
-                    },
-                },
-            )
-        return elapsed, nbytes
+        return _stage_density_into(
+            density, attempt_dir, event_log=self._event_log,
+            request_id=request_id, io_counter=self._io_counter,
+        )
 
 
 def create_qe_engine(*, run_root: str | Path, event_log: object | None = None,

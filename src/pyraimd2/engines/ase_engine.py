@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
+from pathlib import Path
 
 import numpy as np
 from ase import Atoms
@@ -14,6 +17,104 @@ from pyraimd2.engines.base import (
     EngineError,
     EngineResult,
 )
+
+_FILE_HASH_CACHE: dict[tuple[str, int, int], str | None] = {}
+
+
+def _file_sha256(path: Path) -> str | None:
+    """Content sha256 of a model file, None when unreadable (cached by
+    path/mtime/size so per-evaluation fingerprints stay cheap)."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if key not in _FILE_HASH_CACHE:
+        digest: str | None = None
+        try:
+            h = hashlib.sha256()
+            with path.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            digest = h.hexdigest()
+        except OSError:
+            digest = None
+        _FILE_HASH_CACHE[key] = digest
+    return _FILE_HASH_CACHE[key]
+
+
+def _jsonable(value: object) -> object:
+    """JSON-normalize a calculator parameter value, or raise TypeError."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    raise TypeError(f"unserializable parameter value of type {type(value).__name__}")
+
+
+def _embedded_files(value: object) -> list[str]:
+    """Parameter values naming existing files (model artifacts to hash)."""
+    found: list[str] = []
+    if isinstance(value, str):
+        try:
+            path = Path(value)
+            if ("\0" not in value) and path.is_file():
+                found.append(str(path))
+        except (OSError, ValueError):
+            pass
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found.extend(_embedded_files(item))
+    elif isinstance(value, dict):
+        for item in value.values():
+            found.extend(_embedded_files(item))
+    return found
+
+
+def calculator_identity(calculator: Calculator) -> dict | None:
+    """A serializable identity for an ASE calculator, or None when its
+    effective physical state cannot be identified reliably.
+
+    Covers the class path and the declared effective parameters; parameter
+    values naming existing files (model artifacts) contribute a content
+    hash, so two states of the same path are distinguished. ``calculator.name``
+    alone is never an identity — LJ epsilon 1 → 2 must change this value.
+    """
+    parameters = getattr(calculator, "parameters", None)
+    if parameters is None:
+        return None
+    try:
+        normalized = _jsonable(dict(parameters))
+    except (TypeError, ValueError):
+        return None
+    files = sorted(set(_embedded_files(parameters)))
+    return {
+        "class": f"{type(calculator).__module__}.{type(calculator).__qualname__}",
+        "parameters": normalized,
+        "files": {path: _file_sha256(Path(path)) for path in files},
+    }
+
+
+def clear_calculator_results(calculator: Calculator) -> None:
+    """Drop any cached results after a failed evaluation, without masking
+    the original error: ASE's two class hierarchies do not share ``reset``
+    (``Calculator`` has it, ``BaseCalculator``/FileIO calculators do not)."""
+    try:
+        reset = getattr(calculator, "reset", None)
+        if callable(reset):
+            reset()
+        else:
+            results = getattr(calculator, "results", None)
+            if isinstance(results, dict):
+                results.clear()
+    except Exception:  # noqa: BLE001, S110 - cleanup never masks the real error
+        pass
 
 
 class AseEngine:
@@ -34,13 +135,22 @@ class AseEngine:
     ``force_consistent=True``); otherwise the default ``energy`` is reported
     and whether the forces differentiate it is calculator-dependent, so
     consistency stays unknown rather than claimed.
+
+    The fingerprint hashes the calculator class, its declared effective
+    parameters and the content of any parameter-referenced model files —
+    never just ``calculator.name``. A calculator whose state cannot be
+    identified (no serializable parameters) yields fingerprint ``None``
+    (unknown identity: consumers must not cache or compare on it) unless an
+    explicit ``identity`` string is supplied.
     """
 
     def __init__(self, calculator: Calculator, *, force_consistent: bool = False,
-                 include_stress: bool = False) -> None:
+                 include_stress: bool = False,
+                 identity: str | None = None) -> None:
         self.calculator = calculator
         self.force_consistent = force_consistent
         self.include_stress = include_stress
+        self.identity = identity
 
     @property
     def name(self) -> str:
@@ -57,12 +167,20 @@ class AseEngine:
         )
 
     @property
-    def fingerprint(self) -> str:
-        return (
-            f"ase:{self.calculator.name}"
-            f":force_consistent={self.force_consistent}"
-            f":stress={self.include_stress}"
-        )
+    def fingerprint(self) -> str | None:
+        identity = calculator_identity(self.calculator)
+        flags = f"force_consistent={self.force_consistent}:stress={self.include_stress}"
+        if identity is None:
+            if self.identity is None:
+                return None  # unknown identity, honestly undeclared
+            return f"ase:{self.calculator.name}:explicit:{self.identity}:{flags}"
+        payload = dict(identity)
+        if self.identity is not None:
+            payload["explicit"] = self.identity
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode()
+        ).hexdigest()[:16]
+        return f"ase:{self.calculator.name}:{digest}:{flags}"
 
     def compute(self, atoms: Atoms) -> EngineResult:
         work = atoms.copy()
@@ -80,7 +198,7 @@ class AseEngine:
             if stress is not None and (stress.shape != (6,) or not np.isfinite(stress).all()):
                 raise ValueError("Invalid stress")
         except Exception as error:
-            self.calculator.reset()
+            clear_calculator_results(self.calculator)
             raise EngineError(f"ASE reference evaluation failed: {error}") from error
         return EngineResult(energy, forces, stress, time.perf_counter() - start,
                             energy_kind=self.capabilities.energy_kind,

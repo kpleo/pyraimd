@@ -1,4 +1,6 @@
 """Adapter contracts for externally supplied ASE calculators."""
+from typing import ClassVar
+
 import numpy as np
 import pytest
 from ase import Atoms
@@ -76,3 +78,88 @@ def test_invalid_calculator_result_raises_and_clears_cache():
     with pytest.raises(EngineError):
         AseEngine(calculator).compute(Atoms('He'))
     assert calculator.results == {}
+
+
+# --- fingerprint: physical parameters and model artifacts, never just name ---
+
+
+def test_fingerprint_tracks_physical_parameters():
+    """LJ epsilon 1 -> 2 doubles every energy: the identity must change
+    (review R2 — calculator.name used to be the whole fingerprint)."""
+    e1 = AseEngine(LennardJones(epsilon=1.0))
+    e2 = AseEngine(LennardJones(epsilon=2.0))
+    assert e1.fingerprint != e2.fingerprint
+    assert AseEngine(LennardJones(epsilon=1.0)).fingerprint == e1.fingerprint
+    assert e1.fingerprint.startswith("ase:lennardjones")
+    s1 = AseSurrogate(LennardJones(epsilon=1.0))
+    s2 = AseSurrogate(LennardJones(epsilon=2.0))
+    assert s1.fingerprint != s2.fingerprint
+    assert s1.fingerprint == AseSurrogate(LennardJones(epsilon=1.0)).fingerprint
+
+
+def test_fingerprint_tracks_model_file_content(tmp_path):
+    """Same path, different content: the artifact hash changes the identity."""
+    from ase.calculators.calculator import Calculator
+
+    class FileBacked(Calculator):
+        implemented_properties: ClassVar[list[str]] = ['energy', 'forces']
+
+        def __init__(self, model_path):
+            super().__init__()
+            self.parameters = {'model': str(model_path)}
+
+        def calculate(self, atoms=None, properties=('energy',), system_changes=None):
+            super().calculate(atoms, properties, system_changes or [])
+            self.results = {'energy': 0.0, 'forces': np.zeros((len(self.atoms), 3))}
+
+    model = tmp_path / 'model.dat'
+    model.write_text('weights-v1')
+    first = AseEngine(FileBacked(model)).fingerprint
+    model.write_text('weights-v2')
+    second = AseEngine(FileBacked(model)).fingerprint
+    assert first != second
+    assert AseEngine(FileBacked(model)).fingerprint == second  # stable again
+
+
+def test_fingerprint_none_when_state_cannot_be_identified():
+    """A calculator without identifiable parameters yields an unknown
+    identity (None), never a name masquerading as one; an explicit identity
+    string is honored instead."""
+    from ase.calculators.calculator import Calculator
+
+    class Opaque(Calculator):
+        implemented_properties: ClassVar[list[str]] = ['energy', 'forces']
+
+        def __init__(self):
+            super().__init__()
+            self.parameters = {'blob': object()}  # not serializable
+
+        def calculate(self, atoms=None, properties=('energy',), system_changes=None):
+            super().calculate(atoms, properties, system_changes or [])
+
+    assert AseEngine(Opaque()).fingerprint is None
+    assert AseSurrogate(Opaque()).fingerprint is None
+    explicit = AseEngine(Opaque(), identity='lab-benchmark-2026-09')
+    assert explicit.fingerprint is not None
+    assert 'lab-benchmark-2026-09' in explicit.fingerprint
+    assert AseSurrogate(Opaque(), identity='x').fingerprint is not None
+
+
+class _FailingNoReset(Calculator):
+    """Espresso-style calculator: no reset() (BaseCalculator hierarchy) and a
+    calculate that fails. Used to prove cleanup never masks the real error."""
+
+    reset = None  # ASE FileIO calculators lack reset entirely
+    implemented_properties: ClassVar[list[str]] = ['energy', 'forces']
+
+    def calculate(self, atoms=None, properties=('energy',), system_changes=None):
+        super().calculate(atoms, properties, system_changes or [])
+        self.results = {'stale': 1}
+        raise RuntimeError('the real failure')
+
+
+def test_failure_without_reset_method_preserves_original_error():
+    engine = AseEngine(_FailingNoReset())
+    with pytest.raises(EngineError, match='the real failure'):
+        engine.compute(Atoms('He'))
+    assert engine.calculator.results == {}  # stale results cleared
