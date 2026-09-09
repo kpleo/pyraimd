@@ -182,8 +182,34 @@ def test_policy_rejected_for_plain_modes(tmp_path) -> None:
 
 
 def test_unknown_ensemble_is_rejected(tmp_path) -> None:
-    text = HARMONIC_CONFIG.replace('ensemble = "nve"', 'ensemble = "nvt"')
+    text = HARMONIC_CONFIG.replace('ensemble = "nve"', 'ensemble = "microcanonical-ish"')
     with pytest.raises(ConfigError, match=r"dynamics\.ensemble must be one of"):
+        load_config(write(tmp_path, text))
+
+
+def test_nvt_requires_langevin_and_friction(tmp_path) -> None:
+    with pytest.raises(ConfigError, match="requires integrator = 'langevin'"):
+        load_config(write(
+            tmp_path, HARMONIC_CONFIG.replace('ensemble = "nve"',
+                                              'ensemble = "nvt"'), name="a.toml"))
+    text = HARMONIC_CONFIG.replace(
+        'ensemble = "nve"', 'ensemble = "nvt"\nintegrator = "langevin"')
+    with pytest.raises(ConfigError, match="friction_per_fs"):
+        load_config(write(tmp_path, text, name="b.toml"))
+
+
+def test_nve_rejects_thermostat_fields(tmp_path) -> None:
+    text = HARMONIC_CONFIG.replace(
+        'ensemble = "nve"', 'ensemble = "nve"\nfriction_per_fs = 0.01')
+    with pytest.raises(ConfigError, match="do not belong to an NVE run"):
+        load_config(write(tmp_path, text))
+
+
+def test_adaptive_rejects_nvt_before_any_scf(tmp_path) -> None:
+    text = HARMONIC_CONFIG.replace(
+        'ensemble = "nve"',
+        'ensemble = "nvt"\nintegrator = "langevin"\nfriction_per_fs = 0.01')
+    with pytest.raises(ConfigError, match="supports ensemble = 'nve' only"):
         load_config(write(tmp_path, text))
 
 

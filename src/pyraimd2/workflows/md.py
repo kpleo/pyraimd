@@ -29,10 +29,9 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
-from ase import Atoms, units
+from ase import Atoms
 from ase.calculators.calculator import Calculator, all_changes
 from ase.md.velocitydistribution import thermalize_momenta
-from ase.md.verlet import VelocityVerlet
 
 from pyraimd2 import __version__
 from pyraimd2.config import PyramidConfig, load_resolved_config
@@ -40,6 +39,11 @@ from pyraimd2.engines.base import EngineError, EngineResult
 from pyraimd2.loop import EnergeticRunner
 from pyraimd2.loop.constraints import validate_constraints
 from pyraimd2.loop.energetic import EnergeticRunSummary
+from pyraimd2.loop.integrators import (
+    IntegratorSpec,
+    LangevinAdapter,
+    VelocityVerletAdapter,
+)
 from pyraimd2.runtime.checkpoint import CheckpointManager
 from pyraimd2.runtime.context import EvaluationContext, EvaluationPhase
 from pyraimd2.runtime.events import (
@@ -320,6 +324,37 @@ class _BackendCalculator(Calculator):
             self._on_evaluation(label)
 
 
+def _spec_from_dynamics(config: PyramidConfig) -> IntegratorSpec:
+    """The run's integrator identity from its dynamics configuration.
+
+    A new NVT run draws its thermostat stream from ``thermostat_seed`` when
+    given, else deterministically from the run seed — resumes never use
+    either, they restore the persisted stream.
+    """
+    dynamics = config.dynamics
+    if dynamics.integrator == "langevin":
+        return IntegratorSpec(
+            algorithm="langevin", ensemble="nvt",
+            timestep_fs=dynamics.timestep_fs,
+            temperature_K=dynamics.temperature_K,
+            friction_per_fs=dynamics.friction_per_fs,
+            thermostat_seed=(dynamics.thermostat_seed
+                             if dynamics.thermostat_seed is not None
+                             else config.run.seed))
+    return IntegratorSpec(algorithm="velocity_verlet", ensemble="nve",
+                          timestep_fs=dynamics.timestep_fs)
+
+
+def _make_integrator(spec: IntegratorSpec, atoms: Atoms,
+                     resume_state: dict | None):
+    """Create the adapter, restoring the thermostat stream on NVT resume."""
+    if spec.algorithm == "langevin":
+        thermostat = (None if resume_state is None
+                      else (resume_state.get("thermostat") or {}).get("rng"))
+        return LangevinAdapter(atoms, spec, thermostat_rng_state=thermostat)
+    return VelocityVerletAdapter(atoms, spec)
+
+
 def _label_from_row(row: object, section: str) -> object | None:
     """Rebuild the boundary label object from a committed store row.
 
@@ -383,7 +418,9 @@ class _PlainDriver:
         if "momenta" not in atoms.arrays:
             thermalize_momenta(atoms, config.dynamics.temperature_K,
                                rng=np.random.default_rng(config.dynamics.velocity_seed))
-        self.dyn = VelocityVerlet(atoms, config.dynamics.timestep_fs * units.fs)
+        self.spec = _spec_from_dynamics(config)
+        self.integrator = _make_integrator(self.spec, atoms, resume_state)
+        self.dyn = self.integrator.dyn
         self.model_id = (model_id_for(backend, 0) if self.section == "surrogate"
                          else (fingerprint_of(backend) or type(backend).__qualname__))
         self._checkpoints: CheckpointManager | None = CheckpointManager(run_dir)
@@ -411,7 +448,9 @@ class _PlainDriver:
             "model_id": self.model_id,
             "surrogate_fingerprint": (fingerprint_of(self.backend)
                                       if self.section == "surrogate" else None),
-            "workflow": {"driver": "plain-nve", "mode": self.section},
+            "workflow": {"driver": f"plain-{self.spec.ensemble}",
+                         "mode": self.section,
+                         "integrator": self.spec.as_dict()},
             "policy": None,
         })
 
@@ -439,8 +478,8 @@ class _PlainDriver:
         error: Exception | None = None
         try:
             compute()
-        except Exception as exc:
-            error = exc
+        except Exception as exc:  # noqa: BLE001 — the single exit records
+            error = exc                 # any failure before re-raising
         finally:
             self._attempt_context_fields = None
         calculated = calc.n_calculations > calculations_before
@@ -532,12 +571,16 @@ class _PlainDriver:
             return None
         generation = self._checkpoints.next_generation()
         state = {
-            "run_id": self.run_id, "driver": "plain-nve", "section": self.section,
+            "run_id": self.run_id,
+            "driver": f"plain-{self.spec.ensemble}", "section": self.section,
             "nsteps": int(step), "task_counter": self._task_counter,
             "model_id": self.model_id,
             "engine_fingerprint": (fingerprint_of(self.backend)
                                    if self.section == "reference" else None),
             "timestep_fs": self.config.dynamics.timestep_fs,
+            "integrator": self.spec.as_dict(),
+            "thermostat": (None if self.spec.algorithm != "langevin"
+                           else {"rng": self.integrator.thermostat_state()}),
             "driving_energy_eV": float(self.atoms.calc.results["energy"]),
             "constraint": (None if self.projection is None
                            else self.projection.as_dict()),
@@ -589,10 +632,21 @@ class _PlainDriver:
                     lambda: self.dyn.step(self.atoms.calc.results["forces"]))
                 self.dyn.nsteps = step
                 self._record_evaluation(step)
+                # Commit the step only with the complete boundary state
+                # persisted and bound (M1): the step event names the
+                # integrator and the boundary content digest.
+                boundary = self.integrator.committed_state(
+                    step - 1, self.atoms,
+                    driving_source=("reference" if self.section == "reference"
+                                    else "surrogate"),
+                    model_id=self.model_id,
+                    timestep_fs=self.config.dynamics.timestep_fs)
                 self.event_log.append_once(
                     f"step:{self.run_id}:{step - 1}", STEP_COMPLETED,
                     {"run_id": self.run_id, "step_id": step - 1,
-                     "physical_time_fs": step * self.config.dynamics.timestep_fs})
+                     "physical_time_fs": step * self.config.dynamics.timestep_fs,
+                     "integrator": self.spec.as_dict(),
+                     "state_digest": boundary.digest()})
                 completed = step
                 if step % checkpoint_interval == 0 or self._stop_requested:
                     self._write_checkpoint(step)
@@ -1097,11 +1151,31 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             f"every {config.checkpoint.interval_steps} steps and on a stop "
             "request)")
     state, arrays, manifest = checkpoint.state, checkpoint.arrays, checkpoint.manifest
-    if state.get("driver") != "plain-nve" or state.get("section") != config.task.mode:
+    expected_driver = f"plain-{config.dynamics.ensemble}"
+    if state.get("driver") != expected_driver \
+            or state.get("section") != config.task.mode:
         raise WorkflowError(
             f"checkpoint under {run_dir} belongs to driver "
             f"{state.get('driver')!r}/{state.get('section')!r}, not to a "
-            f"plain {config.task.mode!r} run; resume requires the same run")
+            f"plain {config.task.mode!r} {config.dynamics.ensemble} run; "
+            "resume requires the same run")
+    # The integrator identity is part of the run: a change of algorithm,
+    # timestep, temperature or friction means a new run, not a resume.
+    spec = _spec_from_dynamics(config)
+    checkpoint_integrator = state.get("integrator")
+    if checkpoint_integrator is not None and \
+            checkpoint_integrator != spec.as_dict():
+        raise WorkflowError(
+            f"integrator settings changed from "
+            f"{checkpoint_integrator!r} to {spec.as_dict()!r}; resume "
+            "continues the same integration settings — start a new run")
+    if spec.algorithm == "langevin":
+        thermostat = state.get("thermostat") or {}
+        if thermostat.get("rng") is None:
+            raise WorkflowError(
+                f"checkpoint under {run_dir} has no persisted thermostat "
+                "state; this NVT run cannot be resumed honestly (an old or "
+                "torn checkpoint — start a new run)")
     event_log = EventLog(run_dir, force=force_unlock)
     try:
         backend = _plain_backend(config, run_dir, event_log=event_log)
@@ -1191,7 +1265,7 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
     # stay unset; the committed boundary row is the same label.
     driver.atoms.calc.last_label = boundary_label
     event_log.append(RESUMED, {
-        "run_id": config.run.id, "driver": "plain-nve",
+        "run_id": config.run.id, "driver": f"plain-{config.dynamics.ensemble}",
         "from_event_seq": int(manifest["last_event_seq"]),
         "checkpoint_generation": checkpoint.generation})
     outputs = RunOutputs(

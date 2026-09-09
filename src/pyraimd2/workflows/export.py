@@ -233,8 +233,8 @@ def frames_for_run(store: Store, run_dir: str | Path, run_id: str, *,
     events = _read_events(Path(run_dir) / "events.jsonl")
     start = next((e for e in events if e.get("type") == "run_start"), None)
     driver = ((start or {}).get("workflow") or {}).get("driver")
-    md_kind = driver == "plain-nve" or (driver is None
-                                        and (start or {}).get("policy"))
+    md_kind = driver in ("plain-nve", "plain-nvt") or (driver is None
+                                                       and (start or {}).get("policy"))
     complete_steps = completed_step_ids(run_dir) if md_kind else None
     committed = (list(store.iter_committed(events, run_id))
                  if events else None)

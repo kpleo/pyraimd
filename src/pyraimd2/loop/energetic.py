@@ -67,6 +67,7 @@ from pyraimd2.loop.constraints import (
     FixAtomsProjection,
     validate_constraints,
 )
+from pyraimd2.loop.integrators import IntegratorSpec, state_digest
 from pyraimd2.runtime import (
     EvaluationContext,
     EvaluationPhase,
@@ -394,6 +395,9 @@ class EnergeticCalculator(Calculator):
         )
         self._engine_fingerprint = fingerprint_of(engine)
         self.direction, self.on_label = direction, on_label
+        self._integrator_spec = IntegratorSpec(
+            algorithm="velocity_verlet", ensemble="nve",
+            timestep_fs=float(timestep_fs))
         self.check_probability, self.check_seed = float(check_probability), int(check_seed)
         self.failure_probability, self.tilt = float(failure_probability), float(tilt)
         self._rng = np.random.default_rng(check_seed)
@@ -1751,11 +1755,17 @@ class _EnergeticVerlet(VelocityVerlet):
         calc._schedule(self.nsteps + 1, next_positions,
                        physical_time_fs=(self.nsteps + 1) * calc.timestep_fs)
         result = super().step(forces)
-        # The full-step boundary is now complete: half-step momenta have been
-        # promoted. Recorded per step so replay and export know the phase.
-        calc._emit_once(f"step:{calc.run_id}:{self.nsteps}", STEP_COMPLETED,
-                        step_id=self.nsteps,
-                        physical_time_fs=(self.nsteps + 1) * calc.timestep_fs)
+        # The full-step boundary is now complete: ASE promoted the half-step
+        # momenta inside step().  Commit the step with the integrator
+        # identity and the boundary content digest bound (M1) — the digest
+        # covers exactly the state resume later reconstructs.
+        calc._emit_once(
+            f"step:{calc.run_id}:{self.nsteps}", STEP_COMPLETED,
+            step_id=self.nsteps,
+            physical_time_fs=(self.nsteps + 1) * calc.timestep_fs,
+            integrator=calc._integrator_spec.as_dict(),
+            state_digest=state_digest(atoms.positions,
+                                      atoms.get_momenta()))
         return result
 
 

@@ -132,8 +132,8 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
     # Completion semantics are task-specific (A2/A4): MD drivers complete a
     # step only at its boundary; relax/singlepoint commits are complete
     # records themselves.
-    md_kind = driver == "plain-nve" or (driver is None
-                                        and (start or {}).get("policy"))
+    md_kind = driver in ("plain-nve", "plain-nvt") or (driver is None
+                                                       and (start or {}).get("policy"))
 
     trajectory = {"n_rows": 0, "n_committed": 0, "last_energy_eV": None,
                   "last_temperature_K": None, "n_accepted": 0,

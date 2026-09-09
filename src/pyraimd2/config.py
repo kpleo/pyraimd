@@ -40,7 +40,8 @@ CONFIG_SCHEMA_VERSION = 1
 
 TASK_KINDS = ("singlepoint", "relax", "md")
 TASK_MODES = ("reference", "surrogate", "adaptive")
-ENSEMBLES = ("nve",)
+ENSEMBLES = ("nve", "nvt")
+INTEGRATORS = ("verlet", "langevin")
 POLICY_NAMES = ("energetic",)
 # Canonical force-error metric vocabulary (also imported by
 # pyraimd2.loop.constraints): the budget controls the free coordinates by
@@ -88,6 +89,9 @@ class DynamicsConfig:
     steps: int
     temperature_K: float
     velocity_seed: int
+    integrator: str = "verlet"
+    friction_per_fs: float | None = None
+    thermostat_seed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -188,10 +192,13 @@ class PyramidConfig:
             "task": {"kind": self.task.kind, "mode": self.task.mode},
             "structure": {"file": str(self.structure.file)},
             "dynamics": {"ensemble": self.dynamics.ensemble,
+                         "integrator": self.dynamics.integrator,
                          "timestep_fs": self.dynamics.timestep_fs,
                          "steps": self.dynamics.steps,
                          "temperature_K": self.dynamics.temperature_K,
-                         "velocity_seed": self.dynamics.velocity_seed},
+                         "velocity_seed": self.dynamics.velocity_seed,
+                         "friction_per_fs": self.dynamics.friction_per_fs,
+                         "thermostat_seed": self.dynamics.thermostat_seed},
             "reference": backend_section(self.reference),
             "surrogate": backend_section(self.surrogate),
             "policy": (None if self.policy is None else {
@@ -308,6 +315,11 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
     _check_task_compatibility(task, reference=reference, surrogate=surrogate,
                               policy=policy,
                               verification_present=verification_table is not None)
+    if task.mode == "adaptive" and dynamics.ensemble != "nve":
+        raise ConfigError(
+            f"task.mode 'adaptive' currently supports ensemble = 'nve' only; "
+            f"got ensemble = {dynamics.ensemble!r} — adaptive NVT is a "
+            "separate milestone, not a config toggle")
     return PyramidConfig(
         schema_version=version, run=run, task=task, structure=structure,
         dynamics=dynamics, reference=reference, surrogate=surrogate,
@@ -467,18 +479,58 @@ def _parse_structure(table: dict, base_dir: Path) -> StructureConfig:
 def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
     _reject_unknown(table,
                     ("ensemble", "timestep_fs", "steps", "temperature_K",
-                     "velocity_seed"),
+                     "velocity_seed", "integrator", "friction_per_fs",
+                     "thermostat_seed"),
                     "dynamics", "field")
     ensemble = _str_field(table, "ensemble", "dynamics", default="nve",
                           choices=ENSEMBLES)
+    integrator = _str_field(table, "integrator", "dynamics",
+                            default="verlet", choices=INTEGRATORS)
     timestep_fs = _float_field(table, "timestep_fs", "dynamics", minimum=0.0)
     steps = _int_field(table, "steps", "dynamics", minimum=1)
     temperature_K = _float_field(table, "temperature_K", "dynamics",
                                  default=300.0, minimum=0.0, allow_zero=True)
     velocity_seed = _int_field(table, "velocity_seed", "dynamics",
                                default=run_seed)
-    return DynamicsConfig(ensemble=ensemble, timestep_fs=timestep_fs, steps=steps,
-                          temperature_K=temperature_K, velocity_seed=velocity_seed)
+    friction_raw = table.pop("friction_per_fs", None)
+    if friction_raw is not None:
+        if not _is_number(friction_raw) \
+                or not math.isfinite(float(friction_raw)):
+            raise ConfigError(
+                f"dynamics.friction_per_fs must be a finite number, got "
+                f"{friction_raw!r}")
+        friction_per_fs = float(friction_raw)
+    else:
+        friction_per_fs = None
+    seed_raw = table.pop("thermostat_seed", None)
+    if seed_raw is not None and not _is_int(seed_raw):
+        raise ConfigError(
+            f"dynamics.thermostat_seed must be an integer, got {seed_raw!r}")
+    thermostat_seed = None if seed_raw is None else int(seed_raw)
+    if ensemble == "nvt":
+        if integrator != "langevin":
+            raise ConfigError(
+                "dynamics: ensemble 'nvt' requires integrator = 'langevin', "
+                f"got {integrator!r}")
+        if friction_per_fs is None or friction_per_fs <= 0:
+            raise ConfigError(
+                "dynamics: ensemble 'nvt' requires a positive "
+                "friction_per_fs — it is the bath coupling, not an optional "
+                "tuning knob (set it explicitly before any SCF runs)")
+    else:
+        if integrator != "verlet":
+            raise ConfigError(
+                f"dynamics: ensemble 'nve' uses integrator = 'verlet', "
+                f"got {integrator!r}")
+        if friction_per_fs is not None or thermostat_seed is not None:
+            raise ConfigError(
+                "dynamics: friction_per_fs/thermostat_seed do not belong to "
+                "an NVE run — remove them or choose ensemble = 'nvt'")
+    return DynamicsConfig(ensemble=ensemble, timestep_fs=timestep_fs,
+                          steps=steps, temperature_K=temperature_K,
+                          velocity_seed=velocity_seed, integrator=integrator,
+                          friction_per_fs=friction_per_fs,
+                          thermostat_seed=thermostat_seed)
 
 
 def _parse_backend(table: dict | None, prefix: str, base_dir: Path) -> BackendConfig | None:
