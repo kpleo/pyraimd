@@ -191,6 +191,9 @@ class _Pending:
     label_id: str | None = None
     label_task_id: str | None = None
     label_attempt: int = 0
+    # (segment, n_calibrations) frozen by a recalibration that ran before an
+    # uncommitted proposal; applied when the rebuilt evaluation commits (C4).
+    restored_counters: tuple[int, int] | None = None
 
 
 @dataclass
@@ -590,7 +593,9 @@ class EnergeticCalculator(Calculator):
 
             def sink(array: np.ndarray, _ck=ck_arrays) -> dict:
                 key = f"updater_state:arr{len(_ck)}"
-                _ck[key] = np.ascontiguousarray(array)
+                array = np.asarray(array)
+                _ck[key] = (array.copy() if array.ndim == 0
+                            else np.ascontiguousarray(array))
                 return array_placeholder(key, _ck[key])
 
             updater_state = dump_state_arrays(updater_state, sink)
@@ -770,8 +775,10 @@ class EnergeticCalculator(Calculator):
                 content_array_source(Path(models_dir) / "state-arrays")))
             # An unchanged model on a reference route still recalibrates
             # before the next proposal (live semantics); on an accepted
-            # route the anchor is kept untouched.
-            row = store._row_at_step(self.run_id, int(event["evaluation_id"]) - 1)
+            # route the anchor is kept untouched.  The label is read from
+            # the commit-bound row, never from an orphan at the same step.
+            row = store.committed_row(self._event_log, self.run_id,
+                                      int(event["evaluation_id"]))
             if row.key_value_pairs["route"] == "dft":
                 payload = row.data["engine"]
                 label = EngineResult(float(payload["energy"]),
@@ -820,7 +827,9 @@ class EnergeticCalculator(Calculator):
             self._next_reason = "previous_independent_check_violation"
             return
         origin_eval = int(event["origin_evaluation_id"])
-        row = store._row_at_step(self.run_id, origin_eval - 1)
+        # The re-anchor label comes from the commit-bound row of the origin
+        # evaluation — the same verified row the resume boundary uses (C1).
+        row = store.committed_row(self._event_log, self.run_id, origin_eval)
         payload = row.data.get("engine")
         label = EngineResult(float(payload["energy"]),
                              np.asarray(payload["forces"], dtype=float), None, 0.0)
@@ -841,6 +850,20 @@ class EnergeticCalculator(Calculator):
                   if anchor_rec is not None else None)
         context = EvaluationContext(**proposal["context"])
         self._deferred_record = proposal.get("deferred_record")
+        if self._deferred_record is not None:
+            # The recalibration for the replayed update already ran and its
+            # outcome is frozen in this proposal (anchor record, counters);
+            # the replayed origin must not trigger it a second time (C4).
+            self._deferred_origin = None
+        if proposal.get("segment") is not None:
+            # The recalibration that ran before this uncommitted proposal
+            # advanced these counters but is committed nowhere else.  They
+            # are applied when the rebuilt evaluation commits — exactly once,
+            # and never into a checkpoint written before that commit (C4).
+            pending_counters = (int(proposal["segment"]),
+                                int(proposal["n_calibrations"]))
+        else:
+            pending_counters = None
         if proposal.get("check_rng_after") is not None:
             # Continue the check stream exactly after this evaluation's
             # consumed draw; without it the next fresh draw repeats the
@@ -858,7 +881,8 @@ class EnergeticCalculator(Calculator):
             bool(proposal["checked"]), proposal["check_draw"],
             dict(proposal["calls_before"]),
             context=context,
-            model_generation=int(proposal["model_generation"]))
+            model_generation=int(proposal["model_generation"]),
+            restored_counters=pending_counters)
 
     def _check_identity(self, atoms: Atoms) -> None:
         """Reject any change that must never happen mid-run.
@@ -1395,6 +1419,10 @@ class EnergeticCalculator(Calculator):
             committed_payload["input_hash"] = atoms_input_hash(pending.atoms)
         self._emit_once(f"evaluation:{self.run_id}:{pending.index}",
                         EVALUATION_COMMITTED, **committed_payload)
+        if pending.restored_counters is not None:
+            # The recalibration frozen into a rebuilt proposal becomes
+            # visible exactly once, with its evaluation's commit (C4).
+            self._segment, self.n_calibrations = pending.restored_counters
         self._pending = None
         self._deferred_record = None
         self._evaluation_calls_before = None
@@ -1419,52 +1447,55 @@ class EnergeticCalculator(Calculator):
                 self.results = {}
                 self._callback_failed = True
                 raise
-            self._emit_task(task_id=training_task_id, attempt=1,
-                            operation="training", purpose="model_update",
-                            status="success", started_unix=training_started,
-                            elapsed_s=time.perf_counter() - training_start,
-                            label_id=pending.label_id)
-            updater_state = (self.on_label.state_dict()
-                             if _is_stateful(self.on_label) else None)
-            pop_rejection = getattr(self.on_label, "pop_rejection", None)
-            rejection = pop_rejection() if callable(pop_rejection) else None
-            if rejection is not None:
-                # A rolled-back update attempt: the parent model carries on,
-                # the attempt's cost and outcome are recorded (ledger is
-                # append-only, so the training time stays billed).
-                self._emit_once(f"update-rejected:{pending.label_id}:eval-{pending.index}",
-                                UPDATE_REJECTED,
-                                evaluation_id=pending.index,
-                                origin_label_id=pending.label_id,
-                                model_id=self.model_id,
-                                reason=rejection.get("reason"),
-                                metrics=rejection.get("metrics"),
-                                label_ids=rejection.get("label_ids"))
-            if changed is not False:
-                # Anything except exactly False declares a model change. The
-                # update activates only after the artifact is persisted and
-                # the commit event is written: candidate → validate →
-                # persist → activate.  A persistence or commit failure rolls
-                # the surrogate and the updater back to the parent state, so
-                # a run stopped here still satisfies the atomic publish
-                # contract (R3).
-                parent_model_id = self.model_id
-                next_generation = self._model_generation + 1
-                new_model_id = model_id_for(self.surrogate, next_generation)
-                update_record = None
-                get_update_record = getattr(self.on_label, "update_record", None)
-                if callable(get_update_record):
-                    update_record = get_update_record()
-                artifact = {
-                    "generation": next_generation,
-                    "parent_model_id": parent_model_id,
-                    "label_ids": (update_record or {}).get("label_ids",
-                                                          [pending.label_id]),
-                    "recipe": (update_record or {}).get("recipe"),
-                    "training": (update_record or {}).get("training"),
-                    "updater_state": updater_state,
-                }
-                try:
+            # Everything after a successful callback — the success-task log,
+            # the state snapshot, the rejection record, the artifact persist
+            # and the commit event — is ONE rollback domain (C3): a failure
+            # anywhere in it restores the parent model and updater state
+            # before the error stops the run, so a stopped run always
+            # satisfies the atomic publish contract.
+            try:
+                self._emit_task(task_id=training_task_id, attempt=1,
+                                operation="training", purpose="model_update",
+                                status="success", started_unix=training_started,
+                                elapsed_s=time.perf_counter() - training_start,
+                                label_id=pending.label_id)
+                updater_state = (self.on_label.state_dict()
+                                 if _is_stateful(self.on_label) else None)
+                pop_rejection = getattr(self.on_label, "pop_rejection", None)
+                rejection = pop_rejection() if callable(pop_rejection) else None
+                if rejection is not None:
+                    # A rolled-back update attempt: the parent model carries on,
+                    # the attempt's cost and outcome are recorded (ledger is
+                    # append-only, so the training time stays billed).
+                    self._emit_once(f"update-rejected:{pending.label_id}:eval-{pending.index}",
+                                    UPDATE_REJECTED,
+                                    evaluation_id=pending.index,
+                                    origin_label_id=pending.label_id,
+                                    model_id=self.model_id,
+                                    reason=rejection.get("reason"),
+                                    metrics=rejection.get("metrics"),
+                                    label_ids=rejection.get("label_ids"))
+                if changed is not False:
+                    # Anything except exactly False declares a model change.
+                    # The update activates only after the artifact is
+                    # persisted and the commit event is written: candidate →
+                    # validate → persist → activate (R3).
+                    parent_model_id = self.model_id
+                    next_generation = self._model_generation + 1
+                    new_model_id = model_id_for(self.surrogate, next_generation)
+                    update_record = None
+                    get_update_record = getattr(self.on_label, "update_record", None)
+                    if callable(get_update_record):
+                        update_record = get_update_record()
+                    artifact = {
+                        "generation": next_generation,
+                        "parent_model_id": parent_model_id,
+                        "label_ids": (update_record or {}).get("label_ids",
+                                                              [pending.label_id]),
+                        "recipe": (update_record or {}).get("recipe"),
+                        "training": (update_record or {}).get("training"),
+                        "updater_state": updater_state,
+                    }
                     published = None
                     if self._model_publisher is not None:
                         published = self._model_publisher(new_model_id, artifact)
@@ -1490,22 +1521,23 @@ class EnergeticCalculator(Calculator):
                             updater_state=(published["updater_state"]
                                            if published is not None
                                            else updater_state))
-                except Exception:
+                    self._model_generation = next_generation
+                else:
+                    # Label consumed without a model change: the updater's
+                    # continuation state still advanced — persist it so a replay
+                    # never re-consumes or misaligns the update queue.
+                    self._emit_once(f"consumed:{pending.label_id}", LABEL_CONSUMED,
+                                    label_id=pending.label_id,
+                                    evaluation_id=pending.index,
+                                    model_id=self.model_id,
+                                    updater_state=self._event_updater_state(
+                                        updater_state))
+            except Exception:
+                if changed is not False:
                     rollback = getattr(self.on_label, "rollback_accepted", None)
                     if callable(rollback):
                         rollback()
-                    raise
-                self._model_generation = next_generation
-            else:
-                # Label consumed without a model change: the updater's
-                # continuation state still advanced — persist it so a replay
-                # never re-consumes or misaligns the update queue.
-                self._emit_once(f"consumed:{pending.label_id}", LABEL_CONSUMED,
-                                label_id=pending.label_id,
-                                evaluation_id=pending.index,
-                                model_id=self.model_id,
-                                updater_state=self._event_updater_state(
-                                    updater_state))
+                raise
             if pending.accepted and changed is False:
                 self._anchor = candidate
                 if violation:
@@ -1565,6 +1597,11 @@ class EnergeticCalculator(Calculator):
                 deferred_record=self._deferred_record,
                 segment_id=(None if self._pending.anchor is None
                             else self._pending.anchor.segment),
+                # The recalibration that ran before this proposal (when any)
+                # advanced these counters but is committed nowhere else; the
+                # frozen values restore it exactly once on rebuild (C4).
+                segment=self._segment,
+                n_calibrations=self.n_calibrations,
             )
         elif (self._pending.index != index
               or self._pending.model_generation != self._model_generation
@@ -1991,7 +2028,10 @@ class EnergeticRunner:
         if last_eval >= 1:
             row = store.committed_row(event_log, run_id, last_eval)
             atoms.positions = row.toatoms().positions
-            driving_energy, driving_forces = store.driving_label(run_id, last_eval - 1)
+            # Positions, driving forces and the boundary momenta all come
+            # from the same verified committed row — an orphan row at the
+            # same step is never read (C1).
+            driving_energy, driving_forces = store.driving_label_for_row(row)
             # ASE's velocity-Verlet kick adds 0.5*dt*F to the momenta (no
             # mass division — momenta, not velocities); the drift divides.
             full_step = (row.toatoms().get_momenta()

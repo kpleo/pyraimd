@@ -1094,12 +1094,12 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
         # The window after the checkpoint advanced the trajectory: rebuild
         # the boundary from the last committed row.  The plain driver logs
         # AFTER the step completes, so the row's momenta are already the
-        # full-step momenta — no extra half-kick to apply.
+        # full-step momenta — no extra half-kick to apply.  The row is
+        # resolved through its commit (never an orphan at the same step, C1).
         store = Store(run_dir / "trajectory.db")
-        row = store._row_at_step(config.run.id, current - 1)
+        row = store.committed_row(event_log, config.run.id, current)
         atoms = row.toatoms()
-        driving_energy, driving_forces = store.driving_label(config.run.id,
-                                                             current - 1)
+        driving_energy, driving_forces = store.driving_label_for_row(row)
     else:
         atoms = Atoms(numbers=np.array(arrays["numbers"]),
                       positions=np.array(arrays["positions"], dtype=float),

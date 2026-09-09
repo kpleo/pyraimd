@@ -60,8 +60,56 @@ def artifact_digest(record: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:24]
 
 
-def _array_digest(array: np.ndarray) -> str:
+def _legacy_array_digest(array: np.ndarray) -> str:
+    """The 0.4.0 bytes-only digest, kept to verify placeholders written
+    before dtype/shape entered the identity."""
     return hashlib.sha256(np.ascontiguousarray(array).tobytes()).hexdigest()[:24]
+
+
+def _array_digest(array: np.ndarray) -> str:
+    """Array identity digest: dtype (incl. byte order), shape and content —
+    identical bytes with a different shape or dtype never collide (C2)."""
+    header = json.dumps({"dtype": array.dtype.str,
+                         "shape": [int(v) for v in array.shape]},
+                        sort_keys=True).encode()
+    return hashlib.sha256(header + b"\0"
+                          + _contiguous(array).tobytes()).hexdigest()[:24]
+
+
+def _contiguous(array: np.ndarray) -> np.ndarray:
+    """C-contiguous bytes for hashing/storage, preserving 0-D shape
+    (np.ascontiguousarray would promote a scalar to 1-D)."""
+    array = np.asarray(array)
+    if array.ndim == 0:
+        return array.copy()
+    return np.ascontiguousarray(array)
+
+
+def _verify_placeholder(placeholder: dict, array: np.ndarray, where: str,
+                        ) -> np.ndarray:
+    """The one verification used by every entry point: shape and dtype are
+    always checked; the digest covers dtype/shape/content for v2
+    placeholders and bytes (plus the same shape/dtype fields) for legacy
+    0.4.0 placeholders."""
+    if [int(v) for v in placeholder.get("shape", [])] != \
+            [int(v) for v in array.shape]:
+        raise ModelRegistryError(
+            f"{where}: array shape {list(array.shape)} does not match the "
+            f"referenced {placeholder.get('shape')}; the record looks "
+            "tampered with")
+    if str(array.dtype) != placeholder.get("dtype"):
+        raise ModelRegistryError(
+            f"{where}: array dtype {array.dtype} does not match the "
+            f"referenced {placeholder.get('dtype')}; the record looks "
+            "tampered with")
+    expected = placeholder.get("sha256")
+    actual = (_array_digest(array) if placeholder.get("scheme") == "v2"
+              else _legacy_array_digest(array))
+    if actual != expected:
+        raise ModelRegistryError(
+            f"{where}: array content does not match the digest bound into "
+            "its reference; the record looks tampered with")
+    return array
 
 
 def _as_array(value: object) -> np.ndarray | None:
@@ -79,9 +127,11 @@ def _as_array(value: object) -> np.ndarray | None:
 
 
 def array_placeholder(key: str, array: np.ndarray) -> dict:
-    """Placeholder JSON dict for one sidecar-stored array."""
+    """Placeholder JSON dict for one sidecar-stored array (scheme v2: the
+    digest covers dtype, byte order, shape and content)."""
     return {ARRAY_PLACEHOLDER: key, "sha256": _array_digest(array),
-            "dtype": str(array.dtype), "shape": [int(v) for v in array.shape]}
+            "dtype": str(array.dtype), "shape": [int(v) for v in array.shape],
+            "scheme": "v2"}
 
 
 def dump_state_arrays(state: object, sink: object) -> object:
@@ -118,7 +168,7 @@ def content_array_sink(directory: str | Path):
     directory.mkdir(parents=True, exist_ok=True)
 
     def sink(array: np.ndarray) -> dict:
-        array = np.ascontiguousarray(array)
+        array = _contiguous(array)
         digest = _array_digest(array)
         path = directory / f"{digest}.npz"
         if not path.exists():
@@ -133,7 +183,7 @@ def content_array_sink(directory: str | Path):
 
 
 def content_array_source(directory: str | Path):
-    """Source resolving content-addressed placeholders, verifying digests."""
+    """Source resolving content-addressed placeholders, verifying identity."""
     directory = Path(directory)
 
     def source(placeholder: dict) -> np.ndarray:
@@ -144,18 +194,14 @@ def content_array_source(directory: str | Path):
             raise ModelRegistryError(
                 f"state array {path} is missing or unreadable; the run "
                 "directory is incomplete") from error
-        if _array_digest(array) != placeholder.get("sha256"):
-            raise ModelRegistryError(
-                f"state array {path} does not match the digest bound into "
-                "its reference; the store looks tampered with")
-        return array
+        return _verify_placeholder(placeholder, array, f"state array {path}")
 
     return source
 
 
 def dict_array_source(arrays: dict) -> object:
     """Source resolving placeholders from an in-memory arrays dict (the
-    checkpoint's own ``arrays.npz`` content), verifying digests."""
+    checkpoint's own ``arrays.npz`` content), verifying identity."""
 
     def source(placeholder: dict) -> np.ndarray:
         key = placeholder[ARRAY_PLACEHOLDER]
@@ -163,12 +209,8 @@ def dict_array_source(arrays: dict) -> object:
             raise ModelRegistryError(
                 f"checkpoint arrays are missing {key!r}; the checkpoint is "
                 "incomplete")
-        array = np.asarray(arrays[key])
-        if _array_digest(array) != placeholder.get("sha256"):
-            raise ModelRegistryError(
-                f"checkpoint array {key!r} does not match the digest bound "
-                "into its reference; the checkpoint looks tampered with")
-        return array
+        return _verify_placeholder(placeholder, np.asarray(arrays[key]),
+                                   f"checkpoint array {key!r}")
 
     return source
 
@@ -194,12 +236,8 @@ def resolve_artifact_state(state: object, artifact_dir: str | Path) -> object:
             raise ModelRegistryError(
                 f"artifact arrays at {path} are missing {key!r}; the "
                 "artifact is incomplete")
-        array = store[key]
-        if _array_digest(array) != placeholder.get("sha256"):
-            raise ModelRegistryError(
-                f"artifact array {key!r} does not match the digest bound "
-                "into its reference; the artifact looks tampered with")
-        return array
+        return _verify_placeholder(placeholder, store[key],
+                                   f"artifact array {key!r} at {path}")
 
     return load_state_arrays(state, source)
 
@@ -229,7 +267,7 @@ class ModelRegistry:
 
         def sink(array: np.ndarray) -> dict:
             key = f"arr{len(arrays)}"
-            arrays[key] = np.ascontiguousarray(array)
+            arrays[key] = _contiguous(array)
             return array_placeholder(key, arrays[key])
 
         payload = {

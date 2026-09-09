@@ -216,20 +216,32 @@ class Store:
         return row.toatoms(), step
 
     def driving_label(self, run_id: str, step: int) -> tuple[float, np.ndarray]:
-        """Return ``(energy, forces)`` that actually drove the MD at ``step``:
-        the engine label on "dft" rows, the surrogate prediction on "ml" rows.
+        """Return ``(energy, forces)`` that actually drove the MD at ``step``.
+
+        Legacy step lookup kept for old call sites; the resume paths use the
+        commit-bound row (:meth:`committed_row` + :meth:`driving_label_for_row`)
+        so an orphan row at the same step is never read (C1).
+        """
+        return self.driving_label_for_row(self._row_at_step(run_id, step))
+
+    @staticmethod
+    def driving_label_for_row(row: ase.db.row.AtomsRow) -> tuple[float, np.ndarray]:
+        """``(energy, forces)`` that actually drove the MD for this row: the
+        engine label on "dft" rows, the surrogate prediction on "ml" rows.
 
         ``Runner.resume`` uses this — instead of re-invoking engine and
         switch — so a restart reproduces the run bit-for-bit (§3, rule 3).
         """
-        row = self._row_at_step(run_id, step)
         if row.data.get("driving") is not None:
             payload = row.data["driving"]
             return float(payload["energy"]), np.asarray(payload["forces"], dtype=float)
         route = row.key_value_pairs["route"]
         payload = row.data["engine"] if route == "dft" else row.data["surrogate"]
+        step = int(row.key_value_pairs["step"])
         if payload is None:
-            raise RuntimeError(f"run {run_id!r} step {step}: no {route!r} payload stored")
+            raise RuntimeError(
+                f"run {row.key_value_pairs.get('run_id')!r} step {step}: "
+                f"no {route!r} payload stored")
         return float(payload["energy"]), np.asarray(payload["forces"], dtype=float)
 
     def iter_labels(self, run_id: str) -> Iterator[tuple[Atoms, EngineResult]]:
