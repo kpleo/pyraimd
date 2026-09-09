@@ -91,27 +91,33 @@ def surrogate_capabilities(surrogate: object) -> SurrogateCapabilities:
 
 def assert_compatible_energy_contract(
     engine_caps: EngineCapabilities, surrogate_caps: SurrogateCapabilities
-) -> None:
+) -> str:
     """Fail fast when declared energy conventions cannot be combined.
 
-    The energetic anchor bookkeeping mixes surrogate and reference energies
-    and forces.  It is only sound when both sides report the same energy
-    quantity and that quantity is consistent with the reported forces.  Any
-    *declared* conflict raises :class:`CapabilityMismatchError` here — before
-    the first SCF or inference call.  Undeclared (unknown) fields do not
-    prove a mismatch, so they pass and stay recorded as unknown.
+    The energetic anchor bookkeeping needs the *reference* scalar potential
+    to be consistent with the reference forces, and the surrogate to be
+    consistent with its own potential — it does not need the two
+    ``energy_kind`` strings to be equal (INDEPENDENT_REVIEW_20260909 §5:
+    d/dt[K+Phi_R] = R_dot·(F_drive−F_R) puts a per-side consistency
+    requirement, not a naming requirement).  Accordingly:
+
+    - Any declared ``force_consistent=False`` or ``forces_conservative=False``
+      is rejected, on either side, always.
+    - Both sides declaring *different* energy kinds (e.g. QE metallic
+      ``free_energy`` with a MACE ``energy``) are allowed only when both
+      sides strictly declare ``force_consistent=True`` and
+      ``forces_conservative=True``: a cross-kind combination may not rest on
+      an unknown ("不得把 unknown 当作已验证").
+    - Undeclared (unknown) fields otherwise pass and stay recorded as
+      unknown; they prove nothing either way and no support claim may rest
+      on them.
+
+    Any declared conflict raises :class:`CapabilityMismatchError` before the
+    first SCF or inference call.  Returns the combination mode:
+    ``"same_kind"``, ``"cross_kind"`` (both declared, different kinds, both
+    strictly consistent) or ``"unknown"`` (something undeclared).
     """
     problems: list[str] = []
-    if (
-        engine_caps.energy_kind != EnergyKind.UNKNOWN
-        and surrogate_caps.energy_kind != EnergyKind.UNKNOWN
-        and engine_caps.energy_kind != surrogate_caps.energy_kind
-    ):
-        problems.append(
-            f"engine reports energy_kind={engine_caps.energy_kind.value!r} but the "
-            f"surrogate reports {surrogate_caps.energy_kind.value!r}; anchored "
-            "energies would mix different energy quantities"
-        )
     for side, caps in (("engine", engine_caps), ("surrogate", surrogate_caps)):
         if caps.force_consistent is False:
             problems.append(
@@ -124,8 +130,30 @@ def assert_compatible_energy_contract(
                 f"{side} declares forces_conservative=False: endpoint work and "
                 "directional coefficients require conservative forces"
             )
+    kinds = {engine_caps.energy_kind, surrogate_caps.energy_kind}
+    cross_kind = (
+        EnergyKind.UNKNOWN not in kinds
+        and engine_caps.energy_kind != surrogate_caps.energy_kind
+    )
+    if cross_kind:
+        for side, caps in (("engine", engine_caps), ("surrogate", surrogate_caps)):
+            if caps.force_consistent is not True \
+                    or caps.forces_conservative is not True:
+                problems.append(
+                    f"{side} does not strictly declare force/energy consistency "
+                    f"(force_consistent={caps.force_consistent!r}, "
+                    f"forces_conservative={caps.forces_conservative!r}): a "
+                    f"cross-kind combination ({engine_caps.energy_kind.value!r} "
+                    f"x {surrogate_caps.energy_kind.value!r}) requires both "
+                    "sides verified, not merely un-rejected"
+                )
     if problems:
         raise CapabilityMismatchError("incompatible energy contract: " + "; ".join(problems))
+    if cross_kind:
+        return "cross_kind"
+    if EnergyKind.UNKNOWN in kinds:
+        return "unknown"
+    return "same_kind"
 
 
 class Surrogate(Protocol):

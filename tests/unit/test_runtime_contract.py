@@ -33,6 +33,7 @@ from pyraimd2.surrogate import (
     MaceSurrogate,
     SurrogateCapabilities,
     SurrogatePrediction,
+    assert_compatible_energy_contract,
     surrogate_capabilities,
 )
 
@@ -270,19 +271,41 @@ class InconsistentHarmonic(Harmonic):
         energy_kind="energy", force_consistent=False)
 
 
-def test_energy_kind_mismatch_fails_before_expensive_compute(tmp_path):
+class UnverifiedHarmonic(Harmonic):
+    # Cross-kind partner with undeclared consistency: not a verified side.
+    capabilities: ClassVar[SurrogateCapabilities] = SurrogateCapabilities(
+        energy_kind="energy", force_consistent=None, forces_conservative=True)
+
+
+class UnknownKindHarmonic(Harmonic):
+    capabilities: ClassVar[SurrogateCapabilities] = SurrogateCapabilities(
+        energy_kind="energy", force_consistent=True, forces_conservative=True)
+
+
+def test_cross_kind_combination_allowed_when_both_sides_verified(tmp_path):
+    # QE-metallic free_energy x MACE energy (INDEPENDENT_REVIEW §5): the
+    # contract needs each side's scalar consistent with its own forces, not
+    # equal kind strings. Both sides strictly consistent: allowed, and no
+    # expensive call happens at construction either way.
     engine, model = FreeEnergyReference(), EnergyHarmonic()
-    with pytest.raises(CapabilityMismatchError, match="energy_kind"):
-        EnergeticCalculator(model, engine, Store(tmp_path / "a.db"), "run",
-                            force_budget=0.1)
+    EnergeticCalculator(model, engine, Store(tmp_path / "a.db"), "run",
+                        force_budget=0.1)
     assert engine.attempts == 0 and model.calls == 0  # no SCF, no inference
     assert issubclass(CapabilityMismatchError, ValueError)
+
+
+def test_cross_kind_combination_rejected_when_a_side_is_unverified(tmp_path):
+    engine, model = FreeEnergyReference(), UnverifiedHarmonic()
+    with pytest.raises(CapabilityMismatchError, match="both sides verified"):
+        EnergeticCalculator(model, engine, Store(tmp_path / "b.db"), "run",
+                            force_budget=0.1)
+    assert engine.attempts == 0 and model.calls == 0
 
 
 def test_declared_force_inconsistency_fails_before_expensive_compute(tmp_path):
     engine, model = Reference(), InconsistentHarmonic()
     with pytest.raises(CapabilityMismatchError, match="force_consistent"):
-        EnergeticCalculator(model, engine, Store(tmp_path / "b.db"), "run",
+        EnergeticCalculator(model, engine, Store(tmp_path / "c.db"), "run",
                             force_budget=0.1)
     assert engine.attempts == 0 and model.calls == 0
 
@@ -294,10 +317,26 @@ def test_matching_or_undeclared_conventions_construct_fine(tmp_path):
             forces_conservative=True)
 
     EnergeticCalculator(FreeEnergyHarmonic(), FreeEnergyReference(),
-                        Store(tmp_path / "c.db"), "run", force_budget=0.1)
+                        Store(tmp_path / "d.db"), "run", force_budget=0.1)
     # Undeclared (unknown) cannot prove a mismatch: legacy fakes still work.
-    EnergeticCalculator(Harmonic(), Reference(), Store(tmp_path / "d.db"), "run",
+    EnergeticCalculator(Harmonic(), Reference(), Store(tmp_path / "e.db"), "run",
                         force_budget=0.1)
+
+
+def test_contract_combination_modes():
+    same = assert_compatible_energy_contract(
+        EngineCapabilities(energy_kind="energy", force_consistent=True,
+                           forces_conservative=True),
+        SurrogateCapabilities(energy_kind="energy", force_consistent=True,
+                              forces_conservative=True))
+    cross = assert_compatible_energy_contract(
+        EngineCapabilities(energy_kind="free_energy", force_consistent=True,
+                           forces_conservative=True),
+        SurrogateCapabilities(energy_kind="energy", force_consistent=True,
+                              forces_conservative=True))
+    undeclared = assert_compatible_energy_contract(
+        EngineCapabilities(), SurrogateCapabilities())
+    assert (same, cross, undeclared) == ("same_kind", "cross_kind", "unknown")
 
 
 class MutableReference(Reference):

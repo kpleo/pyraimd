@@ -318,14 +318,19 @@ def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
     report["capabilities"] = capabilities
     if engine is not None and surrogate is not None:
         try:
-            assert_compatible_energy_contract(
+            mode = assert_compatible_energy_contract(
                 backend_capabilities(engine), backend_capabilities(surrogate))
         except CapabilityMismatchError as error:
             raise WorkflowError(
-                f"reference/surrogate energy contract: {error}; choose "
-                "backends that report the same energy quantity with "
-                "consistent forces") from error
-        report["energy_contract"] = "compatible"
+                f"reference/surrogate energy contract: {error}; the "
+                "combination needs each side's reported energy consistent "
+                "with its forces, and a cross-kind combination needs both "
+                "sides strictly verified") from error
+        report["energy_contract"] = {
+            "same_kind": "compatible",
+            "cross_kind": "compatible_cross_kind",
+            "unknown": "undeclared",
+        }[mode]
 
     check_run_directory_available(config)
 
