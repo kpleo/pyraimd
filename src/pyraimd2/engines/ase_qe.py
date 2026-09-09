@@ -48,9 +48,11 @@ a shell.
 from __future__ import annotations
 
 import shlex
+import subprocess
 import time
 from pathlib import Path
 
+import numpy as np
 from ase import Atoms
 from ase.calculators.espresso import Espresso, EspressoProfile
 
@@ -237,8 +239,11 @@ class AseQeEngine(AseEngine):
 
     # -- execution ----------------------------------------------------------
 
-    def _emit_attempt(self, record: dict, *, request_id: str,
-                      started_unix: float) -> None:
+    def _emit_attempt(self, record: dict, *, request_id: str) -> None:
+        """One event per real process launch; the record's status is
+        terminal (success/failed/killed/post_processing_failed) by then.
+        Input-write failures and a missing executable never launched a
+        process, so they emit nothing."""
         if self._event_log is None:
             return
         self._event_log.append(
@@ -250,9 +255,11 @@ class AseQeEngine(AseEngine):
                 "request_id": request_id,
                 "attempt": record["attempt"],
                 "status": record["status"],
-                "started_unix": started_unix,
+                "failure_kind": record.get("failure_kind"),
+                "started_unix": record["started_unix"],
                 "elapsed_s": record.get("wall_time_s"),
-                "returncode": None,  # ASE's FileIO layer owns the exit code
+                "process_elapsed_s": record.get("process_s"),
+                "returncode": record.get("returncode"),
                 "directory": record["directory"],
                 "start": record["start"],
                 "source": "qe-engine",
@@ -262,6 +269,17 @@ class AseQeEngine(AseEngine):
 
     def compute(self, atoms: Atoms, label: str | None = None, *,
                 request_id: str | None = None) -> EngineResult:
+        # Same sink rule as the handwritten path: a caller naming the parent
+        # logical request expects per-launch attempt events to reach its
+        # ledger; without a sink they would be silently lost.
+        if request_id is not None and self._event_log is None:
+            raise EngineError(
+                f"compute received request_id {request_id!r} but this engine has "
+                "no attempt sink: per-launch attempt events would be lost. "
+                "Attach the run's event log (event_log=...) or call without "
+                "request_id (execution records then stay in "
+                "last_attempt_records only)"
+            )
         _initial_magmoms(atoms)  # reject noncollinear states before any launch
         base = "eval" if label is None else str(label).replace("/", "_")
         if request_id is None:
@@ -277,17 +295,71 @@ class AseQeEngine(AseEngine):
         attempt = 1
         while True:
             use_density = density is not None and attempt == 1
-            directory = allocate_run_dir(self.run_root, base)
-            record: dict = {
-                "attempt": attempt,
-                "directory": str(directory),
-                "start": "density" if use_density else "atomic",
-                "status": "running",
-                "error": None,
-                "retryable": None,
-            }
-            self.last_attempt_records.append(record)
-            if use_density:
+            try:
+                result = self._attempt(atoms, base, density if use_density else None,
+                                       attempt=attempt, request_id=request_id)
+            except QeEngineError as failure:
+                record = self.last_attempt_records[-1]
+                if record["status"] == "running":
+                    # Pre-launch failure (staging, input write, missing
+                    # executable): terminated here; no process ever started,
+                    # so no attempt event.
+                    record["status"] = "failed"
+                record.update(error=str(failure), retryable=failure.retryable)
+                # A failed density start gets one atomic-start retry even when
+                # the failure itself is deterministic (stale density): the
+                # retry runs a different input. Anything else retries only
+                # when the failure is classified retryable.
+                changes_input = use_density
+                if retries_done >= self.config.max_retries:
+                    raise
+                if not (failure.retryable or changes_input):
+                    raise
+                retries_done += 1
+                attempt += 1
+                continue
+            self._last_density_dir = Path(self.last_attempt_records[-1]["directory"])
+            total_wall = sum(r.get("wall_time_s", 0.0)
+                             for r in self.last_attempt_records)
+            return EngineResult(
+                energy=result.energy,
+                forces=result.forces,
+                stress=result.stress,
+                wall_time_s=total_wall,
+                energy_kind=result.energy_kind,
+                force_consistent=result.force_consistent,
+            )
+
+    def _attempt(self, atoms: Atoms, base: str, density: DensitySource | None,
+                 *, attempt: int, request_id: str) -> EngineResult:
+        """One attempt: stage (optional), write input, exactly one explicit
+        ASE execution, read the whole result, validate the shared contract.
+
+        The phases are driven directly so the launch boundary is exact:
+        ``write_inputfiles``/``read_results`` are not launches; ``execute``
+        is. A FileNotFoundError out of ``execute`` means the process never
+        started (zero launches, no attempt event). Property getters are
+        never used for reading — they let ASE silently re-execute when a
+        property is missing.
+        """
+        directory = allocate_run_dir(self.run_root, base)
+        record: dict = {
+            "attempt": attempt,
+            "directory": str(directory),
+            "start": "density" if density is not None else "atomic",
+            "status": "running",
+            "failure_kind": None,
+            "error": None,
+            "retryable": None,
+            "returncode": None,
+        }
+        self.last_attempt_records.append(record)
+        # The attempt span covers staging + write + process + validation, so
+        # the density-copy I/O event is genuinely nested inside it.
+        record["started_unix"] = time.time()
+        t0 = time.perf_counter()
+        try:
+            if density is not None:
                 self._io_counter += 1
                 copy_s, copy_bytes = _stage_density_into(
                     density, directory, event_log=self._event_log,
@@ -297,67 +369,118 @@ class AseQeEngine(AseEngine):
                 record["density_copy_s"] = copy_s
                 record["density_copy_bytes"] = copy_bytes
             self.calculator.directory = directory
-            self._apply_electronic_state(atoms, startpot=use_density)
+            self._apply_electronic_state(atoms, startpot=density is not None)
             # Every compute is a real execution: an external SCF must never be
             # served from ASE's geometry cache (reference executions are
             # accounted per launch; legitimate reuse is Pyramid's own label
             # cache, not an invisible calculator cache).
             self.calculator.atoms = None
             self.calculator.results.clear()
-            started_unix = time.time()
-            t0 = time.perf_counter()
-            try:
-                result = super().compute(atoms)
-                text = self._read_output(directory)
-                check_qe_run_text(text, len(atoms))
-            except QeEngineError as error:
-                failure = error
-            except EngineError as error:
-                # ASE-level failure (nonzero exit, unreadable output):
-                # classify from whatever output exists.
-                failure = self._classified(error, directory)
-            else:
-                failure = None
+            self.calculator.write_inputfiles(atoms, ["energy", "free_energy",
+                                                     "forces", "stress"])
+        except Exception as error:
+            record.update(status="failed", failure_kind="input_write",
+                          error=repr(error))
+            raise QeEngineError(
+                f"espresso input could not be written in {directory}: {error}"
+            ) from error
+
+        process_t0 = time.perf_counter()
+        try:
+            self.calculator.template.execute(directory, self.calculator.profile)
+        except FileNotFoundError as error:
+            # The executable never started: zero launches, no attempt event.
+            record.update(status="failed", failure_kind="executable_missing",
+                          error=str(error))
+            raise QeEngineError(
+                f"pw.x executable not found ({self.calculator.profile.command!r}): "
+                f"{error}"
+            ) from error
+        except subprocess.CalledProcessError as error:
+            record["process_s"] = time.perf_counter() - process_t0
             record["wall_time_s"] = time.perf_counter() - t0
-            if failure is None:
-                write_density_manifest(
-                    directory, engine=self, atoms=atoms,
-                    source=(
-                        {"kind": "atomic"} if not use_density else {
-                            "kind": "copied",
-                            "from": str(density.origin_dir),
-                            "from_fingerprint": density.manifest.get(
-                                "reference_fingerprint"),
-                            "copy_s": record["density_copy_s"],
-                            "copy_bytes": record["density_copy_bytes"],
-                        }
-                    ),
-                )
-                self._last_density_dir = directory
-                record.update(status="success", error=None)
-                self._emit_attempt(record, request_id=request_id,
-                                   started_unix=started_unix)
-                total_wall = sum(r.get("wall_time_s", 0.0)
-                                 for r in self.last_attempt_records)
-                return EngineResult(
-                    energy=result.energy,
-                    forces=result.forces,
-                    stress=result.stress,
-                    wall_time_s=total_wall,
-                    energy_kind=result.energy_kind,
-                    force_consistent=result.force_consistent,
-                )
-            record.update(status="failed", error=str(failure),
-                          retryable=failure.retryable)
-            self._emit_attempt(record, request_id=request_id,
-                               started_unix=started_unix)
-            changes_input = use_density
-            if retries_done >= self.config.max_retries:
-                raise failure
-            if not (failure.retryable or changes_input):
-                raise failure
-            retries_done += 1
-            attempt += 1
+            record["returncode"] = error.returncode
+            failure = self._classified(
+                EngineError(f"pw.x exited with code {error.returncode}"),
+                directory)
+            record.update(status="failed", failure_kind="process",
+                          error=str(failure))
+            self._emit_attempt(record, request_id=request_id)
+            raise failure from error
+        record["process_s"] = time.perf_counter() - process_t0
+        try:
+            results = dict(self.calculator.template.read_results(directory))
+            self.calculator.results = results
+            self.calculator.atoms = atoms.copy()
+            result = self._validated_result(results, len(atoms))
+            check_qe_run_text(self._read_output(directory), len(atoms))
+        except QeEngineError as error:
+            record["wall_time_s"] = time.perf_counter() - t0
+            record.update(status="failed", failure_kind="parse", error=str(error))
+            self._emit_attempt(record, request_id=request_id)
+            raise
+        except Exception as error:
+            record["wall_time_s"] = time.perf_counter() - t0
+            record.update(status="failed", failure_kind="parse", error=repr(error))
+            self._emit_attempt(record, request_id=request_id)
+            raise QeEngineError(
+                f"espresso output processing failed in {directory}: {error}",
+                retryable=True,
+            ) from error
+        record["wall_time_s"] = time.perf_counter() - t0
+        try:
+            write_density_manifest(
+                directory, engine=self, atoms=atoms,
+                source=(
+                    {"kind": "atomic"} if density is None else {
+                        "kind": "copied",
+                        "from": str(density.origin_dir),
+                        "from_fingerprint": density.manifest.get(
+                            "reference_fingerprint"),
+                        "copy_s": record["density_copy_s"],
+                        "copy_bytes": record["density_copy_bytes"],
+                    }
+                ),
+            )
+        except Exception as error:
+            # SCF and parse succeeded; the provenance sidecar did not.
+            record.update(status="post_processing_failed",
+                          failure_kind="post_processing", error=repr(error))
+            self._emit_attempt(record, request_id=request_id)
+            raise QeEngineError(
+                f"density manifest could not be written in {directory}: {error}"
+            ) from error
+        record.update(status="success", error=None)
+        self._emit_attempt(record, request_id=request_id)
+        return result
+
+    def _validated_result(self, results: dict, nat: int) -> EngineResult:
+        """Numeric completeness of one executed run's results (units and
+        signs are ASE's espresso reader's; the text contract is checked
+        separately by check_qe_run_text)."""
+        energy_key = "free_energy" if self.force_consistent else "energy"
+        energy = results.get(energy_key)
+        forces = np.asarray(results.get("forces", []), dtype=float)
+        stress = results.get("stress")
+        if energy is None or not np.isfinite(float(energy)):
+            raise QeEngineError("espresso results have no finite energy")
+        if forces.shape != (nat, 3) or not np.isfinite(forces).all():
+            raise QeEngineError(
+                f"espresso force block shape {forces.shape} != ({nat}, 3)")
+        if stress is None:
+            raise QeEngineError(
+                "espresso results have no stress although tstress was requested")
+        stress = np.asarray(stress, dtype=float)
+        if stress.shape != (6,) or not np.isfinite(stress).all():
+            raise QeEngineError("espresso stress is not a finite (6,) vector")
+        return EngineResult(
+            energy=float(energy),
+            forces=np.array(forces, dtype=float, copy=True),
+            stress=np.array(stress, dtype=float, copy=True),
+            wall_time_s=float("nan"),  # replaced by the caller's span timing
+            energy_kind=self.capabilities.energy_kind,
+            force_consistent=True,
+        )
 
     @staticmethod
     def _read_output(directory: Path) -> str:

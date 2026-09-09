@@ -10,6 +10,7 @@ import stat
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 from ase import Atoms, units
 
@@ -710,3 +711,178 @@ def test_logical_vs_physical_aggregation_convention(tmp_path: Path) -> None:
     assert all(e["request_id"] == logical[0]["task_id"] for e in physical)
     assert result.wall_time_s == pytest.approx(
         sum(e["elapsed_s"] for e in physical), rel=1e-6)
+
+
+# --- attempt sink discipline (review B2) ------------------------------------
+
+
+def test_request_id_without_sink_rejected_before_any_launch(tmp_path: Path) -> None:
+    """A caller naming a parent request expects per-launch events to reach
+    its ledger; without a sink they would vanish — reject pre-launch."""
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+        run_root=tmp_path / "runs",
+    )
+    with pytest.raises(EngineError, match="attempt sink"):
+        engine.compute(_si(), label="x", request_id="run-task-1")
+    assert not counter.exists()  # nothing launched
+    assert not (tmp_path / "runs" / "x-000000").exists()  # no side effects
+
+
+def test_runner_log_with_sinkless_engine_rejected_before_launch(tmp_path: Path) -> None:
+    """The review's B2 combination: EnergeticRunner with an event log around
+    a QeEngine constructed without one used to undercount silently; it must
+    now fail loudly before the first SCF."""
+    from pyraimd2.loop import EnergeticRunner
+    from pyraimd2.store import Store
+    from pyraimd2.surrogate.base import SurrogatePrediction
+
+    class TinySurrogate:
+        def predict(self, atoms):
+            return SurrogatePrediction(
+                0.5 * float(np.sum(atoms.positions**2)), -atoms.positions, None,
+                np.full(len(atoms), np.nan))
+
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    engine = QeEngine(  # deliberately no event_log: the sink is not connected
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+        run_root=tmp_path / "qe",
+    )
+    atoms = _si()
+    atoms.set_velocities(np.zeros((2, 3)))
+    store = Store(tmp_path / "run.db")
+    with EventLog(tmp_path / "run") as log:
+        runner = EnergeticRunner(atoms, TinySurrogate(), engine, store, "run",
+                                 force_budget=0.1, timestep_fs=0.1,
+                                 event_log=log)
+        with pytest.raises(EngineError, match="attempt sink"):
+            runner.run(1)
+    assert not counter.exists()  # zero launches, not a silent undercount
+
+
+def test_local_records_consumable_without_sink(tmp_path: Path) -> None:
+    """Without any ledger the engine still keeps a complete per-launch
+    record (started/status/elapsed/returncode) a caller can consume."""
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        'if [ "$n" -eq 1 ]; then echo "launcher hiccup"; exit 139; fi\n'
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                 max_retries=1),
+        run_root=tmp_path / "runs",
+    )
+    engine.compute(_si())
+    records = engine.last_attempt_records
+    assert [r["status"] for r in records] == ["failed", "success"]
+    assert all(r["started_unix"] > 0 for r in records)
+    assert all(r["wall_time_s"] >= 0 for r in records)
+    assert records[0]["returncode"] == 139 and records[1]["returncode"] == 0
+    assert records[0]["failure_kind"] == "process"
+
+
+# --- zero launches and terminal states (review B3 / F3-F5) -------------------
+
+
+def test_missing_executable_is_zero_launches(tmp_path: Path) -> None:
+    """A nonexistent executable never starts a process: no attempt event,
+    and the failure surfaces as a contract EngineError, not a raw
+    FileNotFoundError (review F4's engine side)."""
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo",
+                     pw_cmd=(str(tmp_path / "does-not-exist"),), max_retries=3),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(EngineError, match="executable not found"):
+            engine.compute(_si(), label="noexe")
+    assert _attempt_events(tmp_path / "run") == []
+    record = engine.last_attempt_records[-1]
+    assert record["status"] == "failed"
+    assert record["failure_kind"] == "executable_missing"
+    assert record["retryable"] is False  # a missing binary is deterministic
+
+
+def test_timeout_attempt_ends_killed(tmp_path: Path) -> None:
+    body = "#!/bin/bash\nsleep 30\n"
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                     timeout_s=0.5, max_retries=0),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(EngineError, match="timed out"):
+            engine.compute(_si(), label="hang")
+    events = _attempt_events(tmp_path / "run")
+    assert len(events) == 1
+    assert events[0]["status"] == "killed"
+    assert events[0]["failure_kind"] == "timeout"
+    assert engine.last_attempt_records[-1]["status"] == "killed"
+
+
+def test_manifest_write_failure_ends_post_processing_failed(tmp_path: Path) -> None:
+    """The process succeeded and parsed; the provenance sidecar could not be
+    written. The attempt must still be terminated and recorded — distinctly
+    from a process/parse failure (review F5)."""
+    body = (
+        "#!/bin/bash\n"
+        "mkdir density_manifest.json\n"  # a directory: writing the file fails
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                     max_retries=3),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(EngineError, match="density manifest"):
+            engine.compute(_si(), label="pp")
+    events = _attempt_events(tmp_path / "run")
+    assert len(events) == 1  # one real launch, one terminated record
+    assert events[0]["status"] == "post_processing_failed"
+    assert events[0]["failure_kind"] == "post_processing"
+    record = engine.last_attempt_records[-1]
+    assert record["status"] == "post_processing_failed"
+    assert record["error"]  # original OSError preserved
+
+
+def test_density_copy_interval_is_nested_inside_the_attempt_span(tmp_path: Path) -> None:
+    """The copy happens inside the attempt span by construction; the io
+    event's real interval must lie within the attempt's (review F7)."""
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo",
+                     pw_cmd=_fake_pwx(tmp_path, _fixture_cat_with_save()),
+                     startpot_file=True),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        engine.compute(_si(), label="first")
+        engine.compute(_si(), label="second")
+    with EventLog(tmp_path / "run") as log:
+        events = list(log.iter_events())
+    io = next(e for e in events if e.get("record") == "physical_io")
+    attempt = next(e for e in events if e.get("type") == "attempt"
+                   and e.get("request_id") == io["request_id"])
+    io_end = io["started_unix"] + io["elapsed_s"]
+    attempt_end = attempt["started_unix"] + attempt["elapsed_s"]
+    assert attempt["started_unix"] <= io["started_unix"] <= io_end
+    assert io_end <= attempt_end + 1e-6  # nested: never a missing interval
+    assert attempt["process_elapsed_s"] is not None

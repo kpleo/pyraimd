@@ -54,11 +54,13 @@ process group is killed (``start_new_session`` + ``killpg``), so an
 mpirun-wrapped pw.x leaves no orphaned ranks behind.
 
 Cost recording: with an event log attached, every real subprocess launch
-emits one ``attempt`` event (grouped by ``request_id``; failures rejected
-before launch emit none), and ``EngineResult.wall_time_s`` is the physical
-total across attempts. Density-copy I/O is emitted as ``task`` events with
-``record="physical_io"``; its time is nested inside the attempt span and
-must not be summed on top.
+emits one ``attempt`` event with a terminal status (grouped by
+``request_id``; nothing launched means no event), and
+``EngineResult.wall_time_s`` is the physical total across attempt spans.
+An attempt span covers staging + process + validation; density-copy I/O is
+emitted as ``task`` events with ``record="physical_io"`` whose interval is
+inside the attempt span and must not be summed on top. A caller passing
+``request_id`` without an attached sink is rejected before launch.
 
 Density warm start (``startpot_file=True``): before launch the engine
 looks for a compatible density of known origin — ``density_source`` first,
@@ -711,15 +713,19 @@ class QeEngine:
 
     ``event_log`` is optional: any object with ``append(event_type, payload)``
     following the run event schema. When attached, every real subprocess
-    launch is emitted as one ``attempt`` event (fields: ``request_id``,
-    ``attempt``, ``status``, ``started_unix``, ``elapsed_s``, ``returncode``,
-    ``directory``, ``start``, optional ``error``) and density-copy I/O as
-    ``task`` events with ``record="physical_io"`` — the engine only calls the
-    interface, it does not depend on the runtime package. Failures rejected
-    before a process starts (input validation, staging) emit no attempt
-    event: they are not physical executions. ``compute`` accepts an optional
-    ``request_id`` naming the parent logical request; without one the engine
-    generates its own so attempts stay grouped per call.
+    launch is emitted as one ``attempt`` event whose record ends in a terminal
+    status (success/failed/killed/post_processing_failed, with
+    ``failure_kind`` distinguishing process/parse/timeout/post-processing);
+    failures rejected before a process starts (input validation, staging,
+    missing executable) emit no attempt event: zero launches, zero attempts.
+    The attempt span covers staging + process + validation, so density-copy
+    I/O events (``record="physical_io"``) are genuinely nested inside it.
+    ``compute`` accepts an optional ``request_id`` naming the parent logical
+    request; a ``request_id`` without an attached sink is rejected before any
+    launch — per-launch events would otherwise be silently lost. Without a
+    ``request_id`` the engine generates its own, and the same terminal
+    records are always available in ``last_attempt_records`` for a caller
+    that prefers to consume execution records directly.
     """
 
     def __init__(self, config: QeConfig, run_root: str | Path, *,
@@ -758,10 +764,11 @@ class QeEngine:
         digest = _settings_digest(self.config, path_kind="qe-subprocess")
         return f"{self.name}:{digest}"
 
-    def _emit_attempt(self, record: dict, *, request_id: str,
-                      started_unix: float, returncode: int | None) -> None:
+    def _emit_attempt(self, record: dict, *, request_id: str) -> None:
         """One event per real process launch (R6): the ledger's physical
-        executions, grouped under the parent logical request."""
+        executions, grouped under the parent logical request. Only called
+        after a launch actually happened; the record's status is terminal
+        (success/failed/killed/post_processing_failed) by then."""
         if self._event_log is None:
             return
         self._event_log.append(
@@ -773,9 +780,11 @@ class QeEngine:
                 "request_id": request_id,
                 "attempt": record["attempt"],
                 "status": record["status"],
-                "started_unix": started_unix,
+                "failure_kind": record.get("failure_kind"),
+                "started_unix": record["started_unix"],
                 "elapsed_s": record.get("wall_time_s"),
-                "returncode": returncode,
+                "process_elapsed_s": record.get("process_s"),
+                "returncode": record.get("returncode"),
                 "directory": record["directory"],
                 "start": record["start"],
                 "source": "qe-engine",
@@ -785,6 +794,17 @@ class QeEngine:
 
     def compute(self, atoms: Atoms, label: str | None = None, *,
                 request_id: str | None = None) -> EngineResult:
+        # A caller that names the parent logical request expects per-launch
+        # attempt events to reach its ledger; without a sink they would be
+        # silently lost, so the combination is rejected before any launch.
+        if request_id is not None and self._event_log is None:
+            raise EngineError(
+                f"compute received request_id {request_id!r} but this engine has "
+                "no attempt sink: per-launch attempt events would be lost. "
+                "Attach the run's event log (event_log=...) or call without "
+                "request_id (execution records then stay in "
+                "last_attempt_records only)"
+            )
         base = "eval" if label is None else str(label).replace("/", "_")
         run_dir = allocate_run_dir(self.run_root, base)
         self.last_attempt_records = []
@@ -815,7 +835,11 @@ class QeEngine:
                 )
             except QeEngineError as error:
                 record = self.last_attempt_records[-1]
-                record.update(status="failed", error=str(error), retryable=error.retryable)
+                if record["status"] == "running":
+                    # Pre-launch failure (staging, input write): terminated
+                    # here; no process ever started, so no attempt event.
+                    record["status"] = "failed"
+                record.update(error=str(error), retryable=error.retryable)
                 # A failed density start gets one atomic-start retry even when
                 # the failure itself is deterministic (stale density): the
                 # retry runs a different input. Anything else retries only
@@ -844,13 +868,17 @@ class QeEngine:
                 continue
             except Exception:
                 # Never leave an attempt record "running", whatever failed.
-                self.last_attempt_records[-1].update(status="failed", retryable=False)
+                record = self.last_attempt_records[-1]
+                if record["status"] == "running":
+                    record["status"] = "failed"
+                record["retryable"] = False
                 raise
             record = self.last_attempt_records[-1]
             record.update(status="success", error=None, retryable=None)
             self._last_density_dir = run_dir / f"attempt-{attempt}"
-            # wall_time_s is the physical total of this call: every attempt,
-            # not only the last successful one.
+            # wall_time_s is the physical total of this call: every attempt
+            # span (staging + process + validation), not only the last
+            # successful process.
             total_wall = sum(r.get("wall_time_s", 0.0)
                              for r in self.last_attempt_records)
             return EngineResult(
@@ -893,54 +921,77 @@ class QeEngine:
             "directory": str(attempt_dir),
             "start": "density" if density is not None else "atomic",
             "status": "running",
+            "failure_kind": None,
             "error": None,
             "retryable": None,
+            "returncode": None,
         }
         self.last_attempt_records.append(record)
+        # The attempt span covers staging + process + validation, so the
+        # density-copy I/O event is genuinely nested inside it (its own real
+        # interval is recorded on the io event; the ledger must not add both).
+        record["started_unix"] = time.time()
+        t0 = time.perf_counter()
 
         copy_elapsed_s = 0.0
         copy_bytes = 0
-        if density is not None:
-            copy_elapsed_s, copy_bytes = self._stage_density(
-                density, attempt_dir, request_id=request_id
-            )
-            record["density_from"] = str(density.origin_dir)
-            record["density_copy_s"] = copy_elapsed_s
-            record["density_copy_bytes"] = copy_bytes
+        try:
+            if density is not None:
+                copy_elapsed_s, copy_bytes = self._stage_density(
+                    density, attempt_dir, request_id=request_id
+                )
+                record["density_from"] = str(density.origin_dir)
+                record["density_copy_s"] = copy_elapsed_s
+                record["density_copy_bytes"] = copy_bytes
 
-        # Absolute paths: the subprocess runs with cwd=attempt_dir, so a
-        # relative run_root would otherwise stop resolving.
-        in_path = (attempt_dir / "pw.in").resolve()
-        out_path = (attempt_dir / "pw.out").resolve()
-        write_qe_input(in_path, atoms, config)
+            # Absolute paths: the subprocess runs with cwd=attempt_dir, so a
+            # relative run_root would otherwise stop resolving.
+            in_path = (attempt_dir / "pw.in").resolve()
+            out_path = (attempt_dir / "pw.out").resolve()
+            write_qe_input(in_path, atoms, config)
+        except QeEngineError:
+            raise  # pre-launch input rejection; compute() terminates the record
+        except Exception as error:
+            raise QeEngineError(
+                f"attempt setup failed before any launch in {attempt_dir}: {error}"
+            ) from error
 
-        started_unix = time.time()
-        t0 = time.perf_counter()
-        with out_path.open("w") as fh:
-            proc = subprocess.Popen(
-                [*config.pw_cmd, "-in", str(in_path)],
-                cwd=attempt_dir,
-                stdout=fh,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,  # own process group: killable as a unit
-            )
-            try:
-                proc.wait(timeout=config.timeout_s)
-            except subprocess.TimeoutExpired:
-                self._kill_process_group(proc)
-                record["wall_time_s"] = time.perf_counter() - t0
-                message = (f"pw.x timed out after {config.timeout_s:.0f}s in "
-                           f"{attempt_dir}; process group killed")
-                record.update(status="failed", error=message)
-                self._emit_attempt(record, request_id=request_id,
-                                   started_unix=started_unix, returncode=None)
-                raise QeEngineError(message, retryable=True) from None
-        wall = time.perf_counter() - t0
-        record["wall_time_s"] = wall
-        returncode = proc.returncode
+        process_t0 = time.perf_counter()
+        try:
+            with out_path.open("w") as fh:
+                proc = subprocess.Popen(
+                    [*config.pw_cmd, "-in", str(in_path)],
+                    cwd=attempt_dir,
+                    stdout=fh,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,  # own process group: killable as a unit
+                )
+        except FileNotFoundError as error:
+            # The executable never started: zero launches, no attempt event.
+            record.update(status="failed", failure_kind="executable_missing",
+                          error=str(error))
+            raise QeEngineError(
+                f"pw.x executable not found ({config.pw_cmd[0]!r}) in "
+                f"{attempt_dir}: {error}"
+            ) from error
+        try:
+            proc.wait(timeout=config.timeout_s)
+        except subprocess.TimeoutExpired:
+            self._kill_process_group(proc)
+            record["process_s"] = time.perf_counter() - process_t0
+            record["wall_time_s"] = time.perf_counter() - t0
+            message = (f"pw.x timed out after {config.timeout_s:.0f}s in "
+                       f"{attempt_dir}; process group killed")
+            record.update(status="killed", failure_kind="timeout", error=message)
+            self._emit_attempt(record, request_id=request_id)
+            raise QeEngineError(message, retryable=True) from None
+        record["process_s"] = time.perf_counter() - process_t0
+        record["wall_time_s"] = time.perf_counter() - t0
+        record["returncode"] = proc.returncode
         try:
             text = out_path.read_text(errors="replace")
-            if returncode != 0:
+            phase = "process"
+            if proc.returncode != 0:
                 # Classify from the output first: a deterministic failure
                 # (non-convergence, QE error banner) must not be retried just
                 # because the process also exited nonzero.
@@ -948,57 +999,66 @@ class QeEngine:
                 if kind == "nonconverged":
                     raise QeEngineError(
                         f"pw.x SCF did not converge in {attempt_dir} "
-                        f"(exit code {returncode})"
+                        f"(exit code {proc.returncode})"
                     )
                 if kind == "input_error":
                     raise QeEngineError(
-                        f"pw.x exited with code {returncode} in {attempt_dir} after a "
+                        f"pw.x exited with code {proc.returncode} in {attempt_dir} after a "
                         "deterministic input error; tail:\n"
                         + "\n".join(text.splitlines()[-15:])
                     )
                 raise QeEngineError(
-                    f"pw.x exited with code {returncode} in {attempt_dir}; tail:\n"
+                    f"pw.x exited with code {proc.returncode} in {attempt_dir}; tail:\n"
                     + "\n".join(text.splitlines()[-15:]),
                     retryable=True,
                 )
+            phase = "parse"
             check_qe_run_text(text, len(atoms))
             result = parse_qe_output(text)
         except QeEngineError as error:
-            record.update(status="failed", error=str(error))
-            self._emit_attempt(record, request_id=request_id,
-                               started_unix=started_unix, returncode=returncode)
+            record.update(status="failed", failure_kind=phase, error=str(error))
+            self._emit_attempt(record, request_id=request_id)
             raise
         except Exception as error:
             # The process ran: whatever went wrong afterwards (unreadable
             # output, OS errors) is still a physical execution — record it.
-            record.update(status="failed", error=repr(error))
-            self._emit_attempt(record, request_id=request_id,
-                               started_unix=started_unix, returncode=returncode)
+            record.update(status="failed", failure_kind=phase, error=repr(error))
+            self._emit_attempt(record, request_id=request_id)
             raise QeEngineError(
-                f"post-execution processing failed in {attempt_dir}: {error}",
+                f"output processing failed in {attempt_dir}: {error}",
                 retryable=True,
             ) from error
 
-        write_density_manifest(
-            attempt_dir, engine=self, atoms=atoms,
-            source=(
-                {"kind": "atomic"} if density is None else {
-                    "kind": "copied",
-                    "from": str(density.origin_dir),
-                    "from_fingerprint": density.manifest.get("reference_fingerprint"),
-                    "copy_s": copy_elapsed_s,
-                    "copy_bytes": copy_bytes,
-                }
-            ),
-        )
+        try:
+            write_density_manifest(
+                attempt_dir, engine=self, atoms=atoms,
+                source=(
+                    {"kind": "atomic"} if density is None else {
+                        "kind": "copied",
+                        "from": str(density.origin_dir),
+                        "from_fingerprint": density.manifest.get("reference_fingerprint"),
+                        "copy_s": copy_elapsed_s,
+                        "copy_bytes": copy_bytes,
+                    }
+                ),
+            )
+        except Exception as error:
+            # The SCF and its parse succeeded; the provenance sidecar did not.
+            # The attempt is terminated as post-processing failed — distinct
+            # from both — and the label is not delivered without it.
+            record.update(status="post_processing_failed",
+                          failure_kind="post_processing", error=repr(error))
+            self._emit_attempt(record, request_id=request_id)
+            raise QeEngineError(
+                f"density manifest could not be written in {attempt_dir}: {error}"
+            ) from error
         record.update(status="success", error=None)
-        self._emit_attempt(record, request_id=request_id,
-                           started_unix=started_unix, returncode=returncode)
+        self._emit_attempt(record, request_id=request_id)
         return EngineResult(
             energy=result.energy,
             forces=result.forces,
             stress=result.stress,
-            wall_time_s=wall,
+            wall_time_s=record["wall_time_s"],
             energy_kind=self.capabilities.energy_kind,
             force_consistent=True,
         )
