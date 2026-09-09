@@ -52,6 +52,15 @@ UPDATE_REJECTED = "update_rejected"
 PHYSICAL_ATTEMPT = "physical_attempt"
 PHYSICAL_IO = "physical_io"
 
+# Terminal statuses of a launched attempt (shared convention).  Every
+# launched attempt ends in exactly one of them — never left "running".
+# Only "success" means the launch completed successfully; the other three
+# are real executions that failed (a failed post-processing step is still
+# a real, failed execution — never disguised as not-run).
+ATTEMPT_TERMINAL_STATUSES = ("success", "failed", "killed",
+                             "post_processing_failed")
+ATTEMPT_FAILED_STATUSES = ("failed", "killed", "post_processing_failed")
+
 # RUN_START marker naming the attempt-ledger protocol a log follows.
 # summarize_tasks reads NEW logs by this marker — never by whether an
 # attempt happened to be recorded (B3: a fresh log whose first request
@@ -100,28 +109,39 @@ def physical_attempt(backend: object, event_log: EventLog | None, *,
     ``<method>`` accepts ``request_id`` reports every launch itself — the
     context manager yields the keyword to pass through, connecting the
     run's event log as the attempt sink for the call when the engine's own
-    sink is unconnected.  Any other backend gets exactly one attempt
-    recorded around the call.  A self-reporting backend that raises before
-    launching anything records no attempt — a precheck failure is not a
-    physical execution.
+    sink is unconnected (R2: sink identity is checked — an engine already
+    wired to a DIFFERENT log is refused before launch, never silently
+    cross-posted).  Any other backend gets exactly one attempt recorded
+    around the call.  A self-reporting backend that raises before launching
+    anything records no attempt — a precheck failure is not a physical
+    execution.  With no event log on the caller side the id is not injected
+    at all and no sink is required: the engine's no-log API stays usable.
     """
     if accepts_request_id(backend, method):
         attach = _sink_attribute(backend)
+        sink = getattr(backend, attach) if attach is not None else None
+        if event_log is None:
+            yield {"request_id": request_id} if sink is not None else {}
+            return
         if attach is None:
             raise EventLogError(
                 f"{type(backend).__name__} accepts request_id but exposes no "
                 "attempt sink (attempt_sink/event_log); the combination would "
                 "hide internal retries from the ledger — refusing before launch")
-        sink = getattr(backend, attach)
-        if sink is not None or event_log is None:
-            yield {"request_id": request_id}
+        if sink is None:
+            # Explicitly connect the run's log as this call's attempt sink.
+            setattr(backend, attach, event_log)
+            try:
+                yield {"request_id": request_id}
+            finally:
+                setattr(backend, attach, sink)
             return
-        # Explicitly connect the run's log as this call's attempt sink.
-        setattr(backend, attach, event_log)
-        try:
-            yield {"request_id": request_id}
-        finally:
-            setattr(backend, attach, sink)
+        if sink is not event_log:
+            raise EventLogError(
+                f"{type(backend).__name__} is wired to a different attempt "
+                "sink than the run's event log; attempts would land in the "
+                "other ledger — refusing before launch")
+        yield {"request_id": request_id}
         return
     if event_log is None:
         yield {}
