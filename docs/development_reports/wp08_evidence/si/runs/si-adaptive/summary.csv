@@ -1,0 +1,10 @@
+evaluation_id,step_id,physical_time_fs,route,reason,energy_eV,max_force_error_eV_A,endpoint_work_eV,accepted,checked,violation,reference_anchor,reference_probe,reference_check,segment_id,model_id
+0,-1,0.0,dft,initial_reference,-5087.0189564010625,,,False,False,,1,4,0,,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
+1,0,1.0,ml,forecast_accepted,-5087.0183693016925,0.022088513048763612,0.00019672460428201566,True,True,False,0,0,1,1,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
+2,1,2.0,ml,forecast_accepted,-5087.016766470363,0.04407347158012355,0.0007981516002496531,True,True,False,0,0,1,1,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
+3,2,3.0,dft,forecast_budget_domain_or_prefix_failure,-5087.012393831094,0.06563908352317513,0.0017886953377130909,False,False,,1,4,0,1,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
+4,3,4.0,ml,forecast_accepted,-5087.007742486371,0.02080363376213969,0.00018615942766190738,True,True,False,0,0,1,2,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
+5,4,5.0,ml,forecast_accepted,-5087.002301942077,0.040878049351163605,0.0007215076170350248,True,True,False,0,0,1,2,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
+6,5,6.0,dft,forecast_budget_domain_or_prefix_failure,-5086.994608333132,0.05929970297212881,0.0015719432638842123,False,False,,1,4,0,2,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
+7,6,7.0,ml,forecast_accepted,-5086.986990180103,0.01838598086896288,0.00014784048479466383,True,True,False,0,0,1,3,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
+8,7,8.0,ml,forecast_accepted,-5086.979036127349,0.0367957175879239,0.0005618331623079972,True,True,False,0,0,1,3,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0

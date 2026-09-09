@@ -1,0 +1,111 @@
+{
+  "run_id": "si-adaptive",
+  "schema_version": 2,
+  "event_schema_version": 1,
+  "reference_id": "qe-pbe-d3:d23205a4a5469f4f",
+  "n_evaluations": 9,
+  "n_complete_steps": 8,
+  "physical_time_fs": 8.0,
+  "model_id": "mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0",
+  "n_model_updates": 0,
+  "trajectory": {
+    "n_rows": 9,
+    "last_energy_eV": -5086.979036127349,
+    "last_temperature_K": 201.69428477779348,
+    "n_accepted": 6,
+    "last_step": 7
+  },
+  "checks": {
+    "independent_checks": 6,
+    "accepted_count": 6,
+    "detected_count": 0,
+    "bound": 0.0,
+    "probability": 1.0
+  },
+  "cost": {
+    "total_elapsed_s": 384.8608888569288,
+    "by": [
+      {
+        "operation": "inference",
+        "purpose": "probe",
+        "count": 12,
+        "elapsed_s": 2.889222602825612,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "inference",
+        "purpose": "proposal",
+        "count": 9,
+        "elapsed_s": 72.95922135282308,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "io",
+        "purpose": "trajectory_append",
+        "count": 9,
+        "elapsed_s": 0.17858837451785803,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "anchor",
+        "count": 1,
+        "elapsed_s": 26.882176941726357,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "probe",
+        "count": 12,
+        "elapsed_s": 159.88135552266613,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "refusal",
+        "count": 2,
+        "elapsed_s": 26.630519973114133,
+        "failed": 0,
+        "cache_hits": 0
+      },
+      {
+        "operation": "reference",
+        "purpose": "verification",
+        "count": 6,
+        "elapsed_s": 95.43980408925563,
+        "failed": 0,
+        "cache_hits": 0
+      }
+    ],
+    "reference": {
+      "logical_requests": 21,
+      "successful_executions": 21,
+      "failed_attempts": 0,
+      "cache_hits": 0,
+      "actual_executions": 21
+    },
+    "counts": {
+      "inference": 21,
+      "training": 0,
+      "io": 9
+    }
+  },
+  "wall_time_s": 83.17312444886193,
+  "last_checkpoint": {
+    "generation": 3,
+    "nsteps": 6,
+    "physical_time_fs": 6.0,
+    "last_event_seq": 78,
+    "valid": true
+  },
+  "failure": null,
+  "events": {
+    "count": 93,
+    "last_seq": 93
+  }
+}

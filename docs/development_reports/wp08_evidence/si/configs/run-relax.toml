@@ -1,0 +1,28 @@
+schema_version = 1
+
+[run]
+id = "si-relax"
+directory = "runs/si-relax"
+seed = 42
+
+[task]
+kind = "relax"
+mode = "surrogate"
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+timestep_fs = 0.5
+steps = 1
+
+[surrogate]
+backend = "mace"
+model = "./mace-mpa-0-medium.model"
+device = "cpu"
+default_dtype = "float64"
+
+[relax]
+optimizer = "fire"
+fmax_eV_A = 0.05
+steps = 100

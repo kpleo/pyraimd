@@ -1,0 +1,35 @@
+schema_version = 1
+
+[run]
+id = "si-reference"
+directory = "runs/si-reference"
+seed = 42
+
+[task]
+kind = "md"
+mode = "reference"
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 1.0
+steps = 6
+temperature_K = 300.0
+velocity_seed = 7
+
+[reference]
+backend = "qe"
+pseudo_dir = "/tmp/ps"
+pw_cmd = ["/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/wp08/pwx.sh"]
+ecutwfc = 50.0
+ecutrho = 400.0
+kpts = [4, 4, 4]
+conv_thr = 1e-8
+
+[reference.pseudos]
+Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF"
+
+[checkpoint]
+interval_steps = 3

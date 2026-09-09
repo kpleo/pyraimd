@@ -1,0 +1,63 @@
+{
+  "checks": {
+    "accepted_count": 0,
+    "bound": null,
+    "detected_count": 0,
+    "independent_checks": 0,
+    "probability": null
+  },
+  "cost": {
+    "by": [
+      {
+        "cache_hits": 0,
+        "count": 7,
+        "elapsed_s": 19.419583052396774,
+        "failed": 0,
+        "operation": "inference",
+        "purpose": "md"
+      }
+    ],
+    "counts": {
+      "inference": 7,
+      "io": 0,
+      "training": 0
+    },
+    "reference": {
+      "actual_executions": 0,
+      "cache_hits": 0,
+      "failed_attempts": 0,
+      "logical_requests": 0,
+      "successful_executions": 0
+    },
+    "total_elapsed_s": 19.419583052396774
+  },
+  "event_schema_version": 1,
+  "events": {
+    "count": 22,
+    "last_seq": 22
+  },
+  "failure": null,
+  "last_checkpoint": {
+    "generation": 2,
+    "last_event_seq": 21,
+    "nsteps": 6,
+    "physical_time_fs": 6.0,
+    "valid": true
+  },
+  "model_id": "mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0",
+  "n_complete_steps": 6,
+  "n_evaluations": 7,
+  "n_model_updates": 0,
+  "physical_time_fs": 6.0,
+  "reference_id": null,
+  "run_id": "al-surrogate",
+  "schema_version": 2,
+  "trajectory": {
+    "last_energy_eV": -59.84257680620548,
+    "last_step": 5,
+    "last_temperature_K": 145.67913164963124,
+    "n_accepted": 7,
+    "n_rows": 7
+  },
+  "wall_time_s": 2.6777577879838645
+}

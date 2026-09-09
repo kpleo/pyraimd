@@ -1,0 +1,22 @@
+{
+  "config_sha256": "f791adf2ab0394d38f108d0b394cffe7f143edab33c90b3501148cff7dea1942",
+  "created_unix": 1788898258.684245,
+  "platform": "Linux-3.10.0-1160.el7.x86_64-x86_64-with-glibc2.17",
+  "pyraimd2_version": "0.4.0.dev0",
+  "python": "3.12.13",
+  "reference": null,
+  "run_id": "si-relax",
+  "schema_version": 1,
+  "structure": {
+    "file": "/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/wp08/si/structure.extxyz",
+    "sha256": "0fb1572c80c1dcfbbc1ebe3321b22f9b30696cd75be9c722777ea9655b04634d"
+  },
+  "surrogate": {
+    "backend": "mace",
+    "fingerprint": "mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64"
+  },
+  "task": {
+    "kind": "relax",
+    "mode": "surrogate"
+  }
+}

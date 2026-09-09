@@ -1,0 +1,1 @@
+error: reference/surrogate energy contract: incompatible energy contract: engine reports energy_kind='free_energy' but the surrogate reports 'energy'; anchored energies would mix different energy quantities; choose backends that report the same energy quantity with consistent forces

@@ -1,0 +1,29 @@
+schema_version = 1
+
+[run]
+id = "si-surrogate"
+directory = "runs/si-surrogate"
+seed = 42
+
+[task]
+kind = "md"
+mode = "surrogate"
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 1.0
+steps = 6
+temperature_K = 300.0
+velocity_seed = 7
+
+[surrogate]
+backend = "mace"
+model = "./mace-mpa-0-medium.model"
+device = "cpu"
+default_dtype = "float64"
+
+[checkpoint]
+interval_steps = 3

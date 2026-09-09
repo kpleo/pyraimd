@@ -1,0 +1,56 @@
+{
+  "checkpoint": {
+    "interval_steps": 10,
+    "keep_generations": 2
+  },
+  "constraints": {
+    "fix_atoms_indices": []
+  },
+  "dynamics": {
+    "ensemble": "nve",
+    "steps": 1,
+    "temperature_K": 300.0,
+    "timestep_fs": 0.5,
+    "velocity_seed": 42
+  },
+  "output": {
+    "summary_interval_steps": 10,
+    "trajectory_interval_steps": 1
+  },
+  "policy": null,
+  "reference": null,
+  "relax": {
+    "fmax_eV_A": 0.05,
+    "optimizer": "fire",
+    "steps": 100
+  },
+  "run": {
+    "directory": "/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/wp08/si/runs/si-singlepoint",
+    "id": "si-singlepoint",
+    "seed": 42
+  },
+  "schema_version": 1,
+  "structure": {
+    "file": "/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/wp08/si/structure.extxyz"
+  },
+  "surrogate": {
+    "backend": "mace",
+    "options": {
+      "default_dtype": "float64",
+      "device": "cpu",
+      "model": "/data/home/df103967/df103967/.cache/mace/macempa0mediummodel"
+    }
+  },
+  "task": {
+    "kind": "singlepoint",
+    "mode": "surrogate"
+  },
+  "units": {
+    "energy": "eV",
+    "force": "eV/angstrom",
+    "length": "angstrom",
+    "temperature": "K",
+    "time": "fs"
+  },
+  "verification": null
+}

@@ -1,0 +1,59 @@
+schema_version = 1
+
+[run]
+id = "si-adaptive"
+directory = "runs/si-adaptive"
+seed = 42
+
+[task]
+kind = "md"
+mode = "adaptive"
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 1.0
+steps = 6
+temperature_K = 300.0
+velocity_seed = 7
+
+[reference]
+backend = "qe"
+pseudo_dir = "/tmp/ps"
+pw_cmd = ["/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/wp08/pwx.sh"]
+ecutwfc = 50.0
+ecutrho = 400.0
+kpts = [4, 4, 4]
+conv_thr = 1e-8
+
+[reference.pseudos]
+Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF"
+
+[surrogate]
+backend = "mace"
+model = "./mace-mpa-0-medium.model"
+device = "cpu"
+default_dtype = "float64"
+
+[policy]
+name = "energetic"
+force_budget_eV_A = 0.10
+probe_steps_A = [0.02, 0.04]
+numerical_floor_eV_A = 0.001
+time_cap_fs = 2.0
+transverse_cap = 0.1
+
+[verification]
+probability = 1.0
+failure_probability = 0.05
+tilt = 0.6931471805599453
+seed = 19
+
+[checkpoint]
+interval_steps = 3
+
+[output]
+trajectory_interval_steps = 1
+summary_interval_steps = 2
