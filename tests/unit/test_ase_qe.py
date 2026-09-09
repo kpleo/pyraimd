@@ -535,3 +535,40 @@ def test_density_copy_interval_is_nested_inside_the_attempt_span(tmp_path: Path)
     assert attempt["started_unix"] <= io["started_unix"] <= io_end
     assert io_end <= attempt_end + 1e-6
     assert attempt["process_elapsed_s"] is not None
+
+
+def test_manifest_write_time_is_settled_once_in_the_attempt_span(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """The attempt span claims staging + process + validation: a slow
+    density-manifest write must be counted in it exactly once (on both the
+    success and the post-processing-failure exits), never frozen out before
+    the write and never added twice downstream."""
+    import time
+
+    import pyraimd2.engines.ase_qe as ase_qe_module
+
+    real_write = ase_qe_module.write_density_manifest
+    delay_s = 0.15
+
+    def slow_manifest(*args, **kwargs):
+        time.sleep(delay_s)
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(ase_qe_module, "write_density_manifest", slow_manifest)
+    with _EventLog(tmp_path / "run") as log:
+        engine = AseQeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, _fixture_cat())),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        result = engine.compute(_si(), label="slow")
+    with _EventLog(tmp_path / "run") as log:
+        events = [e for e in log.iter_events() if e.get("type") == "attempt"]
+    assert len(events) == 1 and events[0]["status"] == "success"
+    span = events[0]["elapsed_s"]
+    process = events[0]["process_elapsed_s"]
+    assert span >= delay_s
+    # The write is inside the span, on top of the pure process time — once.
+    assert span >= process + 0.9 * delay_s
+    assert result.wall_time_s == pytest.approx(span, rel=1e-6)

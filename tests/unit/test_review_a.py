@@ -96,7 +96,7 @@ def test_a3_export_never_includes_orphan_rows(tmp_path):
     fail_commit_of(runner, 1)
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(1)  # orphan row written, commit lost
-    del runner
+    runner.close()
     resumed = resume(run_dir)
     resumed.run(1)  # committed re-execution at the same step
     resumed.close()
@@ -131,7 +131,7 @@ def test_a4_inspect_separates_complete_state_from_unfinished_tail(tmp_path):
     calc._emit_once = fail_boundary
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(1)  # evaluation committed; the step boundary never was
-    del runner
+    runner.close()
 
     info = inspect_run(run_dir)
     assert info["n_complete_steps"] == 0

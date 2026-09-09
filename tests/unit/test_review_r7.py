@@ -32,7 +32,7 @@ def orphan_run(tmp_path):
     fail_commit_of(runner, 1)
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(1)
-    del runner
+    runner.close()
     resumed = resume(run_dir)
     resumed.run(1)
     resumed.close()

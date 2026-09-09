@@ -10,6 +10,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from ase import Atoms
+from conftest import simulate_crash
 
 from pyraimd2.engines.base import EngineError, EngineResult
 from pyraimd2.loop import EnergeticRunner
@@ -270,7 +271,7 @@ def test_crash_window_replay_without_double_effects(tmp_path):
         tmp_path / "crash", checkpoint_interval=10)
     crashed.run(40)  # checkpoints at 10/20/30/40
     crashed.run(5)  # window: steps 41..45, no new checkpoint — now "crash"
-    del crashed  # abrupt stop: lock leaked, events fsynced per append
+    simulate_crash(crashed)  # abrupt stop: stale lock, fsynced events, no leaked handle
     log_reader = EventLog(tmp_path / "crash", force=True)
     n_tasks_before = sum(1 for e in log_reader.iter_events()
                          if e.get("type") == TASK)
@@ -310,7 +311,7 @@ def test_reference_failure_resume_matches_uninterrupted(tmp_path):
         failed.run(100)
     with pytest.raises(RuntimeError, match="failed"):
         failed.run(1)  # the failed runner never continues half-step states
-    del failed
+    failed.close()
 
     resumed, _, _, _ = resume_world(tmp_path / "failure", force=True)
     completed = resumed.calc.n_evaluations - 1  # steps done before the crash
@@ -354,7 +355,7 @@ def test_failed_update_refuses_resume_but_fork_works(tmp_path):
                              **POLICY)
     with pytest.raises(RuntimeError, match="deliberate updater failure"):
         runner.run(100)
-    del runner
+    runner.close()
 
     with pytest.raises(ResumeError, match="failed model update"):
         resume_world(run_dir, force=True)
