@@ -99,7 +99,14 @@ from pyraimd2.runtime.labels import LabelCache, atoms_input_hash
 from pyraimd2.runtime.models import (
     MODEL_ARTIFACT_FORMAT_VERSION,
     ModelRegistry,
+    array_placeholder,
     artifact_digest,
+    content_array_sink,
+    content_array_source,
+    dict_array_source,
+    dump_state_arrays,
+    load_state_arrays,
+    resolve_artifact_state,
 )
 from pyraimd2.runtime.updater import StatefulUpdater
 from pyraimd2.store.store import STORE_SCHEMA_VERSION, Store
@@ -560,9 +567,9 @@ class EnergeticCalculator(Calculator):
             },
             "constraint": (None if self._projection is None
                            else self._projection.as_dict()),
-            "updater_state": (self.on_label.state_dict()
-                              if _is_stateful(self.on_label) else None),
         }
+        updater_state = (self.on_label.state_dict()
+                         if _is_stateful(self.on_label) else None)
         arrays = {
             "numbers": boundary_atoms.numbers,
             "cell": boundary_atoms.cell.array,
@@ -575,7 +582,31 @@ class EnergeticCalculator(Calculator):
             "driving_forces": (np.zeros((len(boundary_atoms), 3)) if not self.results
                                else np.asarray(self.results["forces"], dtype=float)),
         }
+        if updater_state is not None:
+            # Tensor states cannot go into state.json: their arrays ride in
+            # the checkpoint's own arrays.npz, the JSON keeps digest
+            # placeholders (tensor-artifact-v1, see runtime.models).
+            ck_arrays: dict[str, np.ndarray] = {}
+
+            def sink(array: np.ndarray, _ck=ck_arrays) -> dict:
+                key = f"updater_state:arr{len(_ck)}"
+                _ck[key] = np.ascontiguousarray(array)
+                return array_placeholder(key, _ck[key])
+
+            updater_state = dump_state_arrays(updater_state, sink)
+            arrays.update(ck_arrays)
+        state["updater_state"] = updater_state
         return state, arrays
+
+    def _event_updater_state(self, updater_state: dict | None) -> dict | None:
+        """JSON-safe updater state for event payloads: arrays go to the
+        run's content-addressed store at ``models/state-arrays/`` (one file
+        per unique array), the event keeps digest placeholders."""
+        if updater_state is None or self._event_log is None:
+            return updater_state
+        sink = content_array_sink(
+            Path(self._event_log.run_dir) / "models" / "state-arrays")
+        return dump_state_arrays(updater_state, sink)
 
     def _identity_from_arrays(self, arrays: dict) -> Atoms:
         identity = Atoms(numbers=np.array(arrays["numbers"]),
@@ -732,7 +763,11 @@ class EnergeticCalculator(Calculator):
                 raise ResumeError(
                     f"label {event.get('label_id')} has no persisted updater "
                     "state; automatic resume stops here as pending")
-            updater.load_state_dict(updater_state)
+            # Array placeholders resolve against the run's content-addressed
+            # store (tensor-artifact-v1); digest-verified on load.
+            updater.load_state_dict(load_state_arrays(
+                updater_state,
+                content_array_source(Path(models_dir) / "state-arrays")))
             # An unchanged model on a reference route still recalibrates
             # before the next proposal (live semantics); on an accepted
             # route the anchor is kept untouched.
@@ -776,7 +811,9 @@ class EnergeticCalculator(Calculator):
             raise ResumeError(
                 f"model artifact for {event['model_id']!r} failed "
                 "verification: " + "; ".join(problems))
-        updater.load_state_dict(artifact["updater_state"])
+        updater.load_state_dict(resolve_artifact_state(
+            artifact["updater_state"],
+            Path(models_dir) / str(event["model_id"]).replace("/", "_")))
         self._model_generation = int(event["generation"])
         self._anchor = None
         if event.get("origin_violation"):
@@ -1404,20 +1441,22 @@ class EnergeticCalculator(Calculator):
                                 metrics=rejection.get("metrics"),
                                 label_ids=rejection.get("label_ids"))
             if changed is not False:
-                # Anything except exactly False declares a model change:
-                # advance the decision-layer generation so cached results,
-                # pending proposals and anchors from the old model cannot be
-                # reused for a new evaluation. The model artifact is
-                # persisted before the update event commits, and the event
-                # itself is idempotent under (origin label ID, evaluation).
+                # Anything except exactly False declares a model change. The
+                # update activates only after the artifact is persisted and
+                # the commit event is written: candidate → validate →
+                # persist → activate.  A persistence or commit failure rolls
+                # the surrogate and the updater back to the parent state, so
+                # a run stopped here still satisfies the atomic publish
+                # contract (R3).
                 parent_model_id = self.model_id
-                self._model_generation += 1
+                next_generation = self._model_generation + 1
+                new_model_id = model_id_for(self.surrogate, next_generation)
                 update_record = None
                 get_update_record = getattr(self.on_label, "update_record", None)
                 if callable(get_update_record):
                     update_record = get_update_record()
                 artifact = {
-                    "generation": self._model_generation,
+                    "generation": next_generation,
                     "parent_model_id": parent_model_id,
                     "label_ids": (update_record or {}).get("label_ids",
                                                           [pending.label_id]),
@@ -1425,25 +1464,38 @@ class EnergeticCalculator(Calculator):
                     "training": (update_record or {}).get("training"),
                     "updater_state": updater_state,
                 }
-                if self._model_publisher is not None:
-                    self._model_publisher(self.model_id, artifact)
-                # The artifact's content digest is bound into the commit —
-                # outside the rewritable artifact file — so a tampered
-                # artifact is detected at load time (R2).
-                artifact_digest_value = artifact_digest(
-                    {"model_id": self.model_id,
-                     "format_version": MODEL_ARTIFACT_FORMAT_VERSION,
-                     **artifact})
-                self._emit_once(f"model-update:{pending.label_id}:eval-{pending.index}",
-                                MODEL_UPDATE,
-                                generation=self._model_generation,
-                                model_id=self.model_id,
-                                origin_evaluation_id=pending.index,
-                                origin_label_id=pending.label_id,
-                                origin_violation=bool(violation),
-                                label_ids=artifact["label_ids"],
-                                artifact_digest=artifact_digest_value,
-                                updater_state=updater_state)
+                try:
+                    published = None
+                    if self._model_publisher is not None:
+                        published = self._model_publisher(new_model_id, artifact)
+                    if self._event_log is not None:
+                        # The artifact's content digest is bound into the
+                        # commit — outside the rewritable artifact file — so
+                        # a tampered artifact is detected at load time (R2).
+                        digest_source = (published if published is not None else
+                                         {"model_id": new_model_id,
+                                          "format_version": MODEL_ARTIFACT_FORMAT_VERSION,
+                                          **artifact})
+                        artifact_digest_value = artifact_digest(digest_source)
+                        self._emit_once(
+                            f"model-update:{pending.label_id}:eval-{pending.index}",
+                            MODEL_UPDATE,
+                            generation=next_generation,
+                            model_id=new_model_id,
+                            origin_evaluation_id=pending.index,
+                            origin_label_id=pending.label_id,
+                            origin_violation=bool(violation),
+                            label_ids=artifact["label_ids"],
+                            artifact_digest=artifact_digest_value,
+                            updater_state=(published["updater_state"]
+                                           if published is not None
+                                           else updater_state))
+                except Exception:
+                    rollback = getattr(self.on_label, "rollback_accepted", None)
+                    if callable(rollback):
+                        rollback()
+                    raise
+                self._model_generation = next_generation
             else:
                 # Label consumed without a model change: the updater's
                 # continuation state still advanced — persist it so a replay
@@ -1452,7 +1504,8 @@ class EnergeticCalculator(Calculator):
                                 label_id=pending.label_id,
                                 evaluation_id=pending.index,
                                 model_id=self.model_id,
-                                updater_state=updater_state)
+                                updater_state=self._event_updater_state(
+                                    updater_state))
             if pending.accepted and changed is False:
                 self._anchor = candidate
                 if violation:
@@ -1753,9 +1806,11 @@ class EnergeticRunner:
         if self.calc._event_log is not None:
             self.calc._event_log.close()
 
-    def _publish_model_artifact(self, model_id: str, record: dict) -> None:
-        """Immutable model artifact, persisted before the update event."""
-        self._model_registry.publish(model_id, record)
+    def _publish_model_artifact(self, model_id: str, record: dict) -> dict:
+        """Immutable model artifact, persisted before the update event;
+        returns the stored payload (the placeholder form the commit digest
+        binds)."""
+        return self._model_registry.publish(model_id, record)
 
     def _write_checkpoint(self) -> int | None:
         if self._checkpoints is None:
@@ -1898,7 +1953,10 @@ class EnergeticRunner:
         _check_resume_safety(events, updater)
         cursor = int(manifest["last_event_seq"])
         if _is_stateful(updater) and state["updater_state"] is not None:
-            updater.load_state_dict(state["updater_state"])
+            # Placeholders resolve against the checkpoint's own arrays.npz
+            # (tensor-artifact-v1), digest-verified.
+            updater.load_state_dict(load_state_arrays(
+                state["updater_state"], dict_array_source(arrays)))
         tail = _replay_window(calc, store, events, cursor=cursor,
                               updater=updater, models_dir=run_dir / "models")
         # Rebuild the numeric label cache from durable records: rows carrying
@@ -2013,7 +2071,8 @@ class EnergeticRunner:
                 raise ResumeError(
                     "the checkpoint references an updater state; supply the "
                     "same stateful updater to fork")
-            updater.load_state_dict(state["updater_state"])
+            updater.load_state_dict(load_state_arrays(
+                state["updater_state"], dict_array_source(arrays)))
         policy = dict(state["policy"])
         policy.update(policy_overrides or {})
         atoms = Atoms(numbers=np.array(arrays["numbers"]),

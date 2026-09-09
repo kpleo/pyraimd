@@ -20,6 +20,7 @@ callback convention onto the False/True contract.
 from __future__ import annotations
 
 import time
+import zlib
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 
@@ -27,6 +28,7 @@ import numpy as np
 from ase import Atoms
 
 from pyraimd2.engines.base import EngineResult
+from pyraimd2.loop.constraints import validate_constraints
 from pyraimd2.surrogate.base import TrainableSurrogate, TrainReport
 from pyraimd2.switch.base import LabelObservation
 
@@ -152,21 +154,64 @@ class UpdatePolicy:
 
 
 def _label_payload(observation: LabelObservation) -> dict:
+    """Complete physical structure of one consumed label.
+
+    Training, the guard set and the FD probes all rebuild from this
+    payload, so it must carry everything the backend's energy/forces can
+    depend on — cell, PBC, the relevant arrays/info, constraints and the
+    label's energy kind — not just numbers and positions (R3/F05).  The
+    payload is JSON-native (it persists in updater states); ``info`` is
+    assumed JSON-safe, anything else fails loudly at write time.
+    """
+    atoms = observation.atoms
+    label = observation.label
+    projection = validate_constraints(atoms)
     return {
         "label_id": observation.label_id,
-        "numbers": observation.atoms.numbers.tolist(),
-        "positions": observation.atoms.positions.tolist(),
-        "reference_energy_eV": float(observation.label.energy),
-        "reference_forces_eV_A": observation.label.forces.tolist(),
+        "numbers": atoms.numbers.tolist(),
+        "positions": atoms.positions.tolist(),
+        "cell": atoms.cell.array.tolist(),
+        "pbc": [bool(v) for v in np.atleast_1d(atoms.pbc)],
+        "masses": atoms.get_masses().tolist(),
+        "initial_charges": atoms.get_initial_charges().tolist(),
+        "initial_magmoms": atoms.get_initial_magnetic_moments().tolist(),
+        "info": dict(atoms.info),
+        "constraint": (None if projection is None else projection.as_dict()),
+        "reference_energy_eV": float(label.energy),
+        "reference_forces_eV_A": np.asarray(label.forces, dtype=float).tolist(),
+        "energy_kind": str(getattr(label, "energy_kind", "unknown")),
+        "force_consistent": getattr(label, "force_consistent", None),
     }
 
 
 def _payload_atoms(item: dict) -> tuple[Atoms, EngineResult]:
+    """Rebuild the full physical structure from its payload.
+
+    Payloads written before the fields existed (numbers/positions only)
+    still load: their cell defaults to zero and PBC to False, exactly the
+    information they originally carried.
+    """
     atoms = Atoms(numbers=np.array(item["numbers"], dtype=int),
-                  positions=np.array(item["positions"], dtype=float))
+                  positions=np.array(item["positions"], dtype=float),
+                  cell=np.array(item.get("cell", np.zeros((3, 3))), dtype=float),
+                  pbc=np.array(item.get("pbc", False), dtype=bool))
+    if item.get("masses") is not None:
+        atoms.set_masses(np.array(item["masses"], dtype=float))
+    atoms.set_initial_charges(
+        np.array(item.get("initial_charges", np.zeros(len(atoms))), dtype=float))
+    atoms.set_initial_magnetic_moments(
+        np.array(item.get("initial_magmoms", np.zeros(len(atoms))), dtype=float))
+    atoms.info.update(item.get("info") or {})
+    constraint = item.get("constraint")
+    if constraint is not None:
+        from ase.constraints import FixAtoms
+
+        atoms.set_constraint(FixAtoms(indices=list(constraint["indices"])))
     return atoms, EngineResult(float(item["reference_energy_eV"]),
                                np.array(item["reference_forces_eV_A"], dtype=float),
-                               None, 0.0)
+                               None, 0.0,
+                               energy_kind=item.get("energy_kind", "unknown"),
+                               force_consistent=item.get("force_consistent"))
 
 
 class GuardedUpdater:
@@ -206,6 +251,7 @@ class GuardedUpdater:
         self.rejections: list[dict] = []
         self._last_update: dict | None = None
         self._last_rejection: dict | None = None
+        self._accepted_backup: tuple[dict, list[dict]] | None = None
 
     @property
     def n_consumed(self) -> int:
@@ -235,6 +281,7 @@ class GuardedUpdater:
             atoms, _label = _payload_atoms(item)
             prediction = self.surrogate.predict(atoms)
             evaluations.append({
+                "atoms": atoms,
                 "numbers": atoms.numbers.copy(),
                 "energy_eV": float(prediction.energy),
                 "forces_eV_A": np.asarray(prediction.forces, dtype=float),
@@ -245,20 +292,65 @@ class GuardedUpdater:
             })
         return evaluations
 
+    @staticmethod
+    def _fd_directions(atoms: Atoms) -> list[np.ndarray]:
+        """Internal probe directions for the energy-force FD check.
+
+        A rigid uniform translation is the zero mode of every reasonable
+        potential: differences along it cannot catch a candidate whose
+        forces are not the gradient of its energy (R3/F06 — a cheat that
+        scales all forces but keeps the energy passes a translation-only
+        check, because the forces of a translation-invariant potential sum
+        to zero).  The directions are the relative-coordinate (breathing)
+        mode and a pseudo-random direction, seeded reproducibly from the
+        structure, with the translation component projected out.  A single
+        atom has no internal modes; there the translation itself is
+        physical and is checked directly.
+
+        These directions are a diagnostic gate, not a proof of global
+        conservativeness.
+        """
+        positions = np.asarray(atoms.positions, dtype=float)
+        seed = zlib.crc32(np.ascontiguousarray(atoms.numbers).tobytes()
+                          + np.ascontiguousarray(positions).tobytes())
+        directions = []
+        centered = positions - positions.mean(axis=0)
+        norm = float(np.linalg.norm(centered))
+        if norm > 0.0:
+            directions.append(centered / norm)
+        random = np.random.default_rng(seed).normal(size=positions.shape)
+        random -= random.mean(axis=0)
+        rnorm = float(np.linalg.norm(random))
+        if rnorm > 0.0:
+            directions.append(random / rnorm)
+        if not directions and len(atoms):
+            fallback = np.random.default_rng(seed).normal(size=positions.shape)
+            directions.append(fallback / float(np.linalg.norm(fallback)))
+        return directions
+
     def _energy_force_consistency(self, evaluation: dict) -> float:
-        """|FD derivative + F·u| of the candidate along a fixed direction."""
-        positions = evaluation["positions"]
-        numbers = np.array(evaluation["numbers"], dtype=int)
-        direction = np.ones_like(positions) / np.sqrt(positions.size)
+        """Worst |FD derivative + F·u| of the candidate over the internal
+        directions of one guard structure.  Probes copy the full physical
+        atoms (cell/PBC/charges/constraints included).  Non-finite FD
+        energies count as infinite inconsistency — the candidate is
+        rejected, never waved through."""
+        atoms = evaluation["atoms"]
+        positions = np.asarray(atoms.positions, dtype=float)
+        forces = evaluation["forces_eV_A"]
         step = self.policy.energy_force_fd_step_A
-        energies = []
-        for sign in (1.0, -1.0):
-            probe = Atoms(numbers=numbers,
-                          positions=positions + sign * step * direction)
-            energies.append(float(self.surrogate.predict(probe).energy))
-        fd = (energies[0] - energies[1]) / (2.0 * step)
-        directional = -float(np.sum(evaluation["forces_eV_A"] * direction))
-        return abs(fd - directional)
+        worst = 0.0
+        for direction in self._fd_directions(atoms):
+            energies = []
+            for sign in (1.0, -1.0):
+                probe = atoms.copy()
+                probe.positions = positions + sign * step * direction
+                energies.append(float(self.surrogate.predict(probe).energy))
+            if not np.isfinite(energies).all():
+                return float("inf")
+            fd = (energies[0] - energies[1]) / (2.0 * step)
+            directional = -float(np.sum(forces * direction))
+            worst = max(worst, abs(fd - directional))
+        return worst
 
     def _validate(self, parent_evals: list[dict],
                   candidate_evals: list[dict]) -> tuple[bool, str, dict]:
@@ -313,8 +405,16 @@ class GuardedUpdater:
                                    {"error": repr(error)})
             return False
         wall = time.perf_counter() - start
-        candidate_evals = self._evaluate(self._guard)
-        accepted, reason, metrics = self._validate(parent_evals, candidate_evals)
+        try:
+            candidate_evals = self._evaluate(self._guard)
+            accepted, reason, metrics = self._validate(parent_evals, candidate_evals)
+        except Exception as error:  # noqa: BLE001 — a candidate that cannot
+            # even be evaluated is rolled back like a clean rejection: the
+            # parent model and updater state stay consistent (R3).
+            self.surrogate.load_state_dict(parent_state)
+            self._record_rejection(label_ids, "validation_failed",
+                                   {"error": repr(error)})
+            return False
         if not accepted:
             self.surrogate.load_state_dict(parent_state)  # back to the known version
             self._record_rejection(label_ids, reason, metrics)
@@ -322,6 +422,7 @@ class GuardedUpdater:
         self.n_updates += 1
         report_dict = asdict(report)
         self.reports.append(report_dict)
+        accepted_pending = self._pending
         self._pending = []
         self._last_update = {
             "label_ids": label_ids,
@@ -329,7 +430,30 @@ class GuardedUpdater:
             "training": report_dict,
             "wall_time_s": wall,
         }
+        # Held until the next attempt so a downstream publish failure can
+        # still undo this accept (see rollback_accepted).
+        self._accepted_backup = (parent_state, accepted_pending)
         return True
+
+    def rollback_accepted(self) -> dict | None:
+        """Undo the last accepted update after a downstream publish failure
+        (artifact save or event commit): the surrogate, counters and the
+        pending queue return to the exact pre-attempt state, so a run that
+        stops here still satisfies the atomic publish contract.  No-op when
+        there is nothing to undo."""
+        backup = self._accepted_backup
+        if backup is None:
+            return None
+        parent_state, pending = backup
+        self._accepted_backup = None
+        self.surrogate.load_state_dict(parent_state)
+        self.n_updates -= 1
+        if self.reports:
+            self.reports.pop()
+        self._pending = list(pending)
+        update = self._last_update
+        self._last_update = None
+        return update
 
     def _record_rejection(self, label_ids: list[str], reason: str,
                           metrics: dict) -> None:

@@ -452,6 +452,12 @@ class CommitteeSurrogate:
         if problems:
             raise ValueError("invalid committee checkpoint: " + "; ".join(problems))
         self._ensure_loaded()
+        import torch
+
         for member, member_state in zip(self._models, member_states):
-            member.load_state_dict(member_state)
+            # States restored from disk carry NumPy arrays (tensor-artifact-v1);
+            # in-memory snapshots carry tensors.  as_tensor covers both.
+            member.load_state_dict(
+                {name: torch.as_tensor(np.asarray(value))
+                 for name, value in member_state.items()})
         self._energy_shifts = list(energy_shifts)

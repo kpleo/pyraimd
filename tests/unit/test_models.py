@@ -20,13 +20,14 @@ def _record(tag: int) -> dict:
 
 def test_publish_read_roundtrip(tmp_path):
     registry = ModelRegistry(tmp_path)
-    path = registry.publish("model#g1", _record(1))
+    payload = registry.publish("model#g1", _record(1))
     artifact = registry.read("model#g1")
     assert artifact["parent_model_id"] == "model#g0"
     assert artifact["label_ids"] == ["run-label-1"]
     assert artifact["updater_state"] == {"k": 2.0}
     assert artifact["model_id"] == "model#g1"
-    assert path == tmp_path / "models" / "model#g1" / "state.json"
+    assert payload == artifact  # publish returns the stored payload
+    assert (tmp_path / "models" / "model#g1" / "state.json").is_file()
     assert not list((tmp_path / "models").rglob("*.tmp"))
 
 
