@@ -1,0 +1,73 @@
+{
+  "al_relax": {
+    "max_all": 0.05458950919183557,
+    "max_fixed": 0.05458950919183557,
+    "max_free": 0.048155644466951635
+  },
+  "contract_fd": {
+    "residuals_recomputed": [
+      4.765043834672328e-06,
+      3.576002090573821e-05
+    ],
+    "tolerance": 0.0005,
+    "n_scf_reported": 5
+  },
+  "al-adaptive-c1": {
+    "evaluations": 7,
+    "completed_steps": 6,
+    "checked": 4,
+    "reference_attempts": 19,
+    "reference_attempt_statuses": {
+      "success": 19
+    },
+    "model_updates": 0,
+    "reference_cost": {
+      "logical_requests": 19,
+      "successful_executions": 19,
+      "failed_attempts": 0,
+      "cache_hits": 0,
+      "actual_executions": 19
+    },
+    "routes": {
+      "dft": 3,
+      "ml": 4
+    },
+    "ml_driven_evaluations": 4
+  },
+  "al-committee": {
+    "evaluations": 3,
+    "completed_steps": 2,
+    "checked": 2,
+    "reference_attempts": 11,
+    "reference_attempt_statuses": {
+      "success": 11
+    },
+    "model_updates": 1,
+    "reference_cost": {
+      "logical_requests": 11,
+      "successful_executions": 11,
+      "failed_attempts": 0,
+      "cache_hits": 0,
+      "actual_executions": 11
+    },
+    "routes": {
+      "dft": 1,
+      "ml": 2
+    },
+    "ml_driven_evaluations": 2
+  },
+  "wp08_old_reference_tasks": {
+    "count": 57,
+    "statuses": {
+      "success": 56,
+      "failed": 1
+    },
+    "purposes": {
+      "md": 16,
+      "anchor": 2,
+      "probe": 24,
+      "verification": 11,
+      "refusal": 4
+    }
+  }
+}

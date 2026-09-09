@@ -1,0 +1,121 @@
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 62%]
+........................................................................ [ 78%]
+........................................................................ [ 94%]
+..........................                                               [100%]
+=============================== warnings summary ===============================
+tests/unit/test_ase_adapters.py: 20 warnings
+tests/unit/test_ase_qe.py: 66 warnings
+tests/unit/test_backend_plugin_example.py: 79 warnings
+tests/unit/test_cli.py: 1134 warnings
+tests/unit/test_cost_ledger.py: 108 warnings
+tests/unit/test_energetic_loop.py: 610 warnings
+tests/unit/test_explore_labels.py: 126 warnings
+tests/unit/test_fixatoms.py: 363 warnings
+tests/unit/test_guarded_update.py: 2736 warnings
+tests/unit/test_inspect.py: 96 warnings
+tests/unit/test_label_cache.py: 75 warnings
+tests/unit/test_online.py: 35 warnings
+tests/unit/test_periodic_lj.py: 598 warnings
+tests/unit/test_plain_resume.py: 814 warnings
+tests/unit/test_qe_engine.py: 6 warnings
+tests/unit/test_relax_singlepoint.py: 377 warnings
+tests/unit/test_replay_verify.py: 92 warnings
+tests/unit/test_resume.py: 21673 warnings
+tests/unit/test_review_r1.py: 284 warnings
+tests/unit/test_review_r2.py: 271 warnings
+tests/unit/test_review_r3.py: 79 warnings
+tests/unit/test_review_r4.py: 358 warnings
+tests/unit/test_review_r6.py: 157 warnings
+tests/unit/test_runner.py: 69 warnings
+tests/unit/test_runtime_contract.py: 130 warnings
+tests/unit/test_store.py: 10 warnings
+tests/unit/test_w_irradiation.py: 29 warnings
+tests/unit/test_workflows.py: 1549 warnings
+  /Users/pengkang/Research/Project/Project_PYRAIMD/pyraimd2/.venv/lib/python3.12/site-packages/ase/atoms.py:432: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    a.shape = (-1,) + shape
+
+tests/unit/test_backend_plugin_example.py: 1 warning
+tests/unit/test_cli.py: 7 warnings
+tests/unit/test_cost_ledger.py: 2 warnings
+tests/unit/test_energetic_loop.py: 2 warnings
+tests/unit/test_explore_labels.py: 7 warnings
+tests/unit/test_fixatoms.py: 5 warnings
+tests/unit/test_guarded_update.py: 12 warnings
+tests/unit/test_inspect.py: 3 warnings
+tests/unit/test_online.py: 3 warnings
+tests/unit/test_periodic_lj.py: 6 warnings
+tests/unit/test_plain_resume.py: 10 warnings
+tests/unit/test_resume.py: 36 warnings
+tests/unit/test_review_r1.py: 12 warnings
+tests/unit/test_review_r2.py: 6 warnings
+tests/unit/test_review_r3.py: 5 warnings
+tests/unit/test_review_r4.py: 12 warnings
+tests/unit/test_review_r6.py: 7 warnings
+tests/unit/test_runner.py: 7 warnings
+tests/unit/test_runtime_contract.py: 1 warning
+tests/unit/test_workflows.py: 16 warnings
+  /Users/pengkang/Research/Project/Project_PYRAIMD/pyraimd2/.venv/lib/python3.12/site-packages/ase/md/md.py:128: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    self.masses.shape = (-1, 1)
+
+tests/unit/test_backend_plugin_example.py: 30 warnings
+tests/unit/test_cli.py: 8952 warnings
+tests/unit/test_cost_ledger.py: 30 warnings
+tests/unit/test_energetic_loop.py: 420 warnings
+tests/unit/test_explore_labels.py: 366 warnings
+tests/unit/test_fixatoms.py: 342 warnings
+tests/unit/test_guarded_update.py: 9282 warnings
+tests/unit/test_inspect.py: 82 warnings
+tests/unit/test_label_cache.py: 27 warnings
+tests/unit/test_online.py: 39 warnings
+tests/unit/test_periodic_lj.py: 2158 warnings
+tests/unit/test_plain_resume.py: 14241 warnings
+tests/unit/test_relax_singlepoint.py: 60 warnings
+tests/unit/test_replay_verify.py: 66 warnings
+tests/unit/test_resume.py: 177876 warnings
+tests/unit/test_review_r1.py: 183 warnings
+tests/unit/test_review_r2.py: 759 warnings
+tests/unit/test_review_r3.py: 36 warnings
+tests/unit/test_review_r4.py: 2043 warnings
+tests/unit/test_review_r6.py: 153 warnings
+tests/unit/test_runner.py: 333 warnings
+tests/unit/test_runtime_contract.py: 153 warnings
+tests/unit/test_store.py: 57 warnings
+tests/unit/test_workflows.py: 11091 warnings
+  /Users/pengkang/Research/Project/Project_PYRAIMD/pyraimd2/.venv/lib/python3.12/site-packages/ase/db/sqlite.py:179: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    array.shape = shape
+
+tests/unit/test_backend_plugin_example.py: 16 warnings
+tests/unit/test_cli.py: 2742 warnings
+tests/unit/test_cost_ledger.py: 35 warnings
+tests/unit/test_energetic_loop.py: 269 warnings
+tests/unit/test_explore_labels.py: 269 warnings
+tests/unit/test_fixatoms.py: 168 warnings
+tests/unit/test_guarded_update.py: 1650 warnings
+tests/unit/test_inspect.py: 48 warnings
+tests/unit/test_label_cache.py: 20 warnings
+tests/unit/test_periodic_lj.py: 1315 warnings
+tests/unit/test_plain_resume.py: 2829 warnings
+tests/unit/test_relax_singlepoint.py: 10 warnings
+tests/unit/test_replay_verify.py: 62 warnings
+tests/unit/test_resume.py: 15558 warnings
+tests/unit/test_review_r1.py: 154 warnings
+tests/unit/test_review_r2.py: 321 warnings
+tests/unit/test_review_r3.py: 38 warnings
+tests/unit/test_review_r4.py: 886 warnings
+tests/unit/test_review_r6.py: 90 warnings
+tests/unit/test_runner.py: 96 warnings
+tests/unit/test_runtime_contract.py: 105 warnings
+tests/unit/test_store.py: 23 warnings
+tests/unit/test_workflows.py: 4601 warnings
+  /Users/pengkang/Research/Project/Project_PYRAIMD/pyraimd2/.venv/lib/python3.12/site-packages/ase/db/core.py:793: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    a.shape = shape
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+458 passed, 1 deselected, 292188 warnings in 32.22s

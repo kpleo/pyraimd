@@ -1,0 +1,13 @@
+{"case": "PASS_F01", "draws": [0.2616121342493164, 0.2984911434141233, 0.8142257405942803]}
+{"case": "PASS_F02_F07", "consumed": 1, "updates": 0, "window": 0}
+{"case": "PASS_F02_F07", "consumed": 1, "updates": 0, "window": 2}
+{"case": "PASS_F04", "error": "model artifact for 'review-harmonic-v1#g1' failed verification: artifact content does not match the digest bound into the commit; the artifact looks tampered with"}
+{"case": "PASS_F05", "guard_and_training_preserve_structure": true}
+{"case": "PASS_F06", "rejection": "energy_force_inconsistent"}
+{"case": "PASS_F08_NARROW", "validation_and_publisher_failure_rollback": true}
+{"case": "PASS_F09_NARROW", "ordinary_array_artifact_roundtrip": true}
+{"case": "RESIDUAL_COMMIT_FORCE", "committed_force": [[-0.24136591053875858, -0.0, -0.0]], "committed_row_id": 3, "full_momentum_error": 9.870373320342019e-07, "orphan_row_id": 2, "path": "/tmp/pyramid-040-core-98h0oqpk/orphan-force", "restored_force": [[-0.24116493975562892, -0.0, -0.0]]}
+{"case": "RESIDUAL_ARRAY_IDENTITY", "integer_loaded_dtype": "float64", "integer_loaded_value": [1.0], "integer_original_dtype": "uint64", "path": "/tmp/pyramid-040-core-98h0oqpk/array-collision", "scalar_loaded_shape": [1], "scalar_original_shape": [], "vector_loaded_shape": [2, 2], "vector_original_shape": [4]}
+{"case": "RESIDUAL_POST_TRAINING_LOG", "generation": 0, "model_k": 0.81, "model_update_events": 0, "path": "/tmp/pyramid-040-core-98h0oqpk/post-training-log", "updates": 1}
+{"case": "RESIDUAL_TAIL_CALIBRATION", "control_calibrations": 3, "control_generation": 4, "control_segment": 3, "path": "/tmp/pyramid-040-core-98h0oqpk/tail-calibration", "physical_positions_equal": true, "restored_calibrations": 2, "restored_generation": 4, "restored_segment": 2}
+ARTIFACT_ROOT /tmp/pyramid-040-core-98h0oqpk
