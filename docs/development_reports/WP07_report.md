@@ -120,5 +120,6 @@
   - FixAtoms 与 adaptive＋updater 的组合未做恢复专项（投影在 checkpoint 中有记录，resume/fork 复原；WP03 恢复机制本身不变）。
   - relax 的评估级成本只按任务事件计（与 plain MD 同类）；优化器内部 ASE 行为（FIRE/BFGS）未改写。
   - 结构自带约束只验证了 POSCAR selective dynamics 入口。
+  - **2026-09-09 修正（独立审阅 R4）**：relax/singlepoint 的 final_fmax 此前按原始全原子力报告，固定原子的反作用力会被当成收敛指标；现 final_fmax 取优化器实际判据（约束投影后的最大单原子力范数），原始全原子值另列 `raw_all_atom_fmax_eV_A`，driving 统一为投影后力、原始力留在 backend payload 与 constraint 记录。plain 静止平衡恢复此前会写空标签（ASE 缓存命中、last_label 未恢复）；现从边界提交行重建原始标签，写库前拒绝空驱动。inspect 温度此前固定除以 3N；现按受约束自由度计算。导出/inspect 此前把崩溃的半步评估当作完成步；现以 `step_completed` 事件为准，导出帧携带完整步动量（半步记录用驱动力重建，原始记录不改写）。详见 REVIEW_FIXES_CORE_20260909.md。
 - 需要负责人判断的具体决策及备选方案：plain resume 边界取"最后一行已提交记录"而非 checkpoint 数组（窗口情形等价且更简单）；若希望严格走 checkpoint＋事件重放，可在后续统一。
 - 下一工作包及其入口：WP08——两条周期材料配方（体相 Si 用 plain/adaptive MD、固定层表面用 `[constraints]`+FixAtoms）；本 WP 的 FixAtoms 投影、plain resume、singlepoint/relax 与 CLI 即配方的运行底座。
