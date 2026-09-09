@@ -436,8 +436,11 @@ class _PlainDriver:
         calculations_before = calc.n_calculations
         started_unix = time.time()
         zero = time.perf_counter()
+        error: Exception | None = None
         try:
             compute()
+        except Exception as exc:
+            error = exc
         finally:
             self._attempt_context_fields = None
         calculated = calc.n_calculations > calculations_before
@@ -451,15 +454,23 @@ class _PlainDriver:
         # execution's wall time (B3); a real calculation bills its own.
         elapsed = (float(getattr(label, "wall_time_s", 0.0) or measured)
                    if calculated else measured)
+        # One logical request, one task record from one exit — success and
+        # failure share this task id, and the attempt's request_id points at
+        # exactly this record (R5).
         self.event_log.append(TASK, {
             "task_id": task_id, "attempt": 1,
             "operation": operation, "purpose": "md",
-            "status": "success" if calculated else "cache_hit",
+            "status": ("failed" if error is not None
+                       else "success" if calculated else "cache_hit"),
             "started_unix": started_unix,
-            "elapsed_s": elapsed,
+            "elapsed_s": elapsed if error is None else measured,
             "cpu_cores": None, "gpu": None, "queue_s": None,
             "source": "workflow", "evaluation_id": evaluation_id,
-            "label_id": label_id, "cache_hit": not calculated})
+            "label_id": label_id if error is None else None,
+            "cache_hit": error is None and not calculated,
+            "error": None if error is None else repr(error)})
+        if error is not None:
+            raise error
 
     def _record_evaluation(self, evaluation_id: int) -> None:
         ctx = EvaluationContext(
@@ -509,15 +520,9 @@ class _PlainDriver:
                  self.store.row_by_id(int(row_id)))})
 
     def _fail(self, error: Exception, evaluation_id: int) -> None:
-        self.event_log.append(TASK, {
-            "task_id": self._new_task_id(), "attempt": 1,
-            "operation": ("reference" if self.section == "reference"
-                          else "inference"),
-            "purpose": "md", "status": "failed",
-            "started_unix": time.time(), "elapsed_s": 0.0,
-            "cpu_cores": None, "gpu": None, "queue_s": None,
-            "source": "workflow", "evaluation_id": evaluation_id,
-            "label_id": None, "cache_hit": False, "error": repr(error)})
+        # The evaluation's own task record is already written by _evaluate's
+        # single exit; the run only records its own termination here — no
+        # extra fake request (R5).
         self.event_log.append(RUN_END, {"run_id": self.run_id,
                                         "status": "failed",
                                         "reason": repr(error)})
