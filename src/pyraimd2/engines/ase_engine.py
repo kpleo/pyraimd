@@ -9,7 +9,11 @@ from pathlib import Path
 
 import numpy as np
 from ase import Atoms
-from ase.calculators.calculator import Calculator
+from ase.calculators.calculator import (
+    Calculator,
+    PropertyNotImplementedError,
+    all_changes,
+)
 
 from pyraimd2.engines.base import (
     EnergyKind,
@@ -77,15 +81,52 @@ def _embedded_files(value: object) -> list[str]:
     return found
 
 
-def calculator_identity(calculator: Calculator) -> dict | None:
+def _child_calculators(calculator: Calculator) -> tuple[list, list[float]] | None:
+    """Recognized wrapper structure: ASE mixing calculators hold their
+    children in ``.mixer.calcs`` (+ ``.weights``); other wrappers may expose
+    a direct ``.calcs`` list. None when the calculator is not a wrapper."""
+    for host in (getattr(calculator, "mixer", None), calculator):
+        if host is None:
+            continue
+        calcs = getattr(host, "calcs", None)
+        if (isinstance(calcs, (list, tuple)) and len(calcs) > 0
+                and all(isinstance(child, Calculator) for child in calcs)):
+            weights = getattr(host, "weights", None)
+            if weights is None or len(weights) != len(calcs):
+                weights = [1.0] * len(calcs)
+            return list(calcs), [float(w) for w in weights]
+    return None
+
+
+def calculator_identity(calculator: Calculator,
+                        _seen: frozenset[int] = frozenset()) -> dict | None:
     """A serializable identity for an ASE calculator, or None when its
     effective physical state cannot be identified reliably.
 
     Covers the class path and the declared effective parameters; parameter
     values naming existing files (model artifacts) contribute a content
-    hash, so two states of the same path are distinguished. ``calculator.name``
-    alone is never an identity — LJ epsilon 1 → 2 must change this value.
+    hash, so two states of the same path are distinguished. Wrapper
+    calculators (e.g. ``SumCalculator``) carry no parameters of their own —
+    the identity recurses into the child calculators and their weights, and
+    one unidentifiable child makes the whole wrapper unknown.
+    ``calculator.name`` alone is never an identity — LJ epsilon 1 → 2 must
+    change this value.
     """
+    if id(calculator) in _seen:
+        return None  # cyclic wrapper: not identifiable
+    children = _child_calculators(calculator)
+    if children is not None:
+        child_ids = []
+        for child in children[0]:
+            child_id = calculator_identity(child, _seen | {id(calculator)})
+            if child_id is None:
+                return None
+            child_ids.append(child_id)
+        return {
+            "class": f"{type(calculator).__module__}.{type(calculator).__qualname__}",
+            "children": child_ids,
+            "weights": children[1],
+        }
     parameters = getattr(calculator, "parameters", None)
     if parameters is None:
         return None
@@ -187,11 +228,31 @@ class AseEngine:
         work.calc = self.calculator
         start = time.perf_counter()
         try:
-            energy = float(work.get_potential_energy(force_consistent=self.force_consistent,
-                                                     apply_constraint=False))
-            forces = np.array(work.get_forces(apply_constraint=False), dtype=float, copy=True)
-            stress = (np.array(work.get_stress(apply_constraint=False), dtype=float, copy=True)
-                      if self.include_stress else None)
+            # One explicit execution, then read the whole results dict:
+            # separate property getters let ASE silently re-run a FileIO
+            # calculator when a property (e.g. stress) is missing.
+            properties = ["energy", "forces"]
+            if self.force_consistent:
+                properties.append("free_energy")
+            if self.include_stress:
+                properties.append("stress")
+            self.calculator.calculate(work, properties, all_changes)
+            results = self.calculator.results
+            energy_key = "free_energy" if self.force_consistent else "energy"
+            if energy_key not in results:
+                raise PropertyNotImplementedError(
+                    f"calculator did not return {energy_key!r}"
+                )
+            energy = float(results[energy_key])
+            forces = np.array(results["forces"], dtype=float, copy=True)
+            if self.include_stress:
+                if "stress" not in results:
+                    raise PropertyNotImplementedError(
+                        "calculator did not return 'stress'"
+                    )
+                stress = np.array(results["stress"], dtype=float, copy=True)
+            else:
+                stress = None
             if (not np.isfinite(energy) or forces.shape != (len(work), 3)
                     or not np.isfinite(forces).all()):
                 raise ValueError("Nonfinite energy or invalid forces")

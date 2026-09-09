@@ -412,3 +412,126 @@ def test_identical_geometry_still_executes_every_compute(tmp_path: Path) -> None
     second = engine.compute(_si())
     assert counter.read_text().strip() == "2"
     assert first.energy == pytest.approx(second.energy)
+
+
+# --- attempt sink discipline and execution boundaries (review B2/B3) --------
+
+
+def test_request_id_without_sink_rejected_before_any_launch(tmp_path: Path) -> None:
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    engine = AseQeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+        run_root=tmp_path / "runs",
+    )
+    with pytest.raises(_EngineError, match="attempt sink"):
+        engine.compute(_si(), label="x", request_id="run-task-1")
+    assert not counter.exists()
+    assert not (tmp_path / "runs" / "x-000000").exists()
+
+
+def test_missing_stress_executes_exactly_once(tmp_path: Path) -> None:
+    """Review F3 evidence A: a complete-but-stressless output used to make
+    ASE re-execute under the stress getter — two launches, one record. One
+    explicit execution now reads the whole result; the label is rejected
+    with exactly one launch and one failed attempt."""
+    text = FIXTURE.read_text()
+    cut = text[: text.index("total   stress  (Ry/bohr**3)")] + "\nJOB DONE.\n"
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        f"cat <<'EOF'\n{cut}\nEOF\n"
+    )
+    with _EventLog(tmp_path / "run") as log:
+        engine = AseQeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                     max_retries=0),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(_EngineError, match="stress"):
+            engine.compute(_si(), label="nostress")
+    assert counter.read_text().strip() == "1"  # one real launch, not two
+    with _EventLog(tmp_path / "run") as log:
+        events = [e for e in log.iter_events() if e.get("type") == "attempt"]
+    assert len(events) == 1
+    assert events[0]["status"] == "failed"
+    assert events[0]["failure_kind"] == "parse"
+
+
+def test_missing_executable_is_zero_launches(tmp_path: Path) -> None:
+    """Review F3 evidence B: a nonexistent executable never starts a
+    process — no attempt event, terminal record, contract EngineError."""
+    with _EventLog(tmp_path / "run") as log:
+        engine = AseQeEngine(
+            QeConfig(pseudo_dir="/pseudo",
+                     pw_cmd=(str(tmp_path / "does-not-exist"),), max_retries=0),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(_EngineError, match="executable not found"):
+            engine.compute(_si(), label="noexe")
+    with _EventLog(tmp_path / "run") as log:
+        events = [e for e in log.iter_events() if e.get("type") == "attempt"]
+    assert events == []
+    record = engine.last_attempt_records[-1]
+    assert record["status"] == "failed"
+    assert record["failure_kind"] == "executable_missing"
+
+
+def test_manifest_write_failure_ends_post_processing_failed(tmp_path: Path) -> None:
+    """Review F5 (ASE path): process and parse succeeded, the provenance
+    sidecar could not be written — the attempt ends post_processing_failed,
+    not running, and the event exists."""
+    body = (
+        "#!/bin/bash\n"
+        "mkdir density_manifest.json\n"
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    with _EventLog(tmp_path / "run") as log:
+        engine = AseQeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                     max_retries=0),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(_EngineError, match="density manifest"):
+            engine.compute(_si(), label="pp")
+    with _EventLog(tmp_path / "run") as log:
+        events = [e for e in log.iter_events() if e.get("type") == "attempt"]
+    assert len(events) == 1
+    assert events[0]["status"] == "post_processing_failed"
+    assert engine.last_attempt_records[-1]["status"] == "post_processing_failed"
+    assert engine.last_attempt_records[-1]["error"]
+
+
+def test_density_copy_interval_is_nested_inside_the_attempt_span(tmp_path: Path) -> None:
+    with_save = (
+        "#!/bin/bash\n"
+        "mkdir -p tmp/pyraimd2.save && echo fake-density > tmp/pyraimd2.save/charge-density.dat\n"
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    with _EventLog(tmp_path / "run") as log:
+        engine = AseQeEngine(
+            QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, with_save),
+                     startpot_file=True),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        engine.compute(_si(), label="first")
+        engine.compute(_si(), label="second")
+    with _EventLog(tmp_path / "run") as log:
+        events = list(log.iter_events())
+    io = next(e for e in events if e.get("record") == "physical_io")
+    attempt = next(e for e in events if e.get("type") == "attempt"
+                   and e.get("request_id") == io["request_id"])
+    io_end = io["started_unix"] + io["elapsed_s"]
+    attempt_end = attempt["started_unix"] + attempt["elapsed_s"]
+    assert attempt["started_unix"] <= io["started_unix"] <= io_end
+    assert io_end <= attempt_end + 1e-6
+    assert attempt["process_elapsed_s"] is not None

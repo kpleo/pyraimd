@@ -163,3 +163,45 @@ def test_failure_without_reset_method_preserves_original_error():
     with pytest.raises(EngineError, match='the real failure'):
         engine.compute(Atoms('He'))
     assert engine.calculator.results == {}  # stale results cleared
+
+
+# --- wrapper calculators: identity must cover children (review B1) ----------
+
+
+def test_sum_calculator_fingerprint_tracks_children():
+    """SumCalculator.parameters is empty — the physics lives in the child.
+    epsilon 1 -> 2 inside the wrapper must change the identity (it did not
+    when only parameters were hashed)."""
+    from ase.calculators.mixing import SumCalculator
+
+    e1 = AseEngine(SumCalculator([LennardJones(epsilon=1.0)]))
+    e2 = AseEngine(SumCalculator([LennardJones(epsilon=2.0)]))
+    assert e1.fingerprint is not None and e2.fingerprint is not None
+    assert e1.fingerprint != e2.fingerprint
+    same = AseEngine(SumCalculator([LennardJones(epsilon=1.0)]))
+    assert same.fingerprint == e1.fingerprint
+
+
+def test_mixed_calculator_weights_enter_identity():
+    from ase.calculators.mixing import MixedCalculator
+
+    half = AseEngine(MixedCalculator(LennardJones(epsilon=1.0),
+                                     LennardJones(epsilon=2.0), 0.5, 0.5))
+    quarter = AseEngine(MixedCalculator(LennardJones(epsilon=1.0),
+                                        LennardJones(epsilon=2.0), 0.25, 0.75))
+    assert half.fingerprint is not None
+    assert half.fingerprint != quarter.fingerprint
+
+
+def test_wrapper_with_unidentifiable_child_is_unknown():
+    """One unidentifiable child makes the whole wrapper unknown (None) —
+    never a name-level fingerprint pretending to be trustworthy."""
+    from ase.calculators.mixing import SumCalculator
+
+    wrapper = SumCalculator([_FailingNoReset.__new__(_FailingNoReset)])
+    child = wrapper.mixer.calcs[0]
+    Calculator.__init__(child)
+    child.parameters = {'blob': object()}
+    assert AseEngine(wrapper).fingerprint is None
+    explicit = AseEngine(wrapper, identity='documented-mixture-1')
+    assert explicit.fingerprint is not None
