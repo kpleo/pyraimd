@@ -52,6 +52,7 @@ from pyraimd2.runtime.events import (
     STEP_COMPLETED,
     TASK,
     EventLog,
+    physical_attempt,
 )
 from pyraimd2.runtime.identity import fingerprint_of, model_id_for
 from pyraimd2.runtime.inspect import inspect_run
@@ -269,20 +270,45 @@ class _BackendCalculator(Calculator):
     implemented_properties: ClassVar[list[str]] = ["energy", "forces"]
 
     def __init__(self, backend: object, section: str, *,
-                 on_evaluation: Any = None) -> None:
+                 on_evaluation: Any = None,
+                 event_log: EventLog | None = None,
+                 attempt_fields: Any = None) -> None:
         super().__init__()
         self._backend = backend
         self._section = section
         self._on_evaluation = on_evaluation
+        self._event_log = event_log
+        # Callable returning the current logical task's attempt context
+        # fields (request_id/purpose), or None outside a logical request.
+        self._attempt_fields = attempt_fields
+        self.n_calculations = 0
         self.last_label: Any = None
 
     def calculate(self, atoms=None, properties=("energy", "forces"),
                   system_changes=all_changes):
         super().calculate(atoms, properties, system_changes)
-        if self._section == "reference":
-            label = self._backend.compute(self.atoms)
+        self.n_calculations += 1
+        fields = (self._attempt_fields() if self._attempt_fields is not None
+                  else None)
+        method = "compute" if self._section == "reference" else "predict"
+        if fields is None or self._event_log is None:
+            if self._section == "reference":
+                label = self._backend.compute(self.atoms)
+            else:
+                label = self._backend.predict(self.atoms)
         else:
-            label = self._backend.predict(self.atoms)
+            with physical_attempt(self._backend, self._event_log,
+                                  operation=("reference"
+                                             if self._section == "reference"
+                                             else "inference"),
+                                  source="workflow", method=method,
+                                  **fields) as attempt_kwargs:
+                if self._section == "reference":
+                    label = self._backend.compute(self.atoms,
+                                                  **attempt_kwargs)
+                else:
+                    label = self._backend.predict(self.atoms,
+                                                  **attempt_kwargs)
         forces = np.asarray(label.forces, dtype=float)
         if not np.isfinite(label.energy) or not np.isfinite(forces).all():
             raise EngineError(
@@ -349,7 +375,10 @@ class _PlainDriver:
         self.projection = validate_constraints(atoms)
         self.store = Store(run_dir / "trajectory.db")
         self.event_log = event_log if event_log is not None else EventLog(run_dir)
-        atoms.calc = _BackendCalculator(backend, self.section)
+        self._attempt_context_fields: dict | None = None
+        atoms.calc = _BackendCalculator(
+            backend, self.section, event_log=self.event_log,
+            attempt_fields=lambda: self._attempt_context_fields)
         if "momenta" not in atoms.arrays:
             thermalize_momenta(atoms, config.dynamics.temperature_K,
                                rng=np.random.default_rng(config.dynamics.velocity_seed))
@@ -388,26 +417,43 @@ class _PlainDriver:
         self._task_counter += 1
         return f"{self.run_id}-task-{self._task_counter}"
 
-    def _evaluate(self, evaluation_id: int) -> tuple[float, float]:
-        """One force evaluation at the current positions + task event."""
+    def _evaluate(self, evaluation_id: int, compute: object) -> None:
+        """One logical force evaluation: the physical compute under its
+        attempt context, then the ledger task event.
+
+        ``compute`` performs the actual force evaluation (ASE's
+        VelocityVerlet evaluates the new-step forces inside ``step()``).
+        When ASE serves the forces from the calculator cache (a stationary
+        boundary), the logical request stays on the ledger as a cache hit,
+        not as a physical execution.
+        """
+        task_id = self._new_task_id()
+        calc = self.atoms.calc
+        self._attempt_context_fields = {
+            "request_id": task_id, "purpose": "md"}
+        calculations_before = calc.n_calculations
         started_unix = time.time()
         zero = time.perf_counter()
-        self.atoms.get_forces()
+        try:
+            compute()
+        finally:
+            self._attempt_context_fields = None
+        calculated = calc.n_calculations > calculations_before
         measured = time.perf_counter() - zero
-        label = self.atoms.calc.last_label
+        label = calc.last_label
         operation = ("reference" if self.section == "reference"
                      else "inference")
         label_id = (f"{self.run_id}-label-{evaluation_id}"
                     if self.section == "reference" else None)
         self.event_log.append(TASK, {
-            "task_id": self._new_task_id(), "attempt": 1,
-            "operation": operation, "purpose": "md", "status": "success",
+            "task_id": task_id, "attempt": 1,
+            "operation": operation, "purpose": "md",
+            "status": "success" if calculated else "cache_hit",
             "started_unix": started_unix,
             "elapsed_s": float(getattr(label, "wall_time_s", 0.0) or measured),
             "cpu_cores": None, "gpu": None, "queue_s": None,
             "source": "workflow", "evaluation_id": evaluation_id,
-            "label_id": label_id, "cache_hit": False})
-        return started_unix, measured
+            "label_id": label_id, "cache_hit": not calculated})
 
     def _record_evaluation(self, evaluation_id: int) -> None:
         ctx = EvaluationContext(
@@ -508,7 +554,7 @@ class _PlainDriver:
         interval = outputs.summary_interval
         if start_step == 0 and self._resume_state is None:
             self._emit_run_start()
-            self._evaluate(0)
+            self._evaluate(0, lambda: self.atoms.get_forces())
             self._record_evaluation(0)
             outputs.regenerate_trajectory()
         run_start = time.perf_counter()
@@ -519,11 +565,12 @@ class _PlainDriver:
                 if self._stop_requested:
                     break
                 # ASE's VelocityVerlet evaluates the new-step forces inside
-                # step() and returns them: exactly one evaluation per step.
-                forces = self.dyn.step(self.atoms.calc.results["forces"])
+                # step(): exactly one evaluation per step.  The committed
+                # record afterwards reads the calculator cache.
+                self._evaluate(
+                    step,
+                    lambda: self.dyn.step(self.atoms.calc.results["forces"]))
                 self.dyn.nsteps = step
-                del forces  # the committed record reads the calculator cache
-                self._evaluate(step)
                 self._record_evaluation(step)
                 self.event_log.append_once(
                     f"step:{self.run_id}:{step - 1}", STEP_COMPLETED,
@@ -560,17 +607,18 @@ class _PlainDriver:
 
 def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                verbose: bool, handle_sigint: bool) -> WorkflowResult:
-    backend = (create_configured_backend("reference", config.reference,
-                                         run_dir=run_dir)
-               if config.task.mode == "reference"
-               else create_configured_backend("surrogate", config.surrogate,
-                                              run_dir=run_dir))
-    prepare_run_directory(
-        config, engine=backend if config.task.mode == "reference" else None,
-        surrogate=backend if config.task.mode == "surrogate" else None)
+    event_log = EventLog(run_dir)
     try:
-        driver = _PlainDriver(config, atoms, backend, run_dir)
+        # The reference is created with the run's event log when its factory
+        # accepts one (QE density I/O then enters the ledger).
+        backend = _plain_backend(config, run_dir, event_log=event_log)
+        prepare_run_directory(
+            config, engine=backend if config.task.mode == "reference" else None,
+            surrogate=backend if config.task.mode == "surrogate" else None)
+        driver = _PlainDriver(config, atoms, backend, run_dir,
+                              event_log=event_log)
     except Exception:
+        event_log.close()
         _remove_fresh_event_log(run_dir)
         raise
     outputs = RunOutputs(run_dir, config.run.id,
@@ -625,11 +673,16 @@ def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                      verbose: bool) -> WorkflowResult:
     """One backend evaluation of the structure (reference or fixed surrogate)."""
     section = config.task.mode
-    backend = _plain_backend(config, run_dir)
-    prepare_run_directory(
-        config, engine=backend if section == "reference" else None,
-        surrogate=backend if section == "surrogate" else None)
     event_log = EventLog(run_dir)
+    try:
+        backend = _plain_backend(config, run_dir, event_log=event_log)
+        prepare_run_directory(
+            config, engine=backend if section == "reference" else None,
+            surrogate=backend if section == "surrogate" else None)
+    except Exception:
+        event_log.close()
+        _remove_fresh_event_log(run_dir)
+        raise
     store = Store(run_dir / "trajectory.db")
     model_id = (model_id_for(backend, 0) if section == "surrogate"
                 else (fingerprint_of(backend) or type(backend).__qualname__))
@@ -648,10 +701,18 @@ def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
     started_unix = time.time()
     start = time.perf_counter()
     try:
-        if section == "reference":
-            label = backend.compute(atoms)
-        else:
-            label = backend.predict(atoms)
+        with physical_attempt(backend, event_log,
+                              operation=("reference" if section == "reference"
+                                         else "inference"),
+                              request_id=f"{config.run.id}-task-1",
+                              purpose="singlepoint",
+                              source="workflow",
+                              method=("compute" if section == "reference"
+                                      else "predict")) as attempt_kwargs:
+            if section == "reference":
+                label = backend.compute(atoms, **attempt_kwargs)
+            else:
+                label = backend.predict(atoms, **attempt_kwargs)
         forces = np.asarray(label.forces, dtype=float)
         if not np.isfinite(label.energy) or not np.isfinite(forces).all():
             raise EngineError(f"{section} backend returned non-finite "
@@ -728,11 +789,16 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
     under an optimizer, because it does not define a fixed potential surface.
     """
     section = config.task.mode
-    backend = _plain_backend(config, run_dir)
-    prepare_run_directory(
-        config, engine=backend if section == "reference" else None,
-        surrogate=backend if section == "surrogate" else None)
     event_log = EventLog(run_dir)
+    try:
+        backend = _plain_backend(config, run_dir, event_log=event_log)
+        prepare_run_directory(
+            config, engine=backend if section == "reference" else None,
+            surrogate=backend if section == "surrogate" else None)
+    except Exception:
+        event_log.close()
+        _remove_fresh_event_log(run_dir)
+        raise
     store = Store(run_dir / "trajectory.db")
     model_id = (model_id_for(backend, 0) if section == "surrogate"
                 else (fingerprint_of(backend) or type(backend).__qualname__))
@@ -770,8 +836,13 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         evaluations += 1
         _record_evaluation(label, evaluations)
 
-    atoms.calc = _BackendCalculator(backend, section,
-                                    on_evaluation=_on_evaluation)
+    atoms.calc = _BackendCalculator(
+        backend, section, on_evaluation=_on_evaluation, event_log=event_log,
+        # calculate() runs before _on_evaluation bumps the counters, so the
+        # attempt's parent is the task id this evaluation is about to get.
+        attempt_fields=lambda: {
+            "request_id": f"{config.run.id}-task-{task_counter + 1}",
+            "purpose": "relax"})
     projection = validate_constraints(atoms)
     if config.relax.optimizer == "bfgs":
         from ase.optimize import BFGS
@@ -912,32 +983,42 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
     if verbose:
         print(f"resume: run {config.run.id} is at complete step {current}; "
               f"running {extra_steps} additional steps (target {target})")
-    engine, surrogate = build_backends(config, run_dir=run_dir)
-    with _SigintGuard(handle_sigint):
-        runner = EnergeticRunner.resume(
-            run_dir, surrogate, engine, updater=updater,
-            checkpoint_interval_steps=config.checkpoint.interval_steps,
-            handle_sigint=handle_sigint, event_log_force=force_unlock)
-        outputs = RunOutputs(
-            run_dir, config.run.id,
-            trajectory_interval_steps=config.output.trajectory_interval_steps,
-            summary_interval_steps=config.output.summary_interval_steps)
-        outputs.regenerate_trajectory()  # heal any crash-window preview holes
-        _attach_outputs(runner, outputs)
+    event_log = EventLog(run_dir, force=force_unlock)
+    runner = None
+    try:
+        # Backends are created with the run's event log when their factory
+        # accepts one, so post-resume physical attempts keep entering the
+        # ledger instead of going silent after the restart.
+        engine, surrogate = build_backends(config, run_dir=run_dir,
+                                           event_log=event_log)
+        with _SigintGuard(handle_sigint):
+            runner = EnergeticRunner.resume(
+                run_dir, surrogate, engine, updater=updater,
+                checkpoint_interval_steps=config.checkpoint.interval_steps,
+                handle_sigint=handle_sigint, event_log=event_log)
+            outputs = RunOutputs(
+                run_dir, config.run.id,
+                trajectory_interval_steps=config.output.trajectory_interval_steps,
+                summary_interval_steps=config.output.summary_interval_steps)
+            outputs.regenerate_trajectory()  # heal any crash-window preview holes
+            _attach_outputs(runner, outputs)
 
-        def _progress() -> None:
-            if (verbose and runner.dyn.nsteps > 0
-                    and runner.dyn.nsteps % outputs.summary_interval == 0):
-                print(f"  step {runner.dyn.nsteps}/{target} "
-                      f"(t = {runner.dyn.nsteps * config.dynamics.timestep_fs:.2f} fs)",
-                      flush=True)
+            def _progress() -> None:
+                if (verbose and runner.dyn.nsteps > 0
+                        and runner.dyn.nsteps % outputs.summary_interval == 0):
+                    print(f"  step {runner.dyn.nsteps}/{target} "
+                          f"(t = {runner.dyn.nsteps * config.dynamics.timestep_fs:.2f} fs)",
+                          flush=True)
 
-        runner.dyn.attach(_progress, interval=outputs.summary_interval)
-        try:
-            summary = runner.run(extra_steps)
-        finally:
-            _finalize_quietly(outputs)
-            runner.close()
+            runner.dyn.attach(_progress, interval=outputs.summary_interval)
+            try:
+                summary = runner.run(extra_steps)
+            finally:
+                _finalize_quietly(outputs)
+                runner.close()
+    finally:
+        if runner is None:
+            event_log.close()
     after = _complete_steps(run_dir, config.run.id)
     stopped = _stopped_early(run_dir, config.run.id)
     if verbose:

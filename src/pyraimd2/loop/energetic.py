@@ -93,6 +93,7 @@ from pyraimd2.runtime.events import (
     TASK,
     UPDATE_REJECTED,
     EventLog,
+    physical_attempt,
 )
 from pyraimd2.runtime.labels import LabelCache, atoms_input_hash
 from pyraimd2.runtime.models import (
@@ -943,7 +944,16 @@ class EnergeticCalculator(Calculator):
         started_unix = time.time()
         start = time.perf_counter()
         try:
-            result = self.engine.compute(work)
+            # One logical request; the physical launches inside it are
+            # attempt events (self-reported by engines accepting
+            # ``request_id``, one-per-call otherwise — see
+            # events.physical_attempt).
+            with physical_attempt(self.engine, self._event_log,
+                                  operation="reference",
+                                  request_id=task_id,
+                                  purpose=ledger_purpose,
+                                  source="energetic") as attempt_kwargs:
+                result = self.engine.compute(work, **attempt_kwargs)
             if not _same_state(atoms, work):
                 raise ValueError("engine.compute mutated its atomic input")
             energy, forces, stress = _label_arrays(result, len(atoms))
@@ -1835,7 +1845,8 @@ class EnergeticRunner:
                direction: Direction | None = None,
                checkpoint_interval_steps: int | None = None,
                handle_sigint: bool = False, event_log_force: bool = False,
-               label_cache: bool = True) -> EnergeticRunner:
+               label_cache: bool = True,
+               event_log: EventLog | None = None) -> EnergeticRunner:
         """Resume a run from its last valid checkpoint plus event replay.
 
         Restores the complete-step boundary in a fresh process, replays the
@@ -1843,7 +1854,10 @@ class EnergeticRunner:
         re-training or re-consuming), and resumes an uncommitted frozen
         proposal with its original check draw. ``event_log_force`` reclaims
         the writer lock left by a crashed process — a deliberate assertion
-        that no live writer exists.
+        that no live writer exists.  A caller may instead pass an already
+        open ``event_log`` (the workflow resume path does, so backends
+        created with that same log keep recording after the restart); the
+        runner then takes over its lifecycle.
         """
         run_dir = Path(run_dir)
         state, arrays, manifest, generation = cls._read_resume_checkpoint(run_dir)
@@ -1873,7 +1887,8 @@ class EnergeticRunner:
                     "the digest bound into the checkpoint; it looks tampered "
                     "with — resume refuses to load it")
         store = Store(run_dir / "trajectory.db")
-        event_log = EventLog(run_dir, force=event_log_force)
+        if event_log is None:
+            event_log = EventLog(run_dir, force=event_log_force)
         policy = dict(state["policy"])
         calc = EnergeticCalculator(
             surrogate, engine, store, run_id, direction=direction,

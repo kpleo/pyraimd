@@ -20,8 +20,11 @@ evaluation ID writes the event once.
 
 from __future__ import annotations
 
+import contextlib
+import inspect
 import json
 import os
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Self
@@ -37,11 +40,71 @@ STEP_COMPLETED = "step_completed"
 PROBE_COMPLETED = "probe_completed"
 LABEL_CONSUMED = "label_consumed"
 TASK = "task"
+ATTEMPT = "attempt"
 MODEL_UPDATE = "model_update"
 RUN_SUMMARY = "run_summary"
 RUN_END = "run_end"
 RESUMED = "resumed"
 UPDATE_REJECTED = "update_rejected"
+
+# ``record`` discriminant on attempt events (and on nested physical I/O
+# task events): the cost ledger counts physical executions by it.
+PHYSICAL_ATTEMPT = "physical_attempt"
+PHYSICAL_IO = "physical_io"
+
+
+def accepts_request_id(backend: object, method: str) -> bool:
+    """True when ``backend.<method>`` takes a ``request_id`` keyword — the
+    R6 engine convention for self-reporting one attempt event per real
+    process launch (see REVIEW_FIXES_BACKEND_20260909.md)."""
+    call = getattr(backend, method, None)
+    if call is None:
+        return False
+    try:
+        return "request_id" in inspect.signature(call).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+@contextlib.contextmanager
+def physical_attempt(backend: object, event_log: EventLog | None, *,
+                     operation: str, request_id: str,
+                     purpose: str | None, source: str,
+                     method: str = "compute") -> Iterator[dict]:
+    """Physical-execution record(s) of one logical backend call.
+
+    A ``task`` event is the *logical* request; an ``attempt`` event
+    (``record="physical_attempt"``) is one real launch.  A backend whose
+    ``<method>`` accepts ``request_id`` reports every launch itself — the
+    context manager yields the keyword to pass through.  Any other backend
+    gets exactly one attempt recorded around the call.  A self-reporting
+    backend that raises before launching anything records no attempt — a
+    precheck failure is not a physical execution.
+    """
+    if accepts_request_id(backend, method):
+        yield {"request_id": request_id}
+        return
+    if event_log is None:
+        yield {}
+        return
+    started_unix = time.time()
+    start = time.perf_counter()
+    status, message = "success", None
+    try:
+        yield {}
+    except Exception as error:
+        status, message = "failed", repr(error)
+        raise
+    finally:
+        event_log.append(ATTEMPT, {
+            "record": PHYSICAL_ATTEMPT,
+            "operation": operation, "purpose": purpose,
+            "request_id": request_id, "attempt": 1, "status": status,
+            "started_unix": started_unix,
+            "elapsed_s": time.perf_counter() - start,
+            "returncode": None, "directory": None, "start": None,
+            "source": source, "error": message,
+        })
 
 
 class EventLogError(RuntimeError):
