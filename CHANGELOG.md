@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.2
+
+Second correctness patch, closing the seven review findings (R1-R7) on top of
+0.4.1. No new features.
+
+Fixed
+
+- Nested ASE mixing calculators (Sum of Sum of ...) fingerprint their full
+  composition; a wrapper whose children are unidentifiable reports an honest
+  unknown instead of a trusted empty-parameter hash (R1).
+- Attempt sinks are checked for identity: a run log is connected for the
+  duration of each call and restored afterwards, mismatched sinks are refused
+  before launch, and the no-log direct API keeps working (R2).
+- The cost ledger counts every launched attempt once, with failed, killed and
+  post_processing_failed all counted as failed physical executions (R3).
+- Native QE output-read failures surface as contractual errors with the
+  original cause and a terminal attempt record, never UnboundLocalError (R4).
+- Plain-MD failed requests close exactly one task record under one id,
+  including the initial evaluation (R5).
+- Calibration counters are restored only for pre-proposal deferred
+  calibrations, keeping segment history [1,2,3] across resume (R6).
+- All user-visible trajectory outputs (CLI export, automatic trajectory,
+  summary CSV, low-level frames API) read through the same committed-row view;
+  orphaned rows stay as audit records only (R7).
+
+Changed
+
+- numpy is held below 2.5: ASE 3.29.0 sets array shapes through an API
+  deprecated in NumPy 2.5, and the pin removes that compatibility noise
+  instead of suppressing warnings.
+
 ## 0.4.1
 
 Correctness fixes for resume, export, model updates, backend identity and

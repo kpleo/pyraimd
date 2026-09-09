@@ -1,6 +1,6 @@
 [project]
 name = "pyraimd2"
-version = "0.4.1"
+version = "0.4.2"
 description = "Pyramid: extensible ab initio molecular dynamics with energetic force-error prediction"
 readme = "README.md"
 authors = [
@@ -8,7 +8,10 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "numpy>=1.26",
+    # ASE 3.29.0 sets array shapes through a NumPy API deprecated in NumPy 2.5
+    # (ase/db/core.py, ase/md/md.py); hold below 2.5 until an ASE release
+    # drops that usage, rather than silencing the warnings.
+    "numpy>=1.26,<2.5",
     "ase>=3.29.0",
 ]
 
