@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 import numpy as np
@@ -297,14 +298,20 @@ _CSV_COLUMNS = [
 ]
 
 
-def summary_csv(store: Store, run_id: str) -> str:
+def summary_csv(store: Store, run_id: str, *,
+                events: Iterable[dict] | None = None) -> str:
     """One CSV line per committed evaluation: energy/error/reference vs time.
 
-    Read from the trajectory database (event log not required).  Older rows
-    without energetic metadata export with blank fields.
+    With ``events`` given, rows come through the shared commit→row binding
+    (orphan rows excluded); without it the raw all-rows selection is used
+    (explicit legacy mode — orphans are NOT excluded).  Older rows without
+    energetic metadata export with blank fields.
     """
-    rows = sorted(store._db.select(run_id=run_id),
-                  key=lambda r: int(r.key_value_pairs["step"]))
+    if events is not None:
+        rows = [row for _event, row in store.iter_committed(events, run_id)]
+    else:
+        rows = sorted(store._db.select(run_id=run_id),
+                      key=lambda r: int(r.key_value_pairs["step"]))
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=_CSV_COLUMNS)
     writer.writeheader()

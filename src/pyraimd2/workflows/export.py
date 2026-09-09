@@ -122,6 +122,7 @@ def frame_from_row(row, run_id: str, *, force_source: str,
     atoms.info.update({
         "run_id": run_id,
         "step_id": step,
+        "row_id": int(row.id),
         "evaluation_id": step + 1,
         "physical_time_fs": float(context.get("physical_time_fs", np.nan)),
         "route": route,
@@ -151,23 +152,25 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
 
     With ``committed`` given (``Store.iter_committed`` pairs), frames come
     from the authoritative commit→row binding only; orphan rows (written
-    but never committed) never become trajectory frames (A3).  Without it —
-    a run with no event log — all rows are exported as the legacy fallback:
-    no log does NOT mean provably no complete frames.
-
-    With ``complete_steps`` given (MD task kinds only), only rows at a
-    committed complete-step boundary are exported (the initial evaluation
-    at step -1 is always kept and marked ``integration_phase =
-    'initial_evaluation'``). A committed evaluation without its boundary is
-    left as a computation record in the store — it never masquerades as a
-    completed trajectory frame.  Relax and singlepoint tasks have no
-    integration steps: every committed evaluation is a complete record and
-    ``complete_steps`` must be None for them (A2).
+    but never committed) never become trajectory frames (A3).  With
+    ``committed=None`` the function is in raw/legacy mode: **all** rows are
+    candidates, step filtering cannot pick the authoritative row among
+    several at one step, and orphans are NOT excluded.  Asking for
+    complete-step filtering in raw mode is rejected — select the committed
+    view (``Store.iter_committed`` or :func:`frames_for_run`) instead.
+    Runs without an event log intentionally use the raw fallback: no log
+    does not mean provably no complete frames.
     """
     if force_source not in FORCE_SOURCES:
         raise ExportError(
             f"force_source must be one of {list(FORCE_SOURCES)}, got "
             f"{force_source!r}")
+    if complete_steps is not None and committed is None:
+        raise ExportError(
+            "complete_steps selects a finished step, not the authoritative "
+            "row at that step: pass committed=store.iter_committed(events, "
+            "run_id) (or frames_for_run), or call without complete_steps "
+            "for the explicit raw/legacy row selection")
     if committed is not None:
         pairs = committed
     else:
@@ -188,7 +191,6 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
         frame = frame_from_row(row, run_id, force_source=force_source,
                                wrap=wrap, store=store)
         frame.info["evaluation_id"] = evaluation_id
-        frame.info["row_id"] = int(row.id)
         frame.info["integration_phase"] = (
             "initial_evaluation" if step < 0 else "complete_step")
         frames.append(frame)
@@ -215,6 +217,33 @@ def infer_run_id(run_dir: str | Path) -> str:
     return str(inspect_run(run_dir)["run_id"])
 
 
+def frames_for_run(store: Store, run_dir: str | Path, run_id: str, *,
+                   force_source: str,
+                   interval_steps: int = 1) -> list[Atoms]:
+    """Committed frames of one run directory through the shared
+    commit→row view — the one row selection used by the CLI export, the
+    automatic trajectory and the summaries (R7).
+
+    Completion semantics are task-specific (A2): MD drivers (plain NVE,
+    adaptive energetic) complete a step only at its STEP_COMPLETED
+    boundary; relax and singlepoint commit complete records per evaluation
+    and have no step boundaries.  A run without an event log falls back to
+    all rows (no log does not mean provably no complete frames).
+    """
+    events = _read_events(Path(run_dir) / "events.jsonl")
+    start = next((e for e in events if e.get("type") == "run_start"), None)
+    driver = ((start or {}).get("workflow") or {}).get("driver")
+    md_kind = driver == "plain-nve" or (driver is None
+                                        and (start or {}).get("policy"))
+    complete_steps = completed_step_ids(run_dir) if md_kind else None
+    committed = (list(store.iter_committed(events, run_id))
+                 if events else None)
+    return frames_from_store(store, run_id, force_source=force_source,
+                             interval_steps=interval_steps,
+                             complete_steps=complete_steps,
+                             committed=committed)
+
+
 def export_run(run_dir: str | Path, *, force_source: str = "driving",
                output: str | Path | None = None, force: bool = False) -> dict:
     """Export the committed trajectory of a run directory to extxyz.
@@ -233,21 +262,8 @@ def export_run(run_dir: str | Path, *, force_source: str = "driving",
             "configuration first with `pyramid run`")
     run_id = infer_run_id(run_dir)
     store = Store(db_path)
-    events = _read_events(run_dir / "events.jsonl")
-    start = next((e for e in events if e.get("type") == "run_start"), None)
-    # Completion semantics are task-specific (A2): MD drivers (plain NVE,
-    # adaptive energetic) complete a step only at its STEP_COMPLETED
-    # boundary; relax and singlepoint commit complete records per
-    # evaluation and have no step boundaries.
-    driver = ((start or {}).get("workflow") or {}).get("driver")
-    md_kind = driver == "plain-nve" or (driver is None
-                                        and (start or {}).get("policy"))
-    complete_steps = completed_step_ids(run_dir) if md_kind else None
-    committed = (list(store.iter_committed(events, run_id))
-                 if events else None)
-    frames = frames_from_store(store, run_id, force_source=force_source,
-                               complete_steps=complete_steps,
-                               committed=committed)
+    frames = frames_for_run(store, run_dir, run_id,
+                            force_source=force_source)
     if not frames:
         raise ExportError(
             f"run {run_id!r} has no committed evaluations to export")

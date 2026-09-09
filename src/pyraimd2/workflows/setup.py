@@ -44,15 +44,14 @@ from pyraimd2.backends import available_backends, create_backend
 from pyraimd2.backends.registry import ENGINE, SURROGATE, backend_capabilities
 from pyraimd2.config import BackendConfig, PyramidConfig
 from pyraimd2.engines.base import CapabilityMismatchError
-from pyraimd2.runtime.inspect import inspect_run
+from pyraimd2.runtime.inspect import _read_events, inspect_run
 from pyraimd2.runtime.inspect import summary_csv as _summary_csv
 from pyraimd2.store import Store
 from pyraimd2.surrogate.base import assert_compatible_energy_contract
 from pyraimd2.workflows.export import (
     append_extxyz,
-    completed_step_ids,
     frame_from_row,
-    frames_from_store,
+    frames_for_run,
     write_extxyz,
 )
 
@@ -471,11 +470,11 @@ class RunOutputs:
         return Store(self.run_dir / "trajectory.db")
 
     def regenerate_trajectory(self) -> None:
-        frames = frames_from_store(self._store(), self.run_id,
-                                   force_source="driving",
-                                   interval_steps=self.trajectory_interval,
-                                   complete_steps=completed_step_ids(
-                                       self.run_dir))
+        # Same commit→row selection as the CLI export (R7): orphan rows
+        # never enter the user-visible trajectory.
+        frames = frames_for_run(self._store(), self.run_dir, self.run_id,
+                                force_source="driving",
+                                interval_steps=self.trajectory_interval)
         if frames:
             write_extxyz(self.trajectory_path, frames)
 
@@ -486,7 +485,11 @@ class RunOutputs:
         if evaluation_id % self.trajectory_interval != 0:
             return
         store = self._store()
-        row = store._row_at_step(self.run_id, evaluation_id - 1)
+        # The frame comes from the commit-bound row of this evaluation, not
+        # from whichever row happens to sit at the step first (R7).
+        row = store.committed_row(
+            _read_events(self.run_dir / "events.jsonl"), self.run_id,
+            evaluation_id)
         append_extxyz(self.trajectory_path,
                       frame_from_row(row, self.run_id, force_source="driving",
                                      store=store))
@@ -494,7 +497,9 @@ class RunOutputs:
     def write_summaries(self) -> None:
         info = inspect_run(self.run_dir, run_id=self.run_id)
         _write_json_atomic(self.run_dir / "summary.json", info)
-        csv_text = _summary_csv(self._store(), self.run_id)
+        csv_text = _summary_csv(
+            self._store(), self.run_id,
+            events=_read_events(self.run_dir / "events.jsonl"))
         tmp = self.run_dir / "summary.csv.tmp"
         tmp.write_text(csv_text, encoding="utf-8")
         os.replace(tmp, self.run_dir / "summary.csv")

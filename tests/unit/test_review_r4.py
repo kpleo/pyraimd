@@ -24,7 +24,7 @@ from pyraimd2.runtime.events import RUN_SUMMARY, STEP_COMPLETED
 from pyraimd2.runtime.inspect import _temperature_K, inspect_run
 from pyraimd2.store import Store
 from pyraimd2.workflows import export_run, resume_workflow, run_workflow
-from pyraimd2.workflows.export import completed_step_ids, frames_from_store
+from pyraimd2.workflows.export import frames_for_run
 from pyraimd2.workflows.md import _policy_kwargs
 from pyraimd2.workflows.templates import HARMONIC_CONFIG
 
@@ -126,8 +126,7 @@ def test_export_frames_carry_complete_step_momenta(tmp_path):
     runner.close()
     run_dir = tmp_path / "mom"
     store = Store(run_dir / "trajectory.db")
-    frames = frames_from_store(store, "run", force_source="driving",
-                               complete_steps=completed_step_ids(run_dir))
+    frames = frames_for_run(store, run_dir, "run", force_source="driving")
     by_step = {frame.info["step_id"]: frame for frame in frames}
     assert 0 in by_step and 1 in by_step
     for step in (0, 1):
@@ -166,8 +165,7 @@ def test_crashed_mid_step_is_not_counted_or_exported(tmp_path):
     info = inspect_run(run_dir)
     assert info["n_complete_steps"] == 0
     store = Store(run_dir / "trajectory.db")
-    frames = frames_from_store(store, "run", force_source="driving",
-                               complete_steps=completed_step_ids(run_dir))
+    frames = frames_for_run(store, run_dir, "run", force_source="driving")
     assert len(frames) == 1  # only the initial evaluation
     assert frames[0].info["step_id"] == -1
     assert frames[0].info["integration_phase"] == "initial_evaluation"
