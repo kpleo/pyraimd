@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.4.1
+
+Correctness patch over 0.4.0, driven by the second independent review
+(`docs/development_reports/INDEPENDENT_REVIEW_040_20260909.md`). No new
+features; every fix is paired with a regression that failed before it.
+
+Fixed
+
+- Resume now binds positions, driving forces, reference labels and update
+  re-anchoring to the verified committed row; orphaned pre-commit rows remain
+  as audit records but never drive a trajectory (C1, A3).
+- Array sidecars carry dtype/byte-order/shape/content identity at all three
+  entry points (event, model artifact, checkpoint); 0-D states keep their
+  scalar shape (C2).
+- The initial frame keeps its original complete-step momenta on export; only
+  genuine mid-step force evaluations get the second half-kick reconstruction
+  (A1). Export, inspect and resume share one commit/phase-aware read
+  interface per task kind: relax iterations and singlepoints export
+  correctly, uncommitted steps are never counted or exported as complete, and
+  inspect separates the last committed boundary from the last evaluation
+  (A2, A4).
+- Training-success logging, state_dict, artifact and publish form a single
+  rollback domain; a recalibrated-but-uncommitted proposal restores its
+  segment history exactly once (C3, C4).
+- Wrapped ASE calculators (Sum/Mixed) fingerprint their children and weights;
+  unidentifiable wrappers report an honest unknown identity (B1).
+- Engines accepting request_id expose an explicit attempt sink; a run log is
+  connected for the duration of each call, and sink-less combinations are
+  refused before launch instead of undercounting retries (B2).
+- One explicit execution per compute, then the whole result set is read — no
+  implicit second run for missing stress; executable-missing failures record
+  zero attempts; post-processing failures terminate the attempt record as
+  `post_processing_failed`; density staging is timed over its real interval
+  and cache hits are timed per access (B3).
+
+Compatibility
+
+- 0.4.0 event logs and checkpoints remain readable; logs without the
+  `physical_attempt_v1` marker keep their previous ledger semantics.
+
 ## 0.4.0
 
 The first workflow-stable release line: configuration-driven, resumable runs

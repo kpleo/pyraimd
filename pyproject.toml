@@ -1,6 +1,6 @@
 [project]
 name = "pyraimd2"
-version = "0.4.0"
+version = "0.4.1"
 description = "Pyramid: extensible ab initio molecular dynamics with energetic force-error prediction"
 readme = "README.md"
 authors = [
