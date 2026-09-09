@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0rc1
+## 0.4.0
 
 The first workflow-stable release line: configuration-driven, resumable runs
 with an explicit evaluation contract, a complete cost record and guarded model
