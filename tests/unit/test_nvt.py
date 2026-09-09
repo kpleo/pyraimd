@@ -51,8 +51,8 @@ r0 = 0.9
 interval_steps = {checkpoint_interval}
 
 [output]
-trajectory_interval_steps = 1
-summary_interval_steps = 5
+trajectory_interval_steps = {trajectory_interval}
+summary_interval_steps = {summary_interval}
 """
 
 
@@ -60,7 +60,8 @@ def write_nvt(tmp_path, *, mode="reference", dt=0.5, steps=8,
               temperature=300.0, friction=0.01, thermostat_seed=123, k=1.0,
               checkpoint_interval=4, positions=((0.85, 0.9, 0.9),
                                                 (0.95, 0.9, 0.9)),
-              momenta=None, masses=None):
+              momenta=None, masses=None, trajectory_interval=1,
+              summary_interval=5):
     tmp_path.mkdir(parents=True, exist_ok=True)
     backend = "reference" if mode == "reference" else "surrogate"
     bias = "bias = 0.05" if backend == "surrogate" else ""
@@ -68,7 +69,9 @@ def write_nvt(tmp_path, *, mode="reference", dt=0.5, steps=8,
                              steps=steps, temperature=temperature,
                              friction=friction,
                              thermostat_seed=thermostat_seed, k=k,
-                             checkpoint_interval=checkpoint_interval)
+                             checkpoint_interval=checkpoint_interval,
+                             trajectory_interval=trajectory_interval,
+                             summary_interval=summary_interval)
     atoms = Atoms("H" * len(positions), positions=positions)
     if masses is not None:
         atoms.set_masses(masses)
