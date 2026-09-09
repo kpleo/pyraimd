@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pyraimd2.workflows.setup import WorkflowError
 
-TEMPLATES = ("harmonic",)
+TEMPLATES = ("harmonic", "harmonic-nvt")
 
 HARMONIC_CONFIG = """\
 # Pyramid configuration — harmonic offline demo (schema_version 1).
@@ -82,7 +82,44 @@ H       0.945000    0.862000    0.918000
 H       0.893000    0.948000    0.955000
 """
 
-_CONTENT = {"harmonic": (HARMONIC_CONFIG, HARMONIC_STRUCTURE)}
+def _strip_sections(text: str, names: tuple[str, ...]) -> str:
+    for name in names:
+        start = text.index(name)
+        following = text.index("\n[", start + 1)
+        text = text[:start] + text[following + 1:]
+    return text
+
+
+HARMONIC_NVT_CONFIG = _strip_sections(
+    HARMONIC_CONFIG.replace(
+        '# Pyramid configuration — harmonic offline demo (schema_version 1).',
+        '# Pyramid configuration — harmonic offline NVT demo (schema_version 1).'
+    ).replace(
+        'id = "harmonic-demo"', 'id = "harmonic-nvt-demo"'
+    ).replace(
+        'directory = "runs/harmonic-demo"', 'directory = "runs/harmonic-nvt-demo"'
+    ).replace(
+        'mode = "adaptive"', 'mode = "surrogate"'
+    ).replace(
+        """[dynamics]
+ensemble = "nve"
+timestep_fs = 0.5
+steps = 20
+temperature_K = 300.0             # used only when the structure has no velocities
+velocity_seed = 7""",
+        """[dynamics]
+ensemble = "nvt"
+integrator = "langevin"
+timestep_fs = 0.5
+steps = 20
+temperature_K = 300.0             # bath target temperature
+friction_per_fs = 0.01            # bath coupling (required for NVT)
+thermostat_seed = 123             # new-run thermostat stream (resume restores it)
+velocity_seed = 7"""),
+    ("[reference]", "[policy]", "[verification]"))
+
+_CONTENT = {"harmonic": (HARMONIC_CONFIG, HARMONIC_STRUCTURE),
+            "harmonic-nvt": (HARMONIC_NVT_CONFIG, HARMONIC_STRUCTURE)}
 
 
 def write_template(template: str, output_dir: str | Path, *,

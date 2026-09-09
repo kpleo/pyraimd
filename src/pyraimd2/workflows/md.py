@@ -1216,7 +1216,8 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
               f"steps (target {target})")
     from ase.constraints import FixAtoms
 
-    if current >= 1:
+    replay_from_checkpoint = spec.algorithm == "langevin"
+    if current >= 1 and not replay_from_checkpoint:
         # The window after the checkpoint advanced the trajectory: rebuild
         # the boundary from the last committed row.  The plain driver logs
         # AFTER the step completes, so the row's momenta are already the
@@ -1253,6 +1254,32 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
     driver = _PlainDriver(config, atoms, backend, run_dir,
                           event_log=event_log, resume_state=state)
     driver._task_counter = task_counter
+    if replay_from_checkpoint:
+        # A stochastic integrator's boundary is not recoverable from the
+        # checkpoint's RNG alone: the completed steps after the checkpoint
+        # are fast-forwarded with their committed driving forces (no new
+        # physical evaluations, no re-draws of the bath stream), then
+        # verified against the committed boundary row (M1/M2).
+        for k in range(int(state["nsteps"]) + 1, current + 1):
+            replay_row = store.committed_row(event_log, config.run.id, k - 1)
+            _e, forces = store.driving_label_for_row(replay_row)
+            driver.dyn.step(np.asarray(forces, dtype=float))
+            driver.dyn.nsteps = k
+        if current >= 1:
+            boundary_row = store.committed_row(event_log, config.run.id,
+                                               current)
+            if not np.allclose(atoms.positions,
+                               boundary_row.toatoms().positions,
+                               rtol=0, atol=1e-10):
+                raise WorkflowError(
+                    f"replayed boundary at step {current} does not match the "
+                    f"committed row (max |dx| "
+                    f"{float(np.abs(atoms.positions - boundary_row.toatoms().positions).max()):.3e} A); "
+                    "the run directory is inconsistent")
+            # The continuation step integrates from the boundary
+            # evaluation's driving force, not the checkpoint's older one.
+            driving_energy, driving_forces = store.driving_label_for_row(
+                boundary_row)
     driver.dyn.nsteps = current
     driver.atoms.calc.atoms = atoms.copy()
     # The reusable driving force of the boundary evaluation feeds the first

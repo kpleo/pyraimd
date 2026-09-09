@@ -139,12 +139,30 @@ Mode rules:
 
 ### [dynamics]
 
-- `ensemble`: only `nve` is supported in 0.4.1.
+- `ensemble`: `nve` or `nvt`.
+- `integrator`: `verlet` (default, NVE) or `langevin` (required for NVT).
 - `timestep_fs` (number > 0, required).
 - `steps` (integer >= 1, required).
-- `temperature_K` (number >= 0, default 300.0): only used when the
-  structure carries no velocities.
-- `velocity_seed` (integer, default `run.seed`).
+- `temperature_K` (number >= 0, default 300.0): the bath target
+  temperature for NVT; for NVE it is only used when the structure
+  carries no velocities.
+- `velocity_seed` (integer, default `run.seed`): seeds the one-time
+  velocity initialization only; it never reseeds a resume.
+- `friction_per_fs` (number > 0): required for NVT — the bath coupling
+  (`friction = friction_per_fs / ase.units.fs` internally). An NVE run
+  must not set it.
+- `thermostat_seed` (integer): seeds the thermostat's dedicated NumPy
+  `Generator` for a new NVT run (default `run.seed`). The thermostat
+  stream is separate from the independent-check stream; a resume always
+  restores the persisted stream and never uses this seed again. Changing
+  algorithm, timestep, temperature or friction means a new run, not a
+  resume.
+
+NVT runs use ASE's Langevin with `fixcm=False` (the deprecated
+`fixcm=True` does not strictly sample the correct NVT distribution;
+FixCom is not a supported constraint). Adaptive mode currently supports
+`ensemble = "nve"` only; `ensemble = "nvt"` with `mode = "adaptive"`
+is rejected at validation time, before any SCF.
 
 ### [reference] / [surrogate]
 
