@@ -6,6 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from ase import Atoms
+from conftest import simulate_crash
 
 from pyraimd2.engines.base import EngineError, EngineResult
 from pyraimd2.loop import EnergeticRunner, GuardedUpdater, UpdatePolicy
@@ -113,7 +114,7 @@ def test_f01_pending_draw_rng_state_survives_failed_check_resume(tmp_path):
     engine.fail_next = True
     with pytest.raises(EngineError, match="deliberate"):
         crashed.run(1)  # eval 1: accepted, checked, reference check fails
-    del crashed
+    simulate_crash(crashed)
 
     resumed, _, _ = resume_world(tmp_path / "rng-crash", force=True)
     resumed.run(3)
@@ -186,7 +187,7 @@ def test_f03_commit_binds_row_and_orphan_rows_are_not_authoritative(tmp_path):
     log.append_once = fail_commit
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(1)
-    del runner  # row for eval 1 written; its commit never happened
+    runner.close()  # row for eval 1 written; its commit never happened
 
     resumed, _, _ = resume_world(tmp_path / "row-crash", force=True,
                                  fingerprinted=False)
@@ -226,7 +227,7 @@ def test_f03_orphan_row_is_adopted_when_its_label_is_reused(tmp_path):
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(1)
     attempts_at_crash = runner.calc.n_reference
-    del runner
+    runner.close()
 
     resumed, _, _ = resume_world(tmp_path / "row-adopt", force=True)
     resumed.run(1)  # cache-hit check: the orphan label is genuine and reused

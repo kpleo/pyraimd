@@ -427,7 +427,6 @@ class AseQeEngine(AseEngine):
                 f"espresso output processing failed in {directory}: {error}",
                 retryable=True,
             ) from error
-        record["wall_time_s"] = time.perf_counter() - t0
         try:
             write_density_manifest(
                 directory, engine=self, atoms=atoms,
@@ -443,13 +442,17 @@ class AseQeEngine(AseEngine):
                 ),
             )
         except Exception as error:
-            # SCF and parse succeeded; the provenance sidecar did not.
+            # SCF and parse succeeded; the provenance sidecar did not. The
+            # span is settled at this terminal exit, so the attempt covers
+            # staging + process + validation including this write.
+            record["wall_time_s"] = time.perf_counter() - t0
             record.update(status="post_processing_failed",
                           failure_kind="post_processing", error=repr(error))
             self._emit_attempt(record, request_id=request_id)
             raise QeEngineError(
                 f"density manifest could not be written in {directory}: {error}"
             ) from error
+        record["wall_time_s"] = time.perf_counter() - t0
         record.update(status="success", error=None)
         self._emit_attempt(record, request_id=request_id)
         return result

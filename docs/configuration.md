@@ -283,7 +283,7 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 - `resolved_config.json` records the schema version next to the effective
   parameters, so old run directories stay interpretable.
 
-## Current limitations (0.4.1)
+## Current limitations (0.4.2)
 
 - Constraints: FixAtoms only — RATTLE/holonomic, energy-carrying and
   moving constraints are rejected explicitly, as is any variable-cell

@@ -79,7 +79,7 @@ def test_r6_reference_route_calibration_is_not_overwritten(tmp_path):
     _crash_at_commit(runner, 1)
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(1)
-    del runner
+    runner.close()
 
     resumed = _resume(run_dir)
     resumed.run(1)  # complete the crashed evaluation: calibration completes

@@ -19,8 +19,9 @@ def test_append_read_cursor_and_reopen_continues_seq(tmp_path):
     with EventLog(tmp_path) as log:
         assert log.last_seq == 2
         assert log.append("run_end", {"status": "success"}) == 3
-    assert [e["type"] for e in EventLog(tmp_path).iter_events()] == [
-        "run_start", "task", "run_end"]
+    with EventLog(tmp_path) as log:
+        assert [e["type"] for e in log.iter_events()] == [
+            "run_start", "task", "run_end"]
 
 
 def test_append_once_deduplicates_by_key_across_reopen(tmp_path):
@@ -31,7 +32,8 @@ def test_append_once_deduplicates_by_key_across_reopen(tmp_path):
     # The dedup set survives reopening (committed state, not memory).
     with EventLog(tmp_path) as log:
         assert log.append_once("label:run-label-1", "task", {"n": 4}) is None
-    events = list(EventLog(tmp_path).iter_events())
+    with EventLog(tmp_path) as log:
+        events = list(log.iter_events())
     assert [e["n"] for e in events if e["type"] == "task"] == [1, 3]
     assert [e["key"] for e in events] == ["label:run-label-1", "label:run-label-2"]
 
@@ -95,3 +97,25 @@ def test_inspect_read_skips_torn_tail_but_not_middle(tmp_path):
     path.write_text('{"seq": 1}\n{bad\n{"seq": 3}\n')
     with pytest.raises(EventLogError, match="corrupt event"):
         _read_events(path)
+
+
+def test_abandoned_log_releases_the_handle_but_keeps_the_lock(tmp_path):
+    """A constructor-failure path can strand an open log (no reference
+    returned). GC must close its OS handle — never leak it — while the
+    lock file stays put: lock removal remains a deliberate close(), and a
+    stranded writer's stale lock stays available as crash evidence."""
+    import gc
+    import warnings
+
+    log = EventLog(tmp_path)
+    log.append("run_start", {"run_id": "r"})
+    fh = log._fh
+    del log
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        gc.collect()
+    assert fh.closed  # the handle was released without leaking
+    assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    assert (tmp_path / "events.jsonl.lock").exists()  # lock is crash evidence
+    with EventLog(tmp_path, force=True):  # deliberate reclaim still works
+        pass

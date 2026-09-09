@@ -84,7 +84,7 @@ def test_recalibrated_uncommitted_proposal_restores_segment_state(tmp_path,
     _fail_commit_of(runner, crash_at)
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(crash_at)
-    del runner
+    runner.close()
 
     resumed = _resume(run_dir, update_n)
     resumed.run(2)
@@ -119,7 +119,7 @@ def test_second_resume_after_recalibration_commit_counts_once(tmp_path,
     _fail_commit_of(runner, crash_at)
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(crash_at)
-    del runner
+    runner.close()
     first = _resume(run_dir, update_n)
     first.run(2)
     first.close()

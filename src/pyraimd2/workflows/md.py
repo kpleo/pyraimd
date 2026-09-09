@@ -2,20 +2,19 @@
 
 Three modes over the same run-directory layout:
 
-- ``adaptive``: the energetic runner (WP03) — anchored surrogate forces,
+- ``adaptive``: the energetic runner — anchored surrogate forces,
   independent reference checks, complete-step checkpoints, resumable.
 - ``reference``: plain velocity-Verlet NVE driven by the reference engine.
 - ``surrogate``: plain velocity-Verlet NVE driven by the frozen surrogate.
 
 The two plain modes share one small driver built on ASE's VelocityVerlet and
 write the same store-row and event shapes the energetic runner writes, so
-``inspect`` and ``export`` work uniformly.  Plain-mode resume is **not**
-claimed in 0.4.0 (it needs the complete-step checkpoint protocol, which is
-energetic-specific): ``resume`` on such a directory fails with an explicit
-message instead of guessing from the trajectory database.
+``inspect`` and ``export`` work uniformly. Plain runs resume from their
+complete-step checkpoints the same way adaptive runs do.
 
-``singlepoint`` / ``relax`` are refused here with a pointer to WP07 — they
-are not silently mapped onto the MD path.
+``singlepoint`` and ``relax`` are fixed-model tasks in the same layout: one
+backend evaluation, or a FIRE/BFGS optimization driven by a fixed backend
+(reference or frozen surrogate) — never the time-gated adaptive calculator.
 """
 
 from __future__ import annotations

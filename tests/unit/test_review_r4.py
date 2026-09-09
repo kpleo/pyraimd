@@ -157,7 +157,7 @@ def test_crashed_mid_step_is_not_counted_or_exported(tmp_path):
     calc._emit_once = fail_boundary
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(1)  # evaluation committed; the step boundary never was
-    del runner
+    runner.close()
 
     run_dir = tmp_path / "half"
     completed = [e for e in _events(run_dir) if e["type"] == STEP_COMPLETED]

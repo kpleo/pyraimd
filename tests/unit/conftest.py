@@ -137,3 +137,14 @@ def cluster() -> Atoms:
     atoms = Atoms("H4", positions=CLUSTER_POSITIONS.copy())
     atoms.set_momenta(CLUSTER_MOMENTA.copy())
     return atoms
+
+
+def simulate_crash(obj: object) -> None:
+    """Simulate an abrupt process crash for a runner (or bare EventLog):
+    close the writer's OS handle but leave the lock file behind, so resume
+    reclaims a stale lock — while the test process itself leaks no handle.
+    Use this instead of abandoning a live runner when the crash is the
+    scenario; when a clean stop suffices, call ``runner.close()``."""
+    log = getattr(getattr(obj, "calc", None), "_event_log", obj)
+    if log is not None:
+        log._fh.close()  # handle released; lock file stays as crash evidence

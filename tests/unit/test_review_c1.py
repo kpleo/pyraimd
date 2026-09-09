@@ -83,7 +83,7 @@ def test_resume_boundary_forces_come_from_the_committed_row(tmp_path):
     fail_commit_of(runner, 1)
     with pytest.raises(RuntimeError, match="injected crash"):
         runner.run(1)  # orphan row 2 (attempt-2 label); commit lost
-    del runner
+    runner.close()
 
     resumed1 = resume(run_dir)
     resumed1.run(1)  # re-executes: committed row 3 (attempt-3 label)

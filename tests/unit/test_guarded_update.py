@@ -166,6 +166,7 @@ def test_record_only_callback_triggers_no_unnecessary_reprobes(tmp_path):
                              run_dir=run_dir, **POLICY)
     runner.run(12)
     events = list(log.iter_events())
+    runner.close()
     assert not [e for e in events if e["type"] == MODEL_UPDATE]
     assert runner.calc._model_generation == 0
     # Baseline without any callback: identical routing and reference cost.
@@ -218,6 +219,7 @@ def test_publish_produces_artifact_and_reanchors_with_new_generation(tmp_path):
     runner, model, _, _, store, log = make_run(tmp_path / "publish")
     runner.run(12)
     events = list(log.iter_events())
+    runner.close()
     updates = [e for e in events if e["type"] == MODEL_UPDATE]
     assert updates, "expected at least one published update"
     first = updates[0]
@@ -273,6 +275,7 @@ def _run_rejection(tmp_path, name, mutate, expected_reason):
     mutate(model)
     runner.run(4)
     events = list(log.iter_events())
+    runner.close()
     rejections = [e for e in events if e["type"] == UPDATE_REJECTED]
     assert len(rejections) == 1
     assert rejections[0]["reason"] == expected_reason

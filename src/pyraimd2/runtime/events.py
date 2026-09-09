@@ -298,6 +298,18 @@ class EventLog:
         except FileNotFoundError:
             pass
 
+    def __del__(self) -> None:
+        # Last-resort cleanup: an abandoned log (a constructor raised after
+        # the log opened, or a caller dropped it mid-failure) must never
+        # leak an OS handle. Only the handle is closed here — the lock file
+        # stays, because removing it must remain a deliberate act (close());
+        # a crashed writer's stale lock is crash evidence, not cleanup.
+        try:
+            if not self._closed:
+                self._fh.close()
+        except Exception:  # noqa: BLE001, S110 - GC cleanup must never raise
+            pass
+
     def __enter__(self) -> Self:
         return self
 
