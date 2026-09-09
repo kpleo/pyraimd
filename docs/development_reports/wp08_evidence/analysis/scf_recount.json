@@ -1,0 +1,99 @@
+{
+  "convention": "logical reference requests = reference task events in run events.jsonl plus the pilot validate --probe-backends SCF; actual pw.x launches = successful reference tasks plus the pilot; the single failed task never started pw.x",
+  "per_run": {
+    "si-singlepoint": {
+      "reference_tasks": 0,
+      "by_purpose_status": {},
+      "failed_tasks": []
+    },
+    "si-relax": {
+      "reference_tasks": 0,
+      "by_purpose_status": {},
+      "failed_tasks": []
+    },
+    "si-reference": {
+      "reference_tasks": 7,
+      "by_purpose_status": {
+        "md/success": 7
+      },
+      "failed_tasks": []
+    },
+    "si-surrogate": {
+      "reference_tasks": 0,
+      "by_purpose_status": {},
+      "failed_tasks": []
+    },
+    "si-adaptive": {
+      "reference_tasks": 21,
+      "by_purpose_status": {
+        "anchor/success": 1,
+        "probe/success": 12,
+        "verification/success": 6,
+        "refusal/success": 2
+      },
+      "failed_tasks": []
+    },
+    "si-adaptive-short": {
+      "reference_tasks": 20,
+      "by_purpose_status": {
+        "anchor/success": 1,
+        "probe/success": 12,
+        "verification/success": 4,
+        "refusal/success": 2,
+        "verification/failed": 1
+      },
+      "failed_tasks": [
+        {
+          "task_id": "si-adaptive-short-task-33",
+          "purpose": "verification",
+          "evaluation_id": 5,
+          "elapsed_s": 0.05093843722715974,
+          "error": "FileExistsError(17, 'File exists')"
+        }
+      ]
+    },
+    "al-run-singlepoint": {
+      "reference_tasks": 0,
+      "by_purpose_status": {},
+      "failed_tasks": []
+    },
+    "al-run-relax": {
+      "reference_tasks": 0,
+      "by_purpose_status": {},
+      "failed_tasks": []
+    },
+    "al-reference": {
+      "reference_tasks": 9,
+      "by_purpose_status": {
+        "md/success": 9
+      },
+      "failed_tasks": []
+    },
+    "al-surrogate": {
+      "reference_tasks": 0,
+      "by_purpose_status": {},
+      "failed_tasks": []
+    }
+  },
+  "si_logical_in_events": 48,
+  "al_logical_in_events": 9,
+  "failed_prelaunch": 1,
+  "pilot_validate_probe": 1,
+  "total_logical": 58,
+  "total_actual_pwx_launches": 57,
+  "per_purpose_actual": {
+    "pilot_validate_probe": 1,
+    "anchor": 2,
+    "refusal": 4,
+    "probe": 24,
+    "verification_success": 10,
+    "verification_failed_prelaunch_logical_only": 1,
+    "plain_md": 16
+  },
+  "fingerprint_evidence": {
+    "si_reference_id": "qe-pbe-d3:d23205a4a5469f4f",
+    "al_reference_id": "qe-pbe-d3:b5880bfa70564c2d",
+    "cache_hits": 0,
+    "cache_note": "label cache armed (QeEngine fingerprint present in run_start/manifest); zero hits because every checked geometry was new and the WP02 cache is per-process in-memory"
+  }
+}

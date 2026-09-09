@@ -1,0 +1,25 @@
+{
+  "config_sha256": "f13e6349aec6b24915513f60810b0642c8c238ca13e65039f5b191a37945ab60",
+  "created_unix": 1788898785.6699543,
+  "platform": "Linux-3.10.0-1160.el7.x86_64-x86_64-with-glibc2.17",
+  "pyraimd2_version": "0.4.0.dev0",
+  "python": "3.12.13",
+  "reference": {
+    "backend": "qe",
+    "fingerprint": "qe-pbe-d3:d23205a4a5469f4f"
+  },
+  "run_id": "si-adaptive-short",
+  "schema_version": 1,
+  "structure": {
+    "file": "/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/wp08/si/structure.extxyz",
+    "sha256": "0fb1572c80c1dcfbbc1ebe3321b22f9b30696cd75be9c722777ea9655b04634d"
+  },
+  "surrogate": {
+    "backend": "mace",
+    "fingerprint": "mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64"
+  },
+  "task": {
+    "kind": "md",
+    "mode": "adaptive"
+  }
+}

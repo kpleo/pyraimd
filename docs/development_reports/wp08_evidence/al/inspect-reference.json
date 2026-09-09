@@ -1,0 +1,63 @@
+{
+  "run_id": "al-reference",
+  "schema_version": 2,
+  "event_schema_version": 1,
+  "reference_id": "qe-pbe-d3:b5880bfa70564c2d",
+  "n_evaluations": 9,
+  "n_complete_steps": 8,
+  "physical_time_fs": 8.0,
+  "model_id": "qe-pbe-d3:b5880bfa70564c2d",
+  "n_model_updates": 0,
+  "trajectory": {
+    "n_rows": 9,
+    "last_energy_eV": -9134.782676708277,
+    "last_temperature_K": 152.06660389689574,
+    "n_accepted": 0,
+    "last_step": 7
+  },
+  "checks": {
+    "independent_checks": 0,
+    "accepted_count": 0,
+    "detected_count": 0,
+    "bound": null,
+    "probability": null
+  },
+  "cost": {
+    "total_elapsed_s": 439.65208678040653,
+    "by": [
+      {
+        "operation": "reference",
+        "purpose": "md",
+        "count": 9,
+        "elapsed_s": 439.65208678040653,
+        "failed": 0,
+        "cache_hits": 0
+      }
+    ],
+    "reference": {
+      "logical_requests": 9,
+      "successful_executions": 9,
+      "failed_attempts": 0,
+      "cache_hits": 0,
+      "actual_executions": 9
+    },
+    "counts": {
+      "inference": 0,
+      "training": 0,
+      "io": 0
+    }
+  },
+  "wall_time_s": 107.32402020320296,
+  "last_checkpoint": {
+    "generation": 2,
+    "nsteps": 6,
+    "physical_time_fs": 6.0,
+    "last_event_seq": 21,
+    "valid": true
+  },
+  "failure": null,
+  "events": {
+    "count": 30,
+    "last_seq": 30
+  }
+}

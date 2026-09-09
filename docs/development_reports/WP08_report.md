@@ -34,7 +34,7 @@
 ```text
 验收项：配方 A（体相 Si）全流程与至少一个真实 surrogate 接受/重新锚定/恢复案例
 命令（Neimeng A，sbatch，单节点 48 进程）：见 examples/si_bulk_qe_mace/README.md
-测试或结果文件：远端 runs/si-*/{events.jsonl,summary.json}，inspect-adaptive.json / inspect-adaptive-short.json（已回收）
+测试或结果文件：远端 runs/si-*/{events.jsonl,summary.json}，inspect-adaptive.json / inspect-adaptive-short.json（2026-09-09 已全部回收至 `docs/development_reports/wp08_evidence/si/`）
 预先确定的通过标准：三模式各 6 完整步；adaptive 有真实接受与检查计数；中断恢复可继续
 实际关键结果：
   pilot 单点：Si8 SCF 12.5 s（48 进程）、MACE 首次推理 49.3 s；
@@ -42,15 +42,16 @@
   adaptive 6 步：7 评估 4 接受(57%)、违规 0、参考执行 19（anchor 3、probe 12、check 4，墙钟 302 s）；
   中断恢复：4 步＋resume +2（评估 5→7、接受 3→4、检查 4、边界 0.0）；主运行 6→8 步 resume 2 评估全接受、2 次检查；
   inspect 计数与在线记录一致（actual=logical，cache_hits=0，1 次失败尝试入帐）
+  **2026-09-09 记录校正**：原始记录已回收进 `docs/development_reports/wp08_evidence/`（含上述 inspect JSON 与全部 events）。按事件逐条重算（`wp08_evidence/analysis/scf_recount.md`）：pilot 为 `validate --probe-backends` 的 1 次真实 SCF（12.521 s）；si-adaptive 6 步段 19 次参考执行 = anchor 1＋refusal 2＋probe 12＋verification 4（runner 打印摘要把 refusal 并入 anchor 计数，故打印为 anchor 3）；含 resume +2 段（verification 2）全运行合计 21。si-adaptive-short 合计 20 = 13（4 步段）＋1 失败＋6（修复后 resume 段）。
 状态：通过
 ```
 
 ```text
 验收项：配方 B（固定层 Al 表面）工作流与约束语义
 命令：examples/al_surface_qe_mace/README.md 的 plain 部分命令
-测试或结果文件：runs/al-*/events.jsonl、inspect-{reference,surrogate}.json、contract-evidence.txt
+测试或结果文件：runs/al-*/events.jsonl、inspect-{reference,surrogate}.json、contract-evidence.txt（2026-09-09 已全部回收至 `docs/development_reports/wp08_evidence/al/`）
 通过标准：单点/relax/reference-only/surrogate-only 与 plain resume 可跑；固定层语义成立；adaptive 的处置如实
-实际关键结果：FIRE 16 步（ASE 收敛判据通过，最终按原子范数 max|F|=0.055）；reference-only 6 步 9 SCF（含 resume +2，271.8 s）；surrogate-only 6 步 0 SCF；plain resume +2 至 8 步；导出 9 帧。adaptive 被 WP01 能量口径契约在 validate 阶段明确拦截（QE metallic 报 free_energy、MACE 报 energy），未伪造通过——见"未通过项"
+实际关键结果：FIRE 16 步（ASE 收敛判据通过，最终按全原子原始力 max|F|=0.055——**2026-09-09 重算确认该值全部来自固定层反作用力，自由原子 max|F|=0.048<0.05 已收敛**，见"已知故障"条与 `wp08_evidence/analysis/al_relax_final_fmax.txt`）；reference-only 6 步 9 SCF（含 resume +2，首段 7 SCF/271.8 s、resume 段 2 SCF/107.3 s）；surrogate-only 6 步 0 SCF；plain resume +2 至 8 步；导出 9 帧。adaptive 被 WP01 能量口径契约在 validate 阶段明确拦截（QE metallic 报 free_energy、MACE 报 energy），未伪造通过——见"未通过项"
 状态：通过（plain 部分）；adaptive 见下
 ```
 
@@ -73,17 +74,18 @@
 
 ## 参考执行配额与墙钟（计划 §9-L2）
 
-- 总参考执行（实际 SCF）：**58 ≤ 200**。配方 A 49（先导探针 1、reference-only 7、adaptive 21、adaptive-short 20 含 1 失败尝试），配方 B 9（plain reference 6 步＋resume +2）。每条均 ≤100。
-- 分用途：anchor 6、probe 24、check 9、plain-MD 16、先导 1、失败尝试 1。
-- 缓存命中：0（QeEngine 无 fingerprint 可共享标签缓存——无，如实记录）；逻辑请求 == 实际执行（无缓存路径）。
+- 总参考执行：**逻辑请求 58 ≤ 200；实际 pw.x 启动 57**（**2026-09-09 按原始 attempt 重算校正**，原报告 58 未区分逻辑与实际）。配方 A 逻辑 49＝实际 48＋1 次未启动失败（先导 validate 探针 1、reference-only 7、adaptive 21、adaptive-short 20 含 1 失败）；配方 B 9（plain reference 6 步＋resume +2）。每条均 ≤100。
+- 分用途（校正后，详见 `wp08_evidence/analysis/scf_recount.md`）：anchor 2、refusal 4、probe 24、verification 成功 10、plain-MD 16、先导 validate 探针 1、verification 失败（未启动，仅逻辑）1。原报告的"anchor 6、check 9"口径有误：anchor 6 是 runner 打印摘要把 refusal 并入 anchor 的口径（3＋3），check 9 把失败的 verification 同时计入了 check 数与失败尝试（重复计数）；正确分用途合计 57 实际＋1 逻辑失败＝58。
+- 失败尝试 1 次（resume 期间旧目录编号碰撞）：**经调用记录核实未启动 SCF**——`si-adaptive-short-task-33` 在创建 attempt 目录时 FileExistsError，耗时 0.05 s（该体系一次 SCF 约 13–24 s），pw.x 从未执行；按阶段 1 后的账本口径应记 logical=1/actual=0。已计费并触发 WP08 引擎修复，修复后同一恢复路径通过（重试 task-34 成功，18.1 s）。
+- 缓存命中：0。**2026-09-09 校正**：原报告"QeEngine 无 fingerprint"与实现及记录不符——run_start 的 `reference_id` 与 manifest 记录 `qe-pbe-d3:d23205a4a5469f4f`（Si 设置）/`qe-pbe-d3:b5880bfa70564c2d`（Al 设置），WP05 的参考设置指纹当时即在。标签缓存处于启用状态；命中为 0 是因为每个被检查几何都是新构型（MD 不重访同一构型），且 WP02 标签缓存为进程内存级（resume 后冷启动）。故这些运行 logical==actual 属预期，而非缓存路径缺失。
 - 墙钟：Si8 SCF 约 11.5–12.5 s（48 进程）；Al17 板 SCF 约 27–30 s；MACE-MPA-0 首次推理 49.3 s、逐步约 0.3–0.5 s；adaptive 6 步总墙钟 302 s（SCF 主导）。
-- 失败尝试 1 次（resume 期间旧目录编号碰撞，已计费并触发 WP08 引擎修复，修复后同一恢复路径通过）。
 - 分配资源：每配方 1 节点×48 CPU（9242 分区）；无 GPU；排队约 25 min（因账号节点上限改投 9242）。
+- 证据包：`docs/development_reports/wp08_evidence/`（2026-09-09 从 Neimeng A 只读回收：配置、版本/模型/赝势身份、events、attempt 摘要、终态结构/力及核对结果；波函数与 calculations/ 大目录留云端，填充 sbatch 与 launcher 未入库）。
 
 ## 未通过项与原因
 
 - **配方 B 的 adaptive 模式：未通过（契约拦截，非实现缺陷）。** QE 在 metallic+smearing 下报告 free_energy（WP05 起如实声明），MACE 报告 energy，WP01 能量口径契约在 validate 阶段明确拒绝混合。处置：plain 部分全部完成；报告该组合在 0.4.0 的真实能力边界。下一步最小建议（交负责人判断）：(a) 契约细化为"两侧均 force_consistent 时允许跨 kind 锚定"并配套 endpoint work 口径说明；或 (b) 接受该限制并写入支持矩阵。
-- **配方 A 的稳态接受率**：6–8 步内接受率 57–100%（短程示例，不构成稳态或加速主张；未放松任何容差）。
+- **配方 A 的稳态接受率**：6–8 步内接受率 57–100%（短程示例，不构成稳态或加速主张；未放松任何容差）。**成本口径如实记录**：同一 6 步测试点，reference-only 为 7 SCF/80.3 s，adaptive 为 19 次参考执行（逻辑，全部实际）/302 s——adaptive 总成本在该测试点**高于** reference-only；57% 接受率**不是**节省 57% DFT 成本。当前案例证明的是接受/检查/重锚/恢复机制在真实材料上可运行；加速评估需要探针开销能被更长运行摊薄的场景。
 
 ## 恢复与随机状态（相关工作包必填）
 
@@ -93,9 +95,9 @@
 
 ## 算力与成本
 
-- 新增实际参考执行总数：58（本工作包全部）。
+- 新增实际参考执行总数：**57 次实际 pw.x 启动（逻辑请求 58）**（本工作包全部；2026-09-09 按 attempt 重算校正，1 次目录碰撞失败未启动 SCF）。
 - 参考、推理、训练、I/O 墙钟及计时口径：见上（任务事件为准，外层墙钟直测）。
-- 预算使用与剩余额度：本批两案例共用 58/200；剩余 142。
+- 预算使用与剩余额度：本批两案例共用 57/200（逻辑口径 58/200）；剩余 ≥142。
 
 ## 回归与交付
 
@@ -107,7 +109,7 @@
 - README／示例／支持矩阵更新位置：README 与支持矩阵留 WP09；素材见下。
 - 已知故障、未执行验证与风险：
   - 集群 mpirun 需要 `--map-by :OVERSUBSCRIBE`（2026-09 现场；8 月的快照已过期），launcher 细节留本地，通用模板不含现场 hack。
-  - Al relax 最终全原子 max|F|=0.055 而 ASE 判据通过。当时解释为"ASE 收敛判据用分量最大值、配方打印原子范数"；**2026-09-09 修正**：独立审阅用本机 ASE 3.29 证明该解释不成立——ASE 的判据是**约束投影后的最大单原子力范数**（(0.04,0.04,0) 在 0.05 阈值下并不收敛）。正确口径下，"0.055 且判据通过"指向固定层（indices 0–7）反作用力被计入报表值；R4 已把 final_fmax 改为判据同口径（投影后），原始全原子值另列 `raw_all_atom_fmax_eV_A`。Al 末帧原始力数组仍需按固定/自由分列重算以确认自由原子（8–16）是否低于 0.05——审阅时未获得该数组，重算列入 REVIEW_FIXES_CORE_20260909.md 待办。
+  - Al relax 最终全原子 max|F|=0.055 而 ASE 判据通过。当时解释为"ASE 收敛判据用分量最大值、配方打印原子范数"；**2026-09-09 修正**：独立审阅用本机 ASE 3.29 证明该解释不成立——ASE 的判据是**约束投影后的最大单原子力范数**（(0.04,0.04,0) 在 0.05 阈值下并不收敛）。正确口径下，"0.055 且判据通过"指向固定层（indices 0–7）反作用力被计入报表值；R4 已把 final_fmax 改为判据同口径（投影后），原始全原子值另列 `raw_all_atom_fmax_eV_A`。**2026-09-09 重算（原始记录）**：Al 末帧原始力数组已从集群回收（`wp08_evidence/al/runs/al-run-relax/trajectory.db` 末行），分列结果——全原子原始 max|F|=0.054590 eV/Å，固定层（0–7）max=0.054590（atoms 4–7 为 0.0528–0.0546，约束反作用力），自由原子（8–16）max=**0.048156 < 0.05**（最重为吸附原子 16）。结论：自由原子已按 ASE 判据收敛，0.055 全部来自固定层反作用力的报表口径问题，不是自由原子超限（重算明细 `wp08_evidence/analysis/al_relax_final_fmax.txt`；与 run_summary 记录值 0.05458950919183557 一致）。
   - MACE 模型文件与赝势不进 git（输入非代码）；配方引用 recipe 相对路径。
   - 填充后的 sbatch（含现场路径）留本地未入库，符合敏感信息约定。
 - 需要负责人判断的具体决策及备选方案：metallic/free-energy 参考与 energy 替代的 adaptive 组合是放宽契约（a）还是写入支持矩阵（b）。

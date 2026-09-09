@@ -1,0 +1,22 @@
+{
+  "config_sha256": "ff9969a2d0a8de9c0628e291946f3158db1d3578b442a9658d6c458980b64d38",
+  "created_unix": 1788899962.64451,
+  "platform": "Linux-3.10.0-1160.el7.x86_64-x86_64-with-glibc2.17",
+  "pyraimd2_version": "0.4.0.dev0",
+  "python": "3.12.13",
+  "reference": null,
+  "run_id": "al-run-relax",
+  "schema_version": 1,
+  "structure": {
+    "file": "/data/home/df103967/df103967/cloud_projects/pyraimd2/experiments/wp08/al/structure.extxyz",
+    "sha256": "938b5bcfd1219d997586630606440894162063a2183e48cc2b8b782768f2f80d"
+  },
+  "surrogate": {
+    "backend": "mace",
+    "fingerprint": "mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64"
+  },
+  "task": {
+    "kind": "relax",
+    "mode": "surrogate"
+  }
+}
