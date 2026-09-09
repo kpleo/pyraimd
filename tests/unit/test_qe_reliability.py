@@ -735,10 +735,11 @@ def test_request_id_without_sink_rejected_before_any_launch(tmp_path: Path) -> N
     assert not (tmp_path / "runs" / "x-000000").exists()  # no side effects
 
 
-def test_runner_log_with_sinkless_engine_rejected_before_launch(tmp_path: Path) -> None:
+def test_runner_log_connects_sink_to_sinkless_engine(tmp_path: Path) -> None:
     """The review's B2 combination: EnergeticRunner with an event log around
-    a QeEngine constructed without one used to undercount silently; it must
-    now fail loudly before the first SCF."""
+    a QeEngine constructed without one used to undercount silently. The
+    runner now explicitly connects its log as the attempt sink for each
+    call (and restores it afterwards), so internal retries stay visible."""
     from pyraimd2.loop import EnergeticRunner
     from pyraimd2.store import Store
     from pyraimd2.surrogate.base import SurrogatePrediction
@@ -753,10 +754,12 @@ def test_runner_log_with_sinkless_engine_rejected_before_launch(tmp_path: Path) 
     body = (
         "#!/bin/bash\n"
         f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        'if [ "$n" -eq 1 ]; then echo garbage; exit 3; fi\n'
         f"cat {FIXTURE.resolve()}\n"
     )
-    engine = QeEngine(  # deliberately no event_log: the sink is not connected
-        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body)),
+    engine = QeEngine(  # no event_log of its own: sink connected per call
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                 startpot_file=True),  # enables the atomic-start retry
         run_root=tmp_path / "qe",
     )
     atoms = _si()
@@ -766,9 +769,16 @@ def test_runner_log_with_sinkless_engine_rejected_before_launch(tmp_path: Path) 
         runner = EnergeticRunner(atoms, TinySurrogate(), engine, store, "run",
                                  force_budget=0.1, timestep_fs=0.1,
                                  event_log=log)
-        with pytest.raises(EngineError, match="attempt sink"):
-            runner.run(1)
-    assert not counter.exists()  # zero launches, not a silent undercount
+        runner.run(1)
+    # Zero velocities take the reference route without probes: evaluation 0
+    # launches twice (first launch failed, atomic-start retry), evaluation 1
+    # launches once. Every launch lands on the ledger.
+    assert counter.read_text().strip() == "3"
+    attempts = [event for event in log.iter_events()
+                if event.get("record") == "physical_attempt"]
+    assert [a["status"] for a in attempts] == ["failed", "success", "success"]
+    assert all(a["request_id"] for a in attempts)
+    assert engine._event_log is None  # sink restored after the call
 
 
 def test_local_records_consumable_without_sink(tmp_path: Path) -> None:
