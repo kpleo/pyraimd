@@ -205,3 +205,47 @@ def test_wrapper_with_unidentifiable_child_is_unknown():
     assert AseEngine(wrapper).fingerprint is None
     explicit = AseEngine(wrapper, identity='documented-mixture-1')
     assert explicit.fingerprint is not None
+
+
+# --- nested wrapper calculators: identity must recurse both ASE hierarchies -
+
+
+def test_nested_wrapper_fingerprint_tracks_inner_parameters():
+    """A wrapper inside a wrapper: the inner SumCalculator belongs to ASE's
+    other class hierarchy (BaseCalculator, not Calculator). Its epsilon
+    must still reach the identity — two energies differ by a factor of two,
+    so the fingerprints may not coincide."""
+    from ase.calculators.mixing import SumCalculator
+
+    e1 = AseEngine(SumCalculator([SumCalculator([LennardJones(epsilon=1.0)])]))
+    e2 = AseEngine(SumCalculator([SumCalculator([LennardJones(epsilon=2.0)])]))
+    assert e1.fingerprint is not None and e2.fingerprint is not None
+    assert e1.fingerprint != e2.fingerprint
+    atoms = Atoms("Ar2", positions=[[0, 0, 0], [1.5, 0, 0]])
+    assert e2.compute(atoms).energy == pytest.approx(2.0 * e1.compute(atoms).energy)
+    # Structure enters the identity: the same epsilon wrapped once differs
+    # from the same epsilon wrapped twice.
+    single = AseEngine(SumCalculator([LennardJones(epsilon=1.0)]))
+    assert single.fingerprint != e1.fingerprint
+    identical = AseEngine(SumCalculator([SumCalculator([LennardJones(epsilon=1.0)])]))
+    assert identical.fingerprint == e1.fingerprint
+
+
+def test_wrapper_holding_non_calculators_is_unknown_not_empty_trust():
+    """A visible wrapper structure whose children are not calculators must
+    yield an unknown identity — never fall back to the wrapper's empty
+    parameters and present that as trustworthy."""
+    from ase.calculators.mixing import SumCalculator
+
+    wrapper = SumCalculator([LennardJones()])
+    wrapper.mixer.calcs = [object()]  # structure visible, contents opaque
+    assert AseEngine(wrapper).fingerprint is None
+
+
+def test_cyclic_wrapper_identity_terminates_as_unknown():
+    """A wrapper containing itself must end as None, not recurse forever."""
+    from ase.calculators.mixing import SumCalculator
+
+    wrapper = SumCalculator([LennardJones()])
+    wrapper.mixer.calcs = [wrapper]
+    assert AseEngine(wrapper).fingerprint is None

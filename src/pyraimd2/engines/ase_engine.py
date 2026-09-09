@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 from ase import Atoms
 from ase.calculators.calculator import (
+    BaseCalculator,
     Calculator,
     PropertyNotImplementedError,
     all_changes,
@@ -81,16 +82,21 @@ def _embedded_files(value: object) -> list[str]:
     return found
 
 
-def _child_calculators(calculator: Calculator) -> tuple[list, list[float]] | None:
-    """Recognized wrapper structure: ASE mixing calculators hold their
-    children in ``.mixer.calcs`` (+ ``.weights``); other wrappers may expose
-    a direct ``.calcs`` list. None when the calculator is not a wrapper."""
+def _wrapper_structure(calculator: Calculator) -> tuple[list, list[float]] | None:
+    """ASE mixing/wrapper structure: (children, weights), or None.
+
+    ASE's mixing calculators hold their children in ``.mixer.calcs`` (+
+    ``.weights``); other wrappers may expose a direct ``.calcs`` list. The
+    children of nested wrappers belong to ASE's *other* class hierarchy
+    (``BaseCalculator``, not ``Calculator``), so the structure is detected
+    independently of the children's types — mistaking a nested wrapper for
+    a plain empty-parameter calculator would mint a colliding identity.
+    """
     for host in (getattr(calculator, "mixer", None), calculator):
         if host is None:
             continue
         calcs = getattr(host, "calcs", None)
-        if (isinstance(calcs, (list, tuple)) and len(calcs) > 0
-                and all(isinstance(child, Calculator) for child in calcs)):
+        if isinstance(calcs, (list, tuple)) and len(calcs) > 0:
             weights = getattr(host, "weights", None)
             if weights is None or len(weights) != len(calcs):
                 weights = [1.0] * len(calcs)
@@ -107,17 +113,23 @@ def calculator_identity(calculator: Calculator,
     values naming existing files (model artifacts) contribute a content
     hash, so two states of the same path are distinguished. Wrapper
     calculators (e.g. ``SumCalculator``) carry no parameters of their own —
-    the identity recurses into the child calculators and their weights, and
-    one unidentifiable child makes the whole wrapper unknown.
-    ``calculator.name`` alone is never an identity — LJ epsilon 1 → 2 must
-    change this value.
+    the identity recurses into the child calculators and their weights.
+    Whenever a wrapper structure is visible, its contents decide: children
+    that are not calculators, or one unidentifiable child, make the whole
+    wrapper unknown — never a fallback to the wrapper's own empty
+    parameters. ``calculator.name`` alone is never an identity — LJ
+    epsilon 1 → 2 must change this value.
     """
     if id(calculator) in _seen:
         return None  # cyclic wrapper: not identifiable
-    children = _child_calculators(calculator)
-    if children is not None:
+    wrapper = _wrapper_structure(calculator)
+    if wrapper is not None:
+        children, weights = wrapper
+        if not all(isinstance(child, (Calculator, BaseCalculator))
+                   for child in children):
+            return None  # wrapper holding non-calculators: not identifiable
         child_ids = []
-        for child in children[0]:
+        for child in children:
             child_id = calculator_identity(child, _seen | {id(calculator)})
             if child_id is None:
                 return None
@@ -125,7 +137,7 @@ def calculator_identity(calculator: Calculator,
         return {
             "class": f"{type(calculator).__module__}.{type(calculator).__qualname__}",
             "children": child_ids,
-            "weights": children[1],
+            "weights": weights,
         }
     parameters = getattr(calculator, "parameters", None)
     if parameters is None:
