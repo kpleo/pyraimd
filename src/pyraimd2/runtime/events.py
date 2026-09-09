@@ -143,18 +143,33 @@ class EventLog:
         self._closed = False
         self._keys: set[str] = set()
         self._seq = 0
+        self._torn_tail = False
         if self.path.exists():
             for event in self._read_events():
                 self._seq = max(self._seq, int(event.get("seq", 0)))
                 key = event.get("key")
                 if key is not None:
                     self._keys.add(str(key))
+        if self._torn_tail:
+            # The torn bytes never committed; drop them so the next append
+            # does not glue a new event onto the partial line.  Committed
+            # events are never rewritten.
+            data = self.path.read_bytes()
+            keep = data.rstrip(b"\n").rfind(b"\n") + 1
+            with self.path.open("r+b") as fh:
+                fh.truncate(keep)
         self._fh = self.path.open("a", encoding="utf-8")
 
     @property
     def last_seq(self) -> int:
         """The last committed event number (WP03's checkpoint cursor)."""
         return self._seq
+
+    @property
+    def torn_tail(self) -> bool:
+        """True when the log's final line was left truncated by a crash
+        (skipped on read — it never committed; the file is kept as-is)."""
+        return self._torn_tail
 
     def append(self, event_type: str, payload: dict) -> int:
         """Append an event and return its committed sequence number."""
@@ -197,16 +212,22 @@ class EventLog:
         if not self.path.exists():
             return
         with self.path.open("r", encoding="utf-8") as fh:
-            for line_number, line in enumerate(fh, start=1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield json.loads(line)
-                except json.JSONDecodeError as error:
-                    raise EventLogError(
-                        f"corrupt event at {self.path}:{line_number}: {error}"
-                    ) from error
+            lines = [(number, line.strip())
+                     for number, line in enumerate(fh, start=1) if line.strip()]
+        last_line = lines[-1][0] if lines else None
+        for line_number, line in lines:
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError as error:
+                if line_number == last_line:
+                    # Torn tail: a crash interrupted the final append before
+                    # it committed. Skip it and recover from the last intact
+                    # event; the original file is never rewritten.
+                    self._torn_tail = True
+                    return
+                raise EventLogError(
+                    f"corrupt event at {self.path}:{line_number}: {error}"
+                ) from error
 
     def close(self) -> None:
         if self._closed:

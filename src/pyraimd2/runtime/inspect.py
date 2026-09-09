@@ -35,18 +35,24 @@ from pyraimd2.store.store import Store
 def _read_events(path: Path) -> list[dict]:
     if not path.exists():
         return []
+    lines = [(number, line.strip())
+             for number, line in
+             enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+             if line]
     events = []
-    with path.open("r", encoding="utf-8") as fh:
-        for line_number, line in enumerate(fh, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError as error:
-                raise EventLogError(
-                    f"corrupt event at {path}:{line_number}: {error}"
-                ) from error
+    last_line = lines[-1][0] if lines else None
+    for line_number, line in lines:
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError as error:
+            if line_number == last_line:
+                # Torn tail from a crash: the final event never committed.
+                # Reading skips it (the writer side recovers it on open);
+                # a corrupt committed middle event still fails loud.
+                break
+            raise EventLogError(
+                f"corrupt event at {path}:{line_number}: {error}"
+            ) from error
     return events
 
 
