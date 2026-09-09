@@ -139,7 +139,7 @@ Mode rules:
 
 ### [dynamics]
 
-- `ensemble`: only `nve` is supported in 0.4.1.
+- `ensemble`: only `nve` is supported in 0.4.2.
 - `timestep_fs` (number > 0, required).
 - `steps` (integer >= 1, required).
 - `temperature_K` (number >= 0, default 300.0): only used when the
@@ -265,7 +265,7 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 - `resolved_config.json` records the schema version next to the effective
   parameters, so old run directories stay interpretable.
 
-## Current limitations (0.4.1)
+## Current limitations (0.4.2)
 
 - Constraints: FixAtoms only — RATTLE/holonomic, energy-carrying and
   moving constraints are rejected explicitly, as is any variable-cell

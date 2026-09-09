@@ -1,31 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- An abandoned event log (a constructor or a failed resume dropping the
+  writer without closing it) no longer leaks an OS handle: garbage
+  collection releases the handle while the lock file stays as crash
+  evidence, since lock removal remains a deliberate `close()`.
+- The ASE-native QE attempt span is settled at its terminal exit, so the
+  density-manifest write is counted once in the declared
+  staging/process/validation span instead of being frozen out.
+
 ## 0.4.2
 
-Second correctness patch, closing the seven review findings (R1-R7) on top of
-0.4.1. No new features.
+Second correctness patch on top of 0.4.1. No new features.
 
-Fixed
+### Fixed
 
 - Nested ASE mixing calculators (Sum of Sum of ...) fingerprint their full
   composition; a wrapper whose children are unidentifiable reports an honest
-  unknown instead of a trusted empty-parameter hash (R1).
+  unknown instead of a trusted empty-parameter hash.
 - Attempt sinks are checked for identity: a run log is connected for the
   duration of each call and restored afterwards, mismatched sinks are refused
-  before launch, and the no-log direct API keeps working (R2).
+  before launch, and the no-log direct API keeps working.
 - The cost ledger counts every launched attempt once, with failed, killed and
-  post_processing_failed all counted as failed physical executions (R3).
+  post_processing_failed all counted as failed physical executions.
 - Native QE output-read failures surface as contractual errors with the
-  original cause and a terminal attempt record, never UnboundLocalError (R4).
+  original cause and a terminal attempt record, never UnboundLocalError.
 - Plain-MD failed requests close exactly one task record under one id,
-  including the initial evaluation (R5).
+  including the initial evaluation.
 - Calibration counters are restored only for pre-proposal deferred
-  calibrations, keeping segment history [1,2,3] across resume (R6).
+  calibrations, keeping segment history [1,2,3] across resume.
 - All user-visible trajectory outputs (CLI export, automatic trajectory,
   summary CSV, low-level frames API) read through the same committed-row view;
-  orphaned rows stay as audit records only (R7).
+  orphaned rows stay as audit records only.
 
-Changed
+### Changed
 
 - numpy is held below 2.5: ASE 3.29.0 sets array shapes through an API
   deprecated in NumPy 2.5, and the pin removes that compatibility noise

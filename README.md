@@ -146,7 +146,7 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   use either a reference engine or a surrogate. MD supports reference-only,
   surrogate-only and adaptive modes, with checkpoints, resume and export.
   Adaptive mode applies only to MD.
-- **Dynamics.** Version 0.4.1 supports fixed-cell NVE and `FixAtoms`.
+- **Dynamics.** Version 0.4.2 supports fixed-cell NVE and `FixAtoms`.
   NVT, variable-cell dynamics and other constraint types are unsupported.
   The default force budget measures the free coordinates
   (`active_dofs_max_atom`); `all_atoms_max_atom` is an explicit alternative.
