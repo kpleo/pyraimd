@@ -1,8 +1,7 @@
 """QeEngine tests: output parsing against a real pw.x fixture, input writing,
 and the full compute() path with a fake pw.x binary (hermetic — no QE needed).
 
-Fixture: tests/data/qe_si_scf.out — the Si bulk validation run on Neimeng A
-(job 7614854, QE 7.5): E = -93.43942921 Ry, zero forces, isotropic stress
+Fixture: tests/data/qe_si_scf.out — a QE 7.5 Si bulk parsing fixture: E = -93.43942921 Ry, zero forces, isotropic stress
 0.00017602 Ry/bohr^3 (P = 25.89 kbar).
 """
 

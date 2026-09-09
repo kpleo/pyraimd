@@ -5,6 +5,15 @@ on:
 permissions:
   contents: read
 jobs:
+  public-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - run: python scripts/check_public_tree.py --ref HEAD
+
   core:
     # Offline core suite: minimum declared dependencies only (NumPy + ASE,
     # no torch, no PySCF, no external programs, no downloads).
@@ -39,7 +48,7 @@ jobs:
 
   resume-regression:
     # The complete-step checkpoint / new-process resume contract, run as a
-    # visible standalone selection (WP03 adaptive, WP07 plain modes).
+    # visible standalone selection (adaptive and plain modes).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

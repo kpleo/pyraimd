@@ -1,24 +1,22 @@
 """Builders for tungsten irradiation initial configurations.
 
-Single implementation behind the CLI scripts in ``hpc/neimeng/scripts/``:
-
-- :func:`build_spike_config` — the two-temperature thermal-spike surrogate of
-  the cascade core (naming discipline: never "cascade simulation"). The draw
-  sequence is exactly the legacy ``make_w_spike.py`` one, so identical seeds
-  reproduce seeded configurations bitwise.
-- :func:`build_pka_config` — PKA initialization for self-proof (a)
-  (PKA-vs-spike validation): one central W atom kicked along a cubic
-  direction family (<100>/<110>/<111>) on top of a 300 K Maxwell-Boltzmann
-  matrix, with the total momentum re-zeroed after the kick.
-- :func:`build_spike_series_configs` — self-proof (b): finite-size
-  convergence series (4^3/5^3/7^3 = 128/250/686 atoms) at a unified core
-  energy density; the core temperature is rescaled per size.
+- :func:`build_spike_config` — a two-temperature thermal-spike initial
+  condition with a hot core and a thermal matrix. It initializes velocities;
+  it does not simulate a collision cascade.
+- :func:`build_pka_config` — one primary knock-on atom (PKA), central by
+  default, kicked along a cubic direction family (<100>/<110>/<111>) on top
+  of a Maxwell-Boltzmann matrix at ``matrix_T_K``, with total momentum
+  re-zeroed after the kick.
+- :func:`build_spike_series_configs` — initial conditions at different
+  cell sizes (default 4^3/5^3/7^3 = 128/250/686 atoms) with a common expected
+  core energy per atom; the core temperature is rescaled per size.
 - :func:`build_ed_scan_configs` — the <100> E_d (threshold displacement
   energy) scan grid, 40-140 eV in 10 eV steps; configurations and sidecars
   only, nothing is submitted.
 
-Every random draw comes from a seeded ``numpy.random.Generator`` and every
-parameter is recorded in a JSON sidecar (restart-complete provenance).
+Every random draw comes from a seeded ``numpy.random.Generator``. Each builder
+returns atoms and sidecar metadata recording the initialization parameters;
+:func:`write_config` writes the structure with momenta and the JSON sidecar.
 ASE units throughout: energies in eV, lengths in Angstrom.
 
 PKA kinetic-energy ledger (all recorded in the sidecar). The kick adds
@@ -111,10 +109,10 @@ def apply_two_temperature_spike(
 ) -> int:
     """Two-temperature spike init in place; returns the core atom count.
 
-    Exactly the legacy ``make_w_spike.py`` draw sequence (thermalize the
-    matrix, redraw the core from ``rng``, zero the core net momentum, then
-    ``Stationary`` on the whole box) so seeds stay reproducible across the
-    refactor.
+    Thermalize the matrix, redraw the core from ``rng``, zero the core net
+    momentum, then apply ``Stationary`` to the whole box. This fixed draw
+    sequence makes the initialization reproducible for a given RNG state
+    and software environment.
     """
     core = core_mask(atoms, core_radius_a)
     thermalize_momenta(atoms, temperature_K=matrix_T_K, rng=rng)
@@ -149,7 +147,7 @@ def build_spike_config(
     seed: int,
     a0: float = A0_W,
 ) -> BuiltConfig:
-    """One thermal-spike configuration with the legacy sidecar field set."""
+    """One thermal-spike configuration with initialization metadata."""
     atoms = build_w_supercell(cells, a0)
     rng = np.random.default_rng(seed)
     n_core = apply_two_temperature_spike(atoms, core_radius_a, core_T_K, matrix_T_K, rng)
@@ -175,7 +173,7 @@ def build_spike_series_configs(
     seed: int = 1,
     a0: float = A0_W,
 ) -> list[BuiltConfig]:
-    """Finite-size convergence series at a unified core energy density.
+    """Initial conditions of different sizes at a common core energy density.
 
     Same seed for every size (documented in the sidecar); the core
     temperature is rescaled per size via
@@ -278,7 +276,11 @@ def build_pka_config(
     a0: float = A0_W,
     pka_index: int | None = None,
 ) -> BuiltConfig:
-    """One PKA configuration: 300 K stationary matrix + a central-atom kick."""
+    """One PKA configuration: stationary thermal matrix plus an atomic kick.
+
+    ``matrix_T_K`` sets the matrix temperature; the central atom is kicked
+    unless ``pka_index`` selects another atom.
+    """
     atoms = build_w_supercell(cells, a0)
     rng = np.random.default_rng(seed)
     thermalize_momenta(atoms, temperature_K=matrix_T_K, rng=rng)

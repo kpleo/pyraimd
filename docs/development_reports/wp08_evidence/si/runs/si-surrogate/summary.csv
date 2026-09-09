@@ -1,8 +1,0 @@
-evaluation_id,step_id,physical_time_fs,route,reason,energy_eV,max_force_error_eV_A,endpoint_work_eV,accepted,checked,violation,reference_anchor,reference_probe,reference_check,segment_id,model_id
-0,-1,0.0,ml,md,-43.28102312349787,,,True,False,,,,,,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
-1,0,1.0,ml,md,-43.28036097195774,,,True,False,,,,,,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
-2,1,2.0,ml,md,-43.27854023691249,,,True,False,,,,,,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
-3,2,3.0,ml,md,-43.27560045324473,,,True,False,,,,,,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
-4,3,4.0,ml,md,-43.271601937195726,,,True,False,,,,,,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
-5,4,5.0,ml,md,-43.26662477936577,,,True,False,,,,,,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0
-6,5,6.0,ml,md,-43.260767583278174,,,True,False,,,,,,mace-mp:/data/home/df103967/df103967/.cache/mace/macempa0mediummodel:cpu:float64#g0

@@ -1,23 +1,48 @@
-# Python-generated files
+# Public software and the frozen published supplement only.
+/*
+!/.gitignore
+!/.python-version
+!/pyproject.toml
+!/uv.lock
+!/README.md
+!/CHANGELOG.md
+!/CONTRIBUTING.md
+!/LICENSE
+!/.github/
+!/.githooks/
+!/scripts/
+!/src/
+!/tests/
+!/examples/
+!/docs/
+!/reproducibility/
+/docs/*
+!/docs/api.md
+!/docs/architecture.md
+!/docs/configuration.md
+!/docs/energetic_force_error.md
 __pycache__/
 *.py[oc]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
 build/
 dist/
 wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-
-# Analysis artifacts (large binaries stay out of git)
-analysis/**/*.db
-analysis/*model*
-analysis/**/*.pt
-analysis/**/pdf_review/
-analysis/**/fontlist-*.json
-analysis/execution_20260905/tungsten/main_preview.png
-
-# macOS
 .DS_Store
-/reproducibility.zip
-/.release/
+.env
+.env.*
+runs/
+*.log
+manuscript/
+/analysis/
+development_reports/
+private/
+*.tex
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.tiff
+!/reproducibility/**

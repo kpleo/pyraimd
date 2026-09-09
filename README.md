@@ -67,8 +67,10 @@ any material. The full field reference is in
 `examples/qe_mace_skeleton/` shows the configuration shape for a real-material
 adaptive run: `pw.x` as the reference engine and a MACE foundation model as the
 surrogate over a small periodic silicon cell. It is a skeleton, not a verified
-materials recipe — the verified recipes live in `examples/si_bulk_qe_mace/`
-and `examples/al_surface_qe_mace/` (see *What works today* below).
+materials recipe. For complete structure generators and task configurations,
+see the [bulk Si](examples/si_bulk_qe_mace/README.md) and
+[Al(111) slab](examples/al_surface_qe_mace/README.md) examples. They include
+input requirements, short NVE runs, resume and export commands.
 
 Before `pyramid run` works you need, on that machine:
 
@@ -127,7 +129,7 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
 
 ### Develop a new method
 
-- [docs/architecture.md](docs/architecture.md) — the five-layer split and the
+- [docs/architecture.md](docs/architecture.md) — the workflow layers and the
   `Engine`/`Surrogate` protocols, capabilities and identity fingerprints.
 - [docs/api.md](docs/api.md) — public entry points of the `engines`,
   `surrogate`, `runtime`, `workflows` and `backends` modules.
@@ -138,50 +140,33 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   `pyraimd2.runtime` provides the event log, checkpoints and the immutable
   model registry a new updater must plug into to be resumable.
 
-## What works today
+## Current scope
 
-Support claims come in three classes; nothing is implied beyond its class.
-
-- **Interface can be plugged in.** Any ASE calculator providing energies and
-  forces through `AseEngine`/`AseSurrogate`; third-party backend plugins via
-  the entry-point registry; an ASE-native QE path (`qe-ase`). Contracts are
-  enforced at construction, but these paths carry no per-backend validation
-  beyond that.
-- **Software integration tested.** The builtin harmonic backends through the
-  complete workflow stack (run, checks, checkpoint, new-process resume, export)
-  on every commit; the QE engine against a simulated `pw.x` and recorded output
-  fixtures (success and convergence determination, retries, time-outs,
-  density restarts);
-  the PySCF engine's unit and sign conventions against real PySCF
-  finite-difference checks (runs where PySCF is installed); MACE model
-  selection and committee fine-tuning in slow-marked tests (require torch and
-  local model files); configuration, CLI, resume and export for all three run
-  modes.
-- **Materials validated.** Recipes under `examples/` with inputs, settings,
-  commands and full costs (Quantum ESPRESSO 7.5 with PBE + Grimme D3, MACE-MPA-0
-  medium at float64 on CPU, 48 MPI ranks on one node):
-  - `examples/si_bulk_qe_mace/` (8-atom bulk Si): surrogate singlepoint and
-    FIRE relaxation, plain 6-step NVE in both modes, and an adaptive 6-step NVE
-    in which 4 of 7 evaluations were accepted against the reference
-    (budget 0.10 eV/A, checks at p = 1.0, no violations) — including
-    interrupted runs resumed from checkpoints in a new process, with the
-    complete cost record (21 actual reference executions across the run).
-  - `examples/al_surface_qe_mace/` (17-atom Al(111) slab, bottom two layers
-    fixed with FixAtoms): surrogate singlepoint and relaxation, plain
-    reference-only and surrogate-only NVE, plain checkpoint/resume, and —
-    since the refined energy contract — a short adaptive NVE with resume
-    (6 complete steps, 4 of 7 evaluations accepted against the reference,
-    budget 0.15 eV/A, checks at p = 1.0, no violations; 19 actual reference
-    executions).
-  Short runs by design: they demonstrate mechanics and accounting, not
-  thermodynamics or speed-ups. Adaptive mode with a metallic (smeared)
-  reference is supported when both sides pass the refined contract: each
-  side's reported scalar must be consistent with its own forces — QE's
-  variational free energy was verified against its forces by central
-  finite differences on this slab (residuals <= 3.6e-5 eV/A, tolerance
-  5e-4) — and the reference identity pins the smearing type/width, XC and
-  pseudopotential content. Combinations with an unverified side stay
-  rejected; `unknown` declarations are never treated as verified.
+- **Tasks.** Single-point evaluation and fixed-model FIRE/BFGS relaxation
+  use either a reference engine or a surrogate. MD supports reference-only,
+  surrogate-only and adaptive modes, with checkpoints, resume and export.
+  Adaptive mode applies only to MD.
+- **Dynamics.** Version 0.4.1 supports fixed-cell NVE and `FixAtoms`.
+  NVT, variable-cell dynamics and other constraint types are unsupported.
+  The default force budget measures the free coordinates
+  (`active_dofs_max_atom`); `all_atoms_max_atom` is an explicit alternative.
+  Checkpoints retain two generations.
+- **Backends.** QE, molecular closed-shell PySCF, MACE and analytic harmonic
+  backends are provided. Generic ASE adapters, the ASE-native QE path and
+  backend plugins provide extension interfaces; compatibility declarations
+  alone do not establish a backend's numerical accuracy for a material.
+- **Energy consistency.** Each side's forces must be the negative gradient
+  of its reported scalar for anchored energies and endpoint work to be meaningful.
+  A smeared QE `free_energy` reference can be paired with a MACE `energy`
+  surrogate when both declare force-energy consistency and conservative
+  forces. Cross-kind combinations with an undeclared requirement are
+  rejected; `unknown` is never evidence of consistency. Reference identity
+  includes smearing type/width, XC and pseudopotential content.
+- **Examples and costs.** The Si and Al examples demonstrate software
+  workflows. Their short trajectories and illustrative budgets do not
+  establish thermodynamic convergence or speed-ups. Use `pyramid inspect`
+  to count anchors, probes, checks, retries and cache hits; a surrogate
+  acceptance rate is not a reference-calculation saving.
 
 ## The energetic MD loop
 
@@ -212,10 +197,12 @@ these quantities, their units and the conditions for interpreting them.
 - [API reference](docs/api.md)
 - [Energetic force errors and runtime decisions](docs/energetic_force_error.md)
 - [Changelog](CHANGELOG.md)
+- [Supplementary Materials: force-error data and code](reproducibility/force_error/README.md)
 - `examples/` — the demos above, plus direct Python-API scripts:
   `energetic_loop.py` runs offline on analytic backends, the others need the
-  optional extras they name. `experiments/` retains the older scheduled and
-  conformal switching workflows.
+  optional extras they name.
+- [Slurm example](examples/slurm/README.md) — a generic submission template
+  to adapt to your compute environment.
 - `src/pyraimd2/` — framework implementation; `tests/` — numerical, interface
   and integration checks.
 

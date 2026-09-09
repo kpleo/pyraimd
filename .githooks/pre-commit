@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+uv run --offline --no-project python scripts/check_public_tree.py --staged

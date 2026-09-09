@@ -30,6 +30,12 @@ An additive energy constant can align the two potentials at `X0` without changin
 their forces or work differences. Anchoring corrects the local force offset;
 the directional response describes how the residual grows as the atoms move.
 
+With `FixAtoms`, the default `active_dofs_max_atom` metric measures `e` on
+free coordinates, and probe directions and driving forces are projected onto
+those coordinates. `all_atoms_max_atom` instead includes fixed atoms in the
+force-error norm. Raw forces remain available for diagnostics; work uses the
+actual constrained displacement, so fixed atoms contribute no displacement work.
+
 ## Local directional response
 
 A direction `u` has unit Euclidean norm over all `3N` coordinates. Paired
@@ -191,10 +197,14 @@ certification of every force. The independent-check bound concerns accepted
 force evaluations under the stated sampling protocol. Signed residual work
 measures an energetic contribution and should be interpreted with its sign;
 thermostat, constraint and variable-cell work require their own accounting.
-The current energetic loop uses fixed-cell motion and energy-consistent forces
-on each segment. At finite electronic smearing, use the thermodynamic potential
-whose derivatives produce the reported forces. The coefficient `C_rw` requires
-a nonzero directional response.
+The current energetic loop supports fixed-cell NVE with optional `FixAtoms`
+and requires energy-consistent forces on each segment. NVT, other constraints
+and variable-cell dynamics are unsupported. At finite electronic smearing, use
+the thermodynamic potential whose negative gradient gives the reported forces.
+The coefficient `C_rw` requires a nonzero directional response.
 
 See the [architecture guide](architecture.md) for backend units and the
 [harmonic example](../examples/energetic_loop.py) for a complete run.
+The [Supplementary Materials](../reproducibility/force_error/README.md)
+provide saved force-error data and analysis code with their own reproduction
+instructions and scope.

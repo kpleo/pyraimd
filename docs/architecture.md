@@ -81,11 +81,17 @@ summary = runner.run(20)
 ```
 
 Choose the budget and timestep for the physical problem. Each new run needs a
-fresh `run_id`. Calling `run` again continues the same live instance. Restoring
-an energetic run from disk is not yet supported; the legacy restart interface
-does not restore its calibration and check state. Existing
-momenta are preserved; otherwise `temperature_K` and `velocity_seed` initialize
-them. The default probe direction follows velocity. A `direction(atoms)`
+fresh `run_id`. Calling `run` again continues the same live instance. For
+checkpointing, supply `run_dir`, an `EventLog` for that directory and
+`checkpoint_interval_steps`, or use the configured workflow described in
+[configuration.md](configuration.md). `EnergeticRunner.resume` restores the
+last valid complete-step checkpoint and replays subsequent committed events,
+including calibration, model identity and the independent-check stream.
+`EnergeticRunner.fork` starts a new run from a checkpoint with the model chain
+and a fresh check stream.
+
+Existing momenta are preserved; otherwise `temperature_K` and `velocity_seed`
+initialize them. The default probe direction follows velocity. A `direction(atoms)`
 callback can return one `(N, 3)` vector or several `(D, N, 3)` vectors, which the
 runtime normalizes over the full configuration.
 
@@ -124,6 +130,12 @@ def adapt(observation):
 # Pass on_label=adapt when constructing EnergeticRunner.
 ```
 
+This callback form is for a live run. Resumable model updates require the
+`StatefulUpdater` protocol, including state export and restore. `GuardedUpdater`
+and `UpdatePolicy` validate a candidate on a guard set, then publish its model
+artifact or restore the parent state. The runtime records model identities and
+consumed label IDs so resume can restore updates without repeating training.
+
 ## Run records
 
 `Store` writes ASE database rows containing the configuration, route and reason,
@@ -153,10 +165,21 @@ cell and boundary conditions. Use continuous, unwrapped coordinates when
 accumulating displacement and work across periodic boundaries. Keep the
 reference settings and the surrogate fixed within each anchored segment.
 
-The energetic loop currently treats unconstrained, fixed-cell motion with fixed
-atom identities and masses. An engine's ability to return stress is a backend
-capability; variable-cell dynamics also requires a consistent treatment of cell
-work in the runtime policy.
+The energetic loop supports fixed-cell NVE with fixed atom identities and
+masses, either unconstrained or with `FixAtoms`. Directions and driving forces
+are projected onto free coordinates; `active_dofs_max_atom` measures force
+error there, while `all_atoms_max_atom` includes fixed atoms. Raw forces and
+the actual constrained displacement remain recorded. Other constraints, NVT
+and variable-cell dynamics are unsupported. Returning stress from a backend
+does not enable variable-cell motion in the runtime.
+
+Anchored energy and endpoint work require each backend's scalar to be
+consistent with its own conservative forces. The scalar names may differ:
+a smeared reference can report `free_energy` while a surrogate reports
+`energy`. Such a cross-kind pair requires both backends to declare
+`force_consistent=True` and `forces_conservative=True`. Explicit conflicts
+are rejected; unknown declarations do not establish consistency. Backend
+fingerprints bind resumable runs to reference settings and model identity.
 
 ## Adding a backend or solver
 
@@ -165,8 +188,9 @@ wrap it with `AseEngine` or `AseSurrogate`. Otherwise, implement the correspondi
 protocol, convert units at that boundary and return energies consistent with the
 forces. The runtime policy then operates on the common result types.
 
-A solver can be external software or a Python implementation. Future solvers
-developed within Pyramid can use the same interfaces. Electronic-structure
+A solver can be external software or a Python implementation. Backend factories
+registered under the `pyraimd2.backends` entry-point group are also selectable
+from TOML; see the [API reference](api.md). Electronic-structure
 methods, model parameters, pseudopotentials and parallel execution settings
 remain explicit choices of the calculation.
 

@@ -63,7 +63,7 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   directory (one directory per run; continue with `resume`, never by
   appending).
 - `pyramid resume RUN_DIR --steps N [--force-unlock]`: continue an adaptive
-  run for N *additional* steps; the current and target step numbers are
+  or plain MD run for N *additional* steps; the current and target step numbers are
   printed. Settings come from the run's `resolved_config.json` — same
   physics, model chain and check stream. `--force-unlock` reclaims the
   writer lock left behind by a crashed process (use only when no live
@@ -97,8 +97,9 @@ any other version is rejected — see *Schema migration*.
 - `kind`: `singlepoint` (one backend evaluation), `relax` (fixed-model
   optimization with ASE FIRE/BFGS), `md` (NVE dynamics).
 - `mode`: `adaptive` (energetic MD: anchored surrogate forces with
-  independent reference checks), `reference` (plain NVE on the reference
-  engine), `surrogate` (plain NVE on the frozen surrogate).
+  independent reference checks), `reference` (use the reference engine),
+  `surrogate` (use the frozen surrogate). The latter two modes apply to
+  singlepoint, relaxation and NVE tasks.
 
 Mode rules:
 
@@ -111,8 +112,7 @@ Mode rules:
 
 ### [relax]
 
-- `optimizer`: `fire` (default) or `bfgs` — ASE optimizers, never
-  hand-rolled.
+- `optimizer`: `fire` (default) or `bfgs` — ASE optimizers.
 - `fmax_eV_A` (number > 0, default 0.05): convergence threshold on the max
   per-atom force.
 - `steps` (integer >= 1, default 200): optimizer step cap.
@@ -139,7 +139,7 @@ Mode rules:
 
 ### [dynamics]
 
-- `ensemble`: only `nve` in 0.4.0 (NVT arrives in 0.4.1).
+- `ensemble`: only `nve` is supported in 0.4.1.
 - `timestep_fs` (number > 0, required).
 - `steps` (integer >= 1, required).
 - `temperature_K` (number >= 0, default 300.0): only used when the
@@ -187,15 +187,15 @@ fixed for the run (change them with a fork, not a resume).
 - `probability` (number in [0, 1], default 0.05): `0` disables checks.
   Setting `failure_probability` or `tilt` together with `probability = 0`
   is an error — a disabled segment carries no pretend parameters.
-- `failure_probability` (number in [0, 1], default 0.05).
+- `failure_probability` (number in (0, 1), default 0.05).
 - `tilt` (number > 0, default ln 2).
 - `seed` (integer, default `run.seed`).
 
 ### [checkpoint]
 
 - `interval_steps` (integer >= 1, default 10).
-- `keep_generations`: only 2 is accepted in 0.4.0 (the runtime keeps
-  exactly two generations; configurable retention is planned later).
+- `keep_generations`: only 2 is accepted; the runtime keeps exactly two
+  generations.
 
 ### [output]
 
@@ -221,7 +221,7 @@ evaluation — they are the recovery record and are never thinned.
   driving payloads, metadata).
 - `events.jsonl`: the authoritative event log (single writer, locked).
 - `checkpoints/<generation>/`: complete-step snapshots + `latest.json`.
-- `models/<model_id>/`: immutable model artifacts (with updaters, WP06).
+- `models/<model_id>/`: immutable model artifacts for stateful updaters.
 - `calculations/`: per-evaluation external calculation directories (QE).
 - `summary.json`, `summary.csv`, `trajectory.extxyz`: derived outputs —
   safe to regenerate via `inspect`/`export` at any time.
@@ -231,11 +231,11 @@ evaluation — they are the recovery record and are never thinned.
 - `resume --steps N` always means N **additional** steps; the current and
   target step numbers are printed before anything runs.
 - Resume continues the same physics, model chain and check stream from the
-  last valid checkpoint plus event replay (WP03). Reference/surrogate
+  last valid checkpoint plus event replay. Reference/surrogate
   identity mismatches are refused; changing settings means a new run (or a
   library-level `fork`).
 - Plain reference/surrogate runs resume from their complete-step
-  checkpoints (WP07): the plain driver checkpoints at every
+  checkpoints: the plain driver checkpoints at every
   `checkpoint.interval_steps` and on a stop request, and resume rebuilds
   the boundary from the last committed step. `export` works on them too.
 
@@ -259,27 +259,30 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 
 - The configuration carries `schema_version`; this pyraimd2 reads version 1
   and rejects anything else with a pointer here.
-- A future version 2 will be introduced by an explicit migration function
-  that translates a version-1 document before validation — never by
-  silently accepting or ignoring fields. The unknown-field rejection above
-  is what keeps that promise enforceable.
+- Unknown sections and fields are rejected. Use the fields documented above
+  when preparing a version-1 configuration; no automatic migration from
+  other schema versions is provided.
 - `resolved_config.json` records the schema version next to the effective
   parameters, so old run directories stay interpretable.
 
-## Current limitations (0.4.0, by design)
+## Current limitations (0.4.1)
 
 - Constraints: FixAtoms only — RATTLE/holonomic, energy-carrying and
   moving constraints are rejected explicitly, as is any variable-cell
   (NPT) dynamics.
-- NVE only; NVT is 0.4.1 (WP10).
+- NVE only; NVT is unsupported.
 - `checkpoint.keep_generations` is fixed at 2 by the runtime.
-- Model updates (online training) use the WP06 guarded updater interface;
-  adaptive runs without an updater use a frozen surrogate.
+- Model updates (online training) use the Python `GuardedUpdater` interface;
+  resumable updates require state export and restore. Adaptive runs without
+  an updater, including the supplied TOML examples, use a frozen surrogate.
 
 ## Examples
 
-- `examples/harmonic_adaptive/`: the runnable offline demo (same content as
-  the `harmonic` init template).
-- `examples/qe_mace_skeleton/`: QE + MACE configuration *shape* for a
-  periodic material — for `pyramid validate`; not a verified recipe (WP08
-  delivers those).
+- [Harmonic adaptive MD](../examples/harmonic_adaptive/README.md): the runnable
+  offline demo (same content as the `harmonic` init template).
+- [QE + MACE skeleton](../examples/qe_mace_skeleton/README.md): configuration
+  structure for a periodic material, with external inputs required before a run.
+- [Bulk Si](../examples/si_bulk_qe_mace/README.md) and
+  [Al(111) slab](../examples/al_surface_qe_mace/README.md): structure generators,
+  input requirements, singlepoint/relaxation and short NVE examples.
+- [Slurm submission](../examples/slurm/README.md): a generic batch template.

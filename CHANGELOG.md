@@ -2,50 +2,48 @@
 
 ## 0.4.1
 
-Correctness patch over 0.4.0, driven by the second independent review
-(`docs/development_reports/INDEPENDENT_REVIEW_040_20260909.md`). No new
-features; every fix is paired with a regression that failed before it.
+Correctness fixes for resume, export, model updates, backend identity and
+execution accounting. Dynamics remain fixed-cell NVE.
 
-Fixed
+### Fixed
 
 - Resume now binds positions, driving forces, reference labels and update
   re-anchoring to the verified committed row; orphaned pre-commit rows remain
-  as audit records but never drive a trajectory (C1, A3).
+  as audit records but never drive a trajectory.
 - Array sidecars carry dtype/byte-order/shape/content identity at all three
   entry points (event, model artifact, checkpoint); 0-D states keep their
-  scalar shape (C2).
+  scalar shape.
 - The initial frame keeps its original complete-step momenta on export; only
-  genuine mid-step force evaluations get the second half-kick reconstruction
-  (A1). Export, inspect and resume share one commit/phase-aware read
+  genuine mid-step force evaluations get the second half-kick reconstruction.
+  Export, inspect and resume share one commit/phase-aware read
   interface per task kind: relax iterations and singlepoints export
   correctly, uncommitted steps are never counted or exported as complete, and
-  inspect separates the last committed boundary from the last evaluation
-  (A2, A4).
+  inspect separates the last committed boundary from the last evaluation.
 - Training-success logging, state_dict, artifact and publish form a single
   rollback domain; a recalibrated-but-uncommitted proposal restores its
-  segment history exactly once (C3, C4).
-- Wrapped ASE calculators (Sum/Mixed) fingerprint their children and weights;
-  unidentifiable wrappers report an honest unknown identity (B1).
+  segment history exactly once.
+- Single-layer ASE mixing calculators fingerprint their direct children
+  and weights. Automatic identity detection for nested or custom wrappers
+  requires additional verification.
 - Engines accepting request_id expose an explicit attempt sink; a run log is
   connected for the duration of each call, and sink-less combinations are
-  refused before launch instead of undercounting retries (B2).
+  refused before launch instead of undercounting retries.
 - One explicit execution per compute, then the whole result set is read — no
   implicit second run for missing stress; executable-missing failures record
   zero attempts; post-processing failures terminate the attempt record as
   `post_processing_failed`; density staging is timed over its real interval
-  and cache hits are timed per access (B3).
+  and cache hits are timed per access.
 
-Compatibility
+### Compatibility
 
 - 0.4.0 event logs and checkpoints remain readable; logs without the
   `physical_attempt_v1` marker keep their previous ledger semantics.
 
 ## 0.4.0
 
-The first workflow-stable release line: configuration-driven, resumable runs
-with an explicit evaluation contract, a complete cost record and guarded model
-updates. Materials validation landed with the two QE + MACE recipes below
-(QE 7.5, MACE-MPA-0 medium at float64 on CPU).
+Configuration-driven, resumable runs with an explicit evaluation contract,
+a complete cost record and guarded model updates. Includes bulk Si and Al(111)
+examples using QE + MACE.
 
 ### Added
 
@@ -56,9 +54,9 @@ updates. Materials validation landed with the two QE + MACE recipes below
   `--help`/`--version` work offline; validation runs no SCF and downloads
   nothing unless `--probe-backends` is given.
 - Workflow layer (`pyraimd2.workflows`) driving three tasks — `singlepoint`,
-  `relax` (ASE FIRE/BFGS under a fixed model) and `md` — in reference-only,
-  surrogate-only and adaptive modes, from the CLI and the Python API through
-  the same code path.
+  `relax` (ASE FIRE/BFGS under a fixed model) and `md` — in reference-only
+  or surrogate-only mode, plus adaptive MD. The CLI and Python API use the
+  same code path.
 - Complete-step checkpoints with atomic generation snapshots and sha256
   manifests. Adaptive and plain runs resume in a new process from the last
   valid generation plus ordered event replay — same physics, model chain and
@@ -76,7 +74,7 @@ updates. Materials validation landed with the two QE + MACE recipes below
   `pyscf`, `mace`, analytic `harmonic-reference`/`harmonic-surrogate`) and
   third-party plugins through the `pyraimd2.backends` entry-point group, with
   kind and capability checks at creation time.
-- QE productization: explicit `xc`/`dispersion` recipe (default PBE+D3),
+- QE execution support: explicit `xc`/`dispersion` recipe (default PBE+D3),
   pseudopotential content hashes in the reference fingerprint, combined
   return-code/output/convergence success determination, process-group cleanup on
   timeout, bounded classified retries, and manifest-verified density warm
@@ -103,14 +101,13 @@ updates. Materials validation landed with the two QE + MACE recipes below
   `examples/qe_mace_skeleton/`, an installable example backend plugin
   `examples/backends/pyraimd2_harmonic/`, and user documentation:
   `docs/configuration.md`, `docs/api.md`.
-- Materials recipes with inputs, settings, commands and full costs:
-  `examples/si_bulk_qe_mace/` (8-atom bulk Si: surrogate relax, plain NVE in
-  both modes, adaptive NVE with 4/7 accepted evaluations at checks p = 1.0,
-  interrupted runs resumed in a new process), `examples/al_surface_qe_mace/`
-  (Al(111) slab with bottom layers fixed: plain modes and plain
-  checkpoint/resume), and the no-external-software periodic CI example
-  `examples/periodic_lj/` with its `pyraimd2_lj` backend plugin. A generic
-  Slurm template lives in `hpc/templates/`; site profiles are not shipped.
+- Material examples with structure generators, input requirements and
+  runnable configurations: `examples/si_bulk_qe_mace/` (8-atom bulk Si) and
+  `examples/al_surface_qe_mace/` (Al(111) slab with bottom layers fixed).
+  Both include surrogate singlepoint/relaxation, plain and adaptive NVE,
+  resume and export. The offline periodic example `examples/periodic_lj/`
+  uses the `pyraimd2_lj` backend plugin. A generic Slurm template is available
+  in [examples/slurm/](examples/slurm/README.md).
 
 ### Fixed
 
@@ -134,35 +131,29 @@ updates. Materials validation landed with the two QE + MACE recipes below
 ### Changed and compatibility notes
 
 - Version now has a single source in `pyproject.toml`;
-  `pyraimd2.__version__` reads installed package metadata. Development
-  pre-releases carry the `0.4.0.devN` marker.
+  `pyraimd2.__version__` reads installed package metadata.
 - Python 3.12+ required; the core install remains NumPy + ASE only.
 - The `Engine`/`Surrogate` protocols, positional result construction, the
   store row format (old rows remain readable), and the legacy switching API
   (`Runner`, `SwitchingCalculator`, scheduled/conformal policies) are
-  unchanged; the 0.3.0-era examples continue to run.
+  unchanged.
 - QE working-directory layout changed to `<label>-NNNNNN/attempt-N/` (run
   artifacts only, no API change), continuing across processes so resume never
   collides; pseudopotentials inside `pseudo_dir` are written as basenames in
   ATOMIC_SPECIES lines (long absolute paths overflow QE's card-line buffer).
-  With smearing, the QE engine now honestly declares `free_energy` (the `!`
+  With smearing, the QE engine now declares `free_energy` (the `!`
   value is the variational free energy); it was previously mislabeled `energy`.
-- The energy contract is refined per the independent review (section 5):
-  each side's reported scalar must be consistent with its own forces, and a
+- Each side's reported scalar must be consistent with its own forces, and a
   cross-kind combination (e.g. a smeared QE `free_energy` reference with a
   potential-energy MACE surrogate) is allowed when both sides strictly
   declare force-energy consistency and conservative forces — equal kind
   strings are no longer required, and an unverified (`unknown`) side can
-  never make such a combination pass. Validated on the Al(111) recipe:
-  QE's variational free energy differentiates to its forces within
-  3.6e-5 eV/A (central differences, preset tolerance 5e-4), and a short
-  adaptive run with resume completes with a ledger-consistent cost record.
+  never make such a combination pass.
 - Tensor updater states persist as digest placeholders plus npz sidecars
   (model artifacts, checkpoints and the event log), so committee
   fine-tune states survive publish, checkpointing and fresh-process
-  resume; verified end-to-end with a real MACE-MPA-0 committee on the
-  Al(111) recipe (one accepted update, byte-exact restore).
-- Current 0.4.0 limits by design: NVE only (NVT is 0.4.1), FixAtoms only,
+  resume.
+- Scope in 0.4.0 and 0.4.1: NVE only, FixAtoms only,
   `checkpoint.keep_generations` fixed at 2, and adaptive mode only for
   `task.kind = "md"`.
 
@@ -186,5 +177,3 @@ updates. Materials validation landed with the two QE + MACE recipes below
   import and existing switching workflows.
 - Replace the overview with the energetic workflow and add architecture and
   method guides.
-- Remove obsolete development-stage notes, missing design-document references
-  and a historical analysis driver that depended on unpublished run files.

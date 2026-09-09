@@ -1,11 +1,9 @@
-"""Threshold switch: the uncalibrated incumbent baseline.
+"""Route forces using a fixed threshold on per-atom surrogate uncertainty.
 
-Trust iff the committee spread is below a fixed threshold — the standard
-concurrent-learning heuristic (DP-GEN-style model deviation), with no
-window, no quantile, no contract. Used as the tuned-threshold baseline in
-the coverage experiments (red-team review 2026-08-27: the scheduled
-fallback was a strawman; the fair incumbent is a threshold tuned to the
-same label budget).
+Use the surrogate when its maximum per-atom spread is at or below the
+threshold in eV/Å; otherwise request the reference. This heuristic has no
+calibration window or quantile model. The spread threshold alone provides
+no force-error guarantee.
 """
 
 from __future__ import annotations

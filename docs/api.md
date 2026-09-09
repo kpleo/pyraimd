@@ -1,9 +1,8 @@
 # API reference
 
-Public entry points of the `pyraimd2` package, grouped by layer. Everything
-listed here is importable from the named module and covered by the test suite;
-anything not listed is internal and may change without notice. Units are fixed
-everywhere: Å, eV, eV/Å, fs, K, ASE Voigt stress.
+Public entry points of the `pyraimd2` package, grouped by layer. The names
+below are importable from their named modules. The public interfaces use
+Å, eV, eV/Å, fs and K; stress is in eV/Å³ in ASE Voigt order.
 
 For protocols and design rationale read
 [architecture.md](architecture.md) first; for TOML fields and CLI semantics
@@ -41,8 +40,11 @@ command line.
   structure, merging `[constraints]` FixAtoms.
 - `prepare_run_directory(config, *, engine, surrogate) -> Path` — create the
   run directory with the config copy, `resolved_config.json` and manifest.
-- `frames_from_store(store, run_id, *, force_source, ...)` — export frames in
-  step order from the authoritative store.
+- `frames_from_store(store, run_id, *, force_source, committed=None, ...)`
+  — convert rows to frames. Pass the `(event, row)` pairs from
+  `Store.iter_committed` to select committed rows. Omitting `committed`
+  selects raw/legacy rows; `complete_steps` alone does not exclude orphaned
+  rows sharing a step number. Prefer `export_run` for a run directory.
 - Result/record types: `WorkflowResult`, `RunOutputs`. Errors: `WorkflowError`,
   `ExportError`.
 
@@ -95,7 +97,11 @@ Builtin names: `qe`, `qe-ase`, `pyscf` (engines), `mace` (surrogate),
   per-atom uncertainty), `SurrogateCapabilities`, `surrogate_capabilities`
   fallback.
 - `assert_compatible_energy_contract(engine_caps, surrogate_caps)` — fail
-  before any expensive call when declared energy conventions conflict.
+  before any expensive call when either side declares inconsistent or
+  nonconservative forces. Different known energy kinds require both sides
+  to declare `force_consistent=True` and `forces_conservative=True`.
+  Returns `same_kind`, `cross_kind` or `unknown`; unknown declarations are
+  not evidence of consistency.
 - Implementations: `MaceSurrogate` (single MACE model, lazy calculator),
   `CommitteeSurrogate` (K-member committee with uncertainty and fine-tuning),
   `AseSurrogate` (any configured ASE calculator).
@@ -129,10 +135,14 @@ segment), `IndependentCheckBound` (accepted-force check accounting).
 ## `pyraimd2.loop` — dynamics and updates
 
 `EnergeticCalculator` (ASE calculator implementing the energetic policy) and
-`EnergeticRunner` (fixed-cell Velocity Verlet with checkpointing, resume and
-fork) drive adaptive MD; `EnergeticRunSummary` reports a run. Model updates go
+`EnergeticRunner` (fixed-cell NVE Velocity Verlet, with optional `FixAtoms`,
+checkpointing, resume and fork) drive adaptive MD; `EnergeticRunSummary`
+reports a run. Direct runner checkpointing requires `run_dir` and `event_log`;
+the configured workflow supplies them. Model updates go
 through `GuardedUpdater` + `UpdatePolicy` (candidate → guard-set validation →
 publish or roll back); `LegacyCallbackAdapter` adapts 0.3.0-era `OnlineUpdater`
-callbacks. The pre-0.4 switching interface (`Runner`, `RunSummary`,
+callbacks. Resuming model updates requires a `StatefulUpdater`; a plain
+callback cannot restore model and label-consumption state. The pre-0.4
+switching interface (`Runner`, `RunSummary`,
 `SwitchingCalculator`, and the scheduled/conformal policies in
 `pyraimd2.switch`) remains available unchanged.

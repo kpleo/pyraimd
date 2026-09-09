@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+while read -r local_ref local_oid remote_ref remote_oid; do
+    case "$local_oid" in
+        0000000000000000000000000000000000000000) continue ;;
+    esac
+    uv run --offline --no-project python scripts/check_public_tree.py --ref "$local_oid"
+    # Also check intermediate commits not present on any fetched remote branch.
+    for revision in $(git rev-list "$local_oid" --not --remotes); do
+        uv run --offline --no-project python scripts/check_public_tree.py --ref "$revision"
+    done
+done
