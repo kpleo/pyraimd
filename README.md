@@ -221,8 +221,8 @@ model locations and compute resources in your own run setup.
 
 If you use Pyramid in your research, please cite the underlying method paper:
 
-- *Python wrapped ab initio molecular dynamics with energetic force-error
-  prediction*, arXiv:2609.09251 (2026). https://arxiv.org/abs/2609.09251
+- *The energetics of force errors in machine-learned molecular dynamics*,
+  arXiv:2609.09251 (2026). https://arxiv.org/abs/2609.09251
 
 ## License
 
