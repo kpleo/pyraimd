@@ -109,9 +109,14 @@ def test_nvt_matches_direct_ase_langevin_bit_for_bit(tmp_path):
     atoms.set_momenta([[0.05, 0.02, 0.0], [-0.03, 0.01, 0.0]])
     atoms.calc = _BackendCalculator(engine, "reference")
     atoms.get_forces()  # prime the calculator cache like the driver does
+    from pyraimd2.loop.integrators import derive_stream_seed
+
+    # The run's bath stream is the role-derived thermostat seed (recorded
+    # in RUN_START); the reference ASE run must use that effective stream.
     dyn = Langevin(atoms, 0.5 * units.fs, temperature_K=300.0,
                    friction=0.01 / units.fs, fixcm=False,
-                   rng=np.random.default_rng(seed))
+                   rng=np.random.default_rng(
+                       derive_stream_seed(seed, "thermostat")))
     for _ in range(steps):
         dyn.step(atoms.calc.results["forces"])
 

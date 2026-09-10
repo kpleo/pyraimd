@@ -39,9 +39,11 @@ from pyraimd2.loop import EnergeticRunner
 from pyraimd2.loop.constraints import validate_constraints
 from pyraimd2.loop.energetic import EnergeticRunSummary
 from pyraimd2.loop.integrators import (
+    STREAM_SCHEME,
     IntegratorSpec,
     LangevinAdapter,
     VelocityVerletAdapter,
+    derive_stream_seed,
 )
 from pyraimd2.runtime.checkpoint import CheckpointManager
 from pyraimd2.runtime.context import EvaluationContext, EvaluationPhase
@@ -326,20 +328,23 @@ class _BackendCalculator(Calculator):
 def _spec_from_dynamics(config: PyramidConfig) -> IntegratorSpec:
     """The run's integrator identity from its dynamics configuration.
 
-    A new NVT run draws its thermostat stream from ``thermostat_seed`` when
-    given, else deterministically from the run seed — resumes never use
-    either, they restore the persisted stream.
+    A new NVT run draws its thermostat stream from the role-derived seed
+    (``role-derive-v1``: the user seed plus the fixed thermostat role
+    code, so the bath never shares a generator with velocity
+    initialization — not even when both fields default to ``run.seed``).
+    Resumes never use seeds; they restore the persisted stream.
     """
     dynamics = config.dynamics
     if dynamics.integrator == "langevin":
+        raw_seed = (dynamics.thermostat_seed
+                    if dynamics.thermostat_seed is not None
+                    else config.run.seed)
         return IntegratorSpec(
             algorithm="langevin", ensemble="nvt",
             timestep_fs=dynamics.timestep_fs,
             temperature_K=dynamics.temperature_K,
             friction_per_fs=dynamics.friction_per_fs,
-            thermostat_seed=(dynamics.thermostat_seed
-                             if dynamics.thermostat_seed is not None
-                             else config.run.seed))
+            thermostat_seed=derive_stream_seed(raw_seed, "thermostat"))
     return IntegratorSpec(algorithm="velocity_verlet", ensemble="nve",
                           timestep_fs=dynamics.timestep_fs)
 
@@ -415,8 +420,14 @@ class _PlainDriver:
             backend, self.section, event_log=self.event_log,
             attempt_fields=lambda: self._attempt_context_fields)
         if "momenta" not in atoms.arrays:
+            # NVT derives the initialization stream by role so it can never
+            # share a generator with the bath (R1); NVE keeps the 0.4.x
+            # behavior bit-compatible (no bath stream exists there).
+            init_seed = config.dynamics.velocity_seed
+            if config.dynamics.ensemble == "nvt":
+                init_seed = derive_stream_seed(init_seed, "velocity")
             thermalize_momenta(atoms, config.dynamics.temperature_K,
-                               rng=np.random.default_rng(config.dynamics.velocity_seed))
+                               rng=np.random.default_rng(init_seed))
         self.spec = _spec_from_dynamics(config)
         self.integrator = _make_integrator(self.spec, atoms, resume_state)
         self.dyn = self.integrator.dyn
@@ -450,6 +461,16 @@ class _PlainDriver:
             "workflow": {"driver": f"plain-{self.spec.ensemble}",
                          "mode": self.section,
                          "integrator": self.spec.as_dict()},
+            # The effective stream identities (R1): the scheme name plus the
+            # seeds actually used — derived ones differ from the raw fields
+            # by the fixed role codes and are what a direct ASE comparison
+            # must reproduce.
+            "streams": {"scheme": STREAM_SCHEME,
+                        "velocity_seed": (derive_stream_seed(
+                            self.config.dynamics.velocity_seed, "velocity")
+                            if self.spec.ensemble == "nvt"
+                            else self.config.dynamics.velocity_seed),
+                        "thermostat_seed": self.spec.thermostat_seed},
             "policy": None,
         })
 
@@ -695,7 +716,8 @@ def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                          trajectory_interval_steps=config.output.trajectory_interval_steps,
                          summary_interval_steps=config.output.summary_interval_steps)
     if verbose:
-        print(f"pyramid run: {config.run.id} — {config.task.mode}-only NVE, "
+        print(f"pyramid run: {config.run.id} — {config.task.mode}-only "
+              f"{config.dynamics.ensemble.upper()} ({config.dynamics.integrator}), "
               f"{config.dynamics.steps} steps x {config.dynamics.timestep_fs} fs")
         print(f"run directory: {run_dir}")
     previous = signal.getsignal(signal.SIGINT) if handle_sigint else None

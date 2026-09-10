@@ -460,7 +460,7 @@ def _parse_run(table: dict, base_dir: Path) -> RunConfig:
             f"run.id {run_id!r} must not contain path separators; it names "
             "the run inside its directory")
     directory = _path_field(table, "directory", "run", base_dir)
-    seed = _int_field(table, "seed", "run", default=0)
+    seed = _int_field(table, "seed", "run", default=0, minimum=0)
     return RunConfig(id=run_id, directory=directory, seed=seed)
 
 
@@ -491,7 +491,7 @@ def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
     temperature_K = _float_field(table, "temperature_K", "dynamics",
                                  default=300.0, minimum=0.0, allow_zero=True)
     velocity_seed = _int_field(table, "velocity_seed", "dynamics",
-                               default=run_seed)
+                               default=run_seed, minimum=0)
     friction_raw = table.pop("friction_per_fs", None)
     if friction_raw is not None:
         if not _is_number(friction_raw) \
@@ -506,6 +506,10 @@ def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
     if seed_raw is not None and not _is_int(seed_raw):
         raise ConfigError(
             f"dynamics.thermostat_seed must be an integer, got {seed_raw!r}")
+    if seed_raw is not None and int(seed_raw) < 0:
+        raise ConfigError(
+            f"dynamics.thermostat_seed must be nonnegative, got {seed_raw}; "
+            "NumPy generators require a nonnegative seed")
     thermostat_seed = None if seed_raw is None else int(seed_raw)
     if ensemble == "nvt":
         if integrator != "langevin":

@@ -41,8 +41,27 @@ __all__ = [
     "LangevinAdapter",
     "PendingStepState",
     "VelocityVerletAdapter",
+    "derive_stream_seed",
     "state_digest",
 ]
+
+# Stable per-role seed derivation ("role-derive-v1"): SeedSequence child
+# seeds are deterministic across processes (unlike Python's salted hash),
+# and two roles never share a generator even at the same user seed.
+STREAM_SCHEME = "role-derive-v1"
+_ROLE_CODES = {"velocity": 1, "thermostat": 2}
+
+
+def derive_stream_seed(seed: int, role: str) -> int:
+    """The effective seed for one named stream (fixed role convention).
+
+    Different roles yield independent streams at every seed, including a
+    user explicitly giving two streams the same seed.
+    """
+    if role not in _ROLE_CODES:
+        raise ValueError(f"unknown stream role {role!r}")
+    return int(np.random.SeedSequence(
+        [int(seed), _ROLE_CODES[role]]).generate_state(1)[0])
 
 
 @dataclass(frozen=True)
