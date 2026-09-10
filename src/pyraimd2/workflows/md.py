@@ -44,6 +44,7 @@ from pyraimd2.loop.integrators import (
     LangevinAdapter,
     VelocityVerletAdapter,
     derive_stream_seed,
+    state_digest,
 )
 from pyraimd2.runtime.checkpoint import CheckpointManager
 from pyraimd2.runtime.context import EvaluationContext, EvaluationPhase
@@ -200,6 +201,7 @@ def _run_adaptive(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         try:
             # The reference is created with the run's event log when its
             # factory accepts one (QE density I/O then enters the ledger).
+            store = None
             engine = create_configured_backend("reference", config.reference,
                                                run_dir=run_dir,
                                                event_log=event_log)
@@ -215,15 +217,17 @@ def _run_adaptive(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                 checkpoint_interval_steps=config.checkpoint.interval_steps,
                 handle_sigint=handle_sigint,
                 **_policy_kwargs(config))
+            outputs = RunOutputs(
+                run_dir, config.run.id,
+                trajectory_interval_steps=config.output.trajectory_interval_steps,
+                summary_interval_steps=config.output.summary_interval_steps)
         except Exception:
+            if store is not None:
+                store.close()
             event_log.close()
             _remove_fresh_event_log(run_dir)
             raise
 
-        outputs = RunOutputs(
-            run_dir, config.run.id,
-            trajectory_interval_steps=config.output.trajectory_interval_steps,
-            summary_interval_steps=config.output.summary_interval_steps)
         _attach_outputs(runner, outputs)
         total = config.dynamics.steps
         if verbose:
@@ -444,6 +448,7 @@ class _PlainDriver:
 
     def close(self) -> None:
         self.event_log.close()
+        self.store.close()
 
     def _emit_run_start(self) -> None:
         engine_fp = (fingerprint_of(self.backend)
@@ -570,13 +575,19 @@ class _PlainDriver:
             driving=driving, label_id=label_id)
         # The commit binds the row it authorizes (row id + digest): an
         # orphan row at the same step never becomes trajectory data (A3).
+        # For NVT it also pins the bath stream at this boundary, so a resume
+        # heals the step without re-running anything (R2/R3).
+        payload = {"run_id": self.run_id, "context": ctx.as_dict(),
+                   "route": route,
+                   "checked": False, "verification": None,
+                   "row_id": int(row_id),
+                   "row_digest": self.store.row_digest(
+                       self.store.row_by_id(int(row_id)))}
+        if self.spec.algorithm == "langevin":
+            payload["thermostat_rng"] = self.integrator.thermostat_state()
         self.event_log.append_once(
             f"evaluation:{self.run_id}:{evaluation_id}", EVALUATION_COMMITTED,
-            {"run_id": self.run_id, "context": ctx.as_dict(), "route": route,
-             "checked": False, "verification": None,
-             "row_id": int(row_id),
-             "row_digest": self.store.row_digest(
-                 self.store.row_by_id(int(row_id)))})
+            payload)
 
     def _fail(self, error: Exception, evaluation_id: int) -> None:
         # The evaluation's own task record is already written by _evaluate's
@@ -661,12 +672,21 @@ class _PlainDriver:
                                     else "surrogate"),
                     model_id=self.model_id,
                     timestep_fs=self.config.dynamics.timestep_fs)
+                step_payload = {"run_id": self.run_id, "step_id": step - 1,
+                                "physical_time_fs": step * self.config.dynamics.timestep_fs,
+                                "integrator": self.spec.as_dict(),
+                                # array-level digest: verified against the
+                                # authoritative row on resume (R3)
+                                "state_digest": state_digest(
+                                    self.atoms.positions,
+                                    self.atoms.get_momenta()),
+                                "boundary_digest": boundary.digest()}
+                if self.spec.algorithm == "langevin":
+                    step_payload["thermostat_rng"] = \
+                        self.integrator.thermostat_state()
                 self.event_log.append_once(
                     f"step:{self.run_id}:{step - 1}", STEP_COMPLETED,
-                    {"run_id": self.run_id, "step_id": step - 1,
-                     "physical_time_fs": step * self.config.dynamics.timestep_fs,
-                     "integrator": self.spec.as_dict(),
-                     "state_digest": boundary.digest()})
+                    step_payload)
                 completed = step
                 if step % checkpoint_interval == 0 or self._stop_requested:
                     self._write_checkpoint(step)
@@ -708,13 +728,15 @@ def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
             surrogate=backend if config.task.mode == "surrogate" else None)
         driver = _PlainDriver(config, atoms, backend, run_dir,
                               event_log=event_log)
+        # Outputs construction joins the ownership scope: any setup failure
+        # releases the log this call took before the error continues (R4).
+        outputs = RunOutputs(run_dir, config.run.id,
+                             trajectory_interval_steps=config.output.trajectory_interval_steps,
+                             summary_interval_steps=config.output.summary_interval_steps)
     except Exception:
         event_log.close()
         _remove_fresh_event_log(run_dir)
         raise
-    outputs = RunOutputs(run_dir, config.run.id,
-                         trajectory_interval_steps=config.output.trajectory_interval_steps,
-                         summary_interval_steps=config.output.summary_interval_steps)
     if verbose:
         print(f"pyramid run: {config.run.id} — {config.task.mode}-only "
               f"{config.dynamics.ensemble.upper()} ({config.dynamics.integrator}), "
@@ -822,6 +844,7 @@ def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
             "label_id": None, "cache_hit": False, "error": repr(error)})
         event_log.append(RUN_END, {"run_id": config.run.id,
                                    "status": "failed", "reason": repr(error)})
+        store.close()
         event_log.close()
         raise
     elapsed = time.perf_counter() - start
@@ -865,6 +888,7 @@ def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         "n_accepted": 1,
         "n_reference": 1 if section == "reference" else 0,
         "wall_time_s": elapsed, "stopped_early": False})
+    store.close()
     event_log.close()
     driving_forces = np.asarray(driving.forces, dtype=float)
     if verbose:
@@ -1015,6 +1039,7 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
             "label_id": None, "cache_hit": False, "error": repr(error)})
         event_log.append(RUN_END, {"run_id": config.run.id,
                                    "status": "failed", "reason": repr(error)})
+        store.close()
         event_log.close()
         raise
     _record_frame()
@@ -1034,6 +1059,7 @@ def _run_relax(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         "wall_time_s": wall, "stopped_early": False,
         "converged": converged, "final_fmax_eV_A": final_fmax,
         "raw_all_atom_fmax_eV_A": raw_fmax})
+    store.close()
     event_log.close()
     if verbose:
         status = "converged" if converged else "not converged"
@@ -1224,121 +1250,166 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
     except Exception:
         event_log.close()
         raise
-    current = _complete_steps(run_dir, config.run.id)
-    if current < int(state["nsteps"]):
-        raise WorkflowError(
-            f"the trajectory ({current} complete steps) is behind the "
-            f"checkpoint (step {state['nsteps']}); the run directory is "
-            "inconsistent")
-    target = current + extra_steps
-    if verbose:
-        print(f"resume: run {config.run.id} ({config.task.mode}-only) is at "
-              f"complete step {current}; running {extra_steps} additional "
-              f"steps (target {target})")
-    from ase.constraints import FixAtoms
-
-    replay_from_checkpoint = spec.algorithm == "langevin"
-    if current >= 1 and not replay_from_checkpoint:
-        # The window after the checkpoint advanced the trajectory: rebuild
-        # the boundary from the last committed row.  The plain driver logs
-        # AFTER the step completes, so the row's momenta are already the
-        # full-step momenta — no extra half-kick to apply.  The row is
-        # resolved through its commit (never an orphan at the same step, C1).
-        store = Store(run_dir / "trajectory.db")
-        row = store.committed_row(event_log, config.run.id, current)
-        atoms = row.toatoms()
-        driving_energy, driving_forces = store.driving_label_for_row(row)
-    else:
-        atoms = Atoms(numbers=np.array(arrays["numbers"]),
-                      positions=np.array(arrays["positions"], dtype=float),
-                      cell=np.array(arrays["cell"]), pbc=np.array(arrays["pbc"]))
-        atoms.set_masses(np.array(arrays["masses"]))
-        atoms.set_initial_charges(np.array(arrays["initial_charges"]))
-        atoms.set_initial_magnetic_moments(np.array(arrays["initial_magmoms"]))
-        atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
-        driving_energy = float(state["driving_energy_eV"])
-        driving_forces = np.array(arrays["driving_forces"], dtype=float)
-        store = Store(run_dir / "trajectory.db")
-        row = store._row_at_step(config.run.id, -1)  # the initial evaluation
-    boundary_label = _label_from_row(row, config.task.mode)
-    constraint = state.get("constraint")
-    if constraint is not None:
-        atoms.set_constraint(FixAtoms(indices=list(constraint["indices"])))
-    task_counter = int(state["task_counter"])
-    for event in event_log.iter_events():
-        if event.get("type") == TASK:
-            try:
-                task_counter = max(task_counter,
-                                   int(str(event.get("task_id", "")).rsplit("-", 1)[1]))
-            except (ValueError, IndexError):
-                continue
-    driver = _PlainDriver(config, atoms, backend, run_dir,
-                          event_log=event_log, resume_state=state)
-    driver._task_counter = task_counter
-    if replay_from_checkpoint:
-        # A stochastic integrator's boundary is not recoverable from the
-        # checkpoint's RNG alone: the completed steps after the checkpoint
-        # are fast-forwarded with their committed driving forces (no new
-        # physical evaluations, no re-draws of the bath stream), then
-        # verified against the committed boundary row (M1/M2).
-        for k in range(int(state["nsteps"]) + 1, current + 1):
-            replay_row = store.committed_row(event_log, config.run.id, k - 1)
-            _e, forces = store.driving_label_for_row(replay_row)
-            driver.dyn.step(np.asarray(forces, dtype=float))
-            driver.dyn.nsteps = k
-        if current >= 1:
-            boundary_row = store.committed_row(event_log, config.run.id,
-                                               current)
-            if not np.allclose(atoms.positions,
-                               boundary_row.toatoms().positions,
-                               rtol=0, atol=1e-10):
-                raise WorkflowError(
-                    f"replayed boundary at step {current} does not match the "
-                    f"committed row (max |dx| "
-                    f"{float(np.abs(atoms.positions - boundary_row.toatoms().positions).max()):.3e} A); "
-                    "the run directory is inconsistent")
-            # The continuation step integrates from the boundary
-            # evaluation's driving force, not the checkpoint's older one.
-            driving_energy, driving_forces = store.driving_label_for_row(
-                boundary_row)
-    driver.dyn.nsteps = current
-    driver.atoms.calc.atoms = atoms.copy()
-    # The reusable driving force of the boundary evaluation feeds the first
-    # half-kick without recalculating it.
-    driver.atoms.calc.results = {
-        "energy": float(driving_energy),
-        "forces": np.asarray(driving_forces, dtype=float).copy()}
-    # If the first resumed step does not move the atoms (a stationary
-    # boundary), ASE legitimately skips calculate() and last_label would
-    # stay unset; the committed boundary row is the same label.
-    driver.atoms.calc.last_label = boundary_label
-    event_log.append(RESUMED, {
-        "run_id": config.run.id, "driver": f"plain-{config.dynamics.ensemble}",
-        "from_event_seq": int(manifest["last_event_seq"]),
-        "checkpoint_generation": checkpoint.generation})
-    outputs = RunOutputs(
-        run_dir, config.run.id,
-        trajectory_interval_steps=config.output.trajectory_interval_steps,
-        summary_interval_steps=config.output.summary_interval_steps)
-    outputs.regenerate_trajectory()
-    previous = signal.getsignal(signal.SIGINT) if handle_sigint else None
-    if handle_sigint:
-        signal.signal(signal.SIGINT,
-                      lambda signum, frame: driver.request_stop())
+    # From here on the workflow owns the log: any failure before the
+    # driver's own finally — boundary healing/verification, driver or
+    # outputs construction — releases it before the error continues (R4).
+    store = None
     try:
-        outcome = driver.run(extra_steps, outputs, verbose=verbose,
-                             start_step=current)
-    finally:
-        _finalize_quietly(outputs)
-        driver.close()
+        current = _complete_steps(run_dir, config.run.id)
+        if current < int(state["nsteps"]):
+            raise WorkflowError(
+                f"the trajectory ({current} complete steps) is behind the "
+                f"checkpoint (step {state['nsteps']}); the run directory is "
+                "inconsistent")
+        target = current + extra_steps
+        if verbose:
+            print(f"resume: run {config.run.id} ({config.task.mode}-only) is at "
+                  f"complete step {current}; running {extra_steps} additional "
+                  f"steps (target {target})")
+        from ase.constraints import FixAtoms
+
+        store = Store(run_dir / "trajectory.db")
+        # Heal the committed-evaluation / uncommitted-step window (R3): the
+        # plain driver logs the post-step state with the evaluation commit, so
+        # a committed evaluation one past the last complete step IS a finished
+        # step — bind it instead of recomputing anything.  The plain driver
+        # can leave at most one such evaluation; more means an inconsistent
+        # log.
+        events = list(event_log.iter_events())
+        committed_evaluations = sorted({
+            int((e.get("context") or {})["evaluation_id"])
+            for e in events if e.get("type") == EVALUATION_COMMITTED})
+        n_committed = len(committed_evaluations)
+        if n_committed == current + 2:
+            heal_id = current + 1
+            heal_row = store.committed_row(events, config.run.id, heal_id)
+            commit = next(e for e in events
+                          if e.get("type") == EVALUATION_COMMITTED
+                          and int((e.get("context") or {})
+                                  ["evaluation_id"]) == heal_id)
+            # The step commit names the full boundary state of the authoritative
+            # row; its bath stream comes from the evaluation commit.  Resume
+            # re-emits it idempotently instead of recomputing the step.
+            heal_payload = {"run_id": config.run.id, "step_id": current,
+                            "physical_time_fs": (current + 1)
+                            * config.dynamics.timestep_fs,
+                            "integrator": spec.as_dict(),
+                            "state_digest": state_digest(
+                                heal_row.toatoms().positions,
+                                heal_row.toatoms().get_momenta())}
+            if commit.get("thermostat_rng") is not None:
+                heal_payload["thermostat_rng"] = commit["thermostat_rng"]
+            event_log.append_once(f"step:{config.run.id}:{current}",
+                                  STEP_COMPLETED, heal_payload)
+            current += 1
+        elif n_committed > current + 2:
+            raise WorkflowError(
+                f"the event log under {run_dir} has {n_committed} committed "
+                f"evaluations but only {current} complete steps; the run "
+                "directory is inconsistent — refusing to guess a boundary")
+        # The boundary is the last committed evaluation's row — never an orphan
+        # and never a recomputed state (C1/R3).  NVT additionally restores the
+        # bath stream from that commit; a step boundary digest, when present,
+        # is verified against the row before use.
+        if current >= 1:
+            row = store.committed_row(event_log, config.run.id, current)
+            atoms = row.toatoms()
+            driving_energy, driving_forces = store.driving_label_for_row(row)
+            boundary_step = next((e for e in reversed(events)
+                                  if e.get("type") == STEP_COMPLETED
+                                  and int(e["step_id"]) == current - 1), None)
+            if boundary_step is not None and boundary_step.get("state_digest"):
+                actual = state_digest(atoms.positions, atoms.get_momenta())
+                if actual != boundary_step["state_digest"]:
+                    raise WorkflowError(
+                        f"the step-{current - 1} boundary digest does not match "
+                        f"the committed row ({boundary_step['state_digest']} vs "
+                        f"{actual}); the run directory is inconsistent")
+        else:
+            atoms = Atoms(numbers=np.array(arrays["numbers"]),
+                          positions=np.array(arrays["positions"], dtype=float),
+                          cell=np.array(arrays["cell"]), pbc=np.array(arrays["pbc"]))
+            atoms.set_masses(np.array(arrays["masses"]))
+            atoms.set_initial_charges(np.array(arrays["initial_charges"]))
+            atoms.set_initial_magnetic_moments(np.array(arrays["initial_magmoms"]))
+            atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
+            driving_energy = float(state["driving_energy_eV"])
+            driving_forces = np.array(arrays["driving_forces"], dtype=float)
+            row = store._row_at_step(config.run.id, -1)  # the initial evaluation
+        boundary_label = _label_from_row(row, config.task.mode)
+        store.close()  # the boundary read is done; the driver owns its store
+        constraint = state.get("constraint")
+        if constraint is not None:
+            atoms.set_constraint(FixAtoms(indices=list(constraint["indices"])))
+        task_counter = int(state["task_counter"])
+        for event in events:
+            if event.get("type") == TASK:
+                try:
+                    task_counter = max(task_counter,
+                                       int(str(event.get("task_id", "")).rsplit("-", 1)[1]))
+                except (ValueError, IndexError):
+                    continue
+        resume_state = state
+        if spec.algorithm == "langevin":
+            boundary_commit = next((e for e in reversed(events)
+                                    if e.get("type") == EVALUATION_COMMITTED
+                                    and int((e.get("context") or {})
+                                            ["evaluation_id"]) == current), None)
+            thermostat_rng = (boundary_commit or {}).get("thermostat_rng")
+            if thermostat_rng is None:
+                raise WorkflowError(
+                    f"the boundary evaluation of {run_dir} has no persisted "
+                    "thermostat state; this NVT log predates bath persistence "
+                    "and cannot be resumed without guessing — start a new run")
+            resume_state = dict(state)
+            resume_state["thermostat"] = {"rng": thermostat_rng}
+        driver = _PlainDriver(config, atoms, backend, run_dir,
+                              event_log=event_log, resume_state=resume_state)
+        driver._task_counter = task_counter
+        driver.dyn.nsteps = current
+        driver.atoms.calc.atoms = atoms.copy()
+        # The reusable driving force of the boundary evaluation feeds the first
+        # half-kick without recalculating it.
+        driver.atoms.calc.results = {
+            "energy": float(driving_energy),
+            "forces": np.asarray(driving_forces, dtype=float).copy()}
+        # If the first resumed step does not move the atoms (a stationary
+        # boundary), ASE legitimately skips calculate() and last_label would
+        # stay unset; the committed boundary row is the same label.
+        driver.atoms.calc.last_label = boundary_label
+        event_log.append(RESUMED, {
+            "run_id": config.run.id, "driver": f"plain-{config.dynamics.ensemble}",
+            "from_event_seq": int(manifest["last_event_seq"]),
+            "checkpoint_generation": checkpoint.generation})
+        outputs = RunOutputs(
+            run_dir, config.run.id,
+            trajectory_interval_steps=config.output.trajectory_interval_steps,
+            summary_interval_steps=config.output.summary_interval_steps)
+        outputs.regenerate_trajectory()
+        previous = signal.getsignal(signal.SIGINT) if handle_sigint else None
         if handle_sigint:
-            signal.signal(signal.SIGINT, previous)
-    after = _complete_steps(run_dir, config.run.id)
-    if verbose:
-        status = ("stopped early at the last complete step"
-                  if outcome["stopped"] else "done")
-        print(f"resume {status}: run is now at complete step {after}")
-    return WorkflowResult(run_dir=run_dir, run_id=config.run.id,
-                          mode=config.task.mode, steps_completed=after,
-                          steps_this_call=after - current,
-                          stopped_early=outcome["stopped"], summary=None)
+            signal.signal(signal.SIGINT,
+                          lambda signum, frame: driver.request_stop())
+        try:
+            outcome = driver.run(extra_steps, outputs, verbose=verbose,
+                                 start_step=current)
+        finally:
+            _finalize_quietly(outputs)
+            driver.close()
+            if handle_sigint:
+                signal.signal(signal.SIGINT, previous)
+        after = _complete_steps(run_dir, config.run.id)
+        if verbose:
+            status = ("stopped early at the last complete step"
+                      if outcome["stopped"] else "done")
+            print(f"resume {status}: run is now at complete step {after}")
+        return WorkflowResult(run_dir=run_dir, run_id=config.run.id,
+                              mode=config.task.mode, steps_completed=after,
+                              steps_this_call=after - current,
+                              stopped_early=outcome["stopped"], summary=None)
+    except Exception:
+        # idempotent: the driver's own finally may already have closed them
+        if store is not None:
+            store.close()
+        event_log.close()
+        raise
