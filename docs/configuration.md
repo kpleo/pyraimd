@@ -144,8 +144,11 @@ Mode rules:
 - `timestep_fs` (number > 0, required).
 - `steps` (integer >= 1, required).
 - `temperature_K` (number >= 0, default 300.0): the bath target
-  temperature for NVT; for NVE it is only used when the structure
-  carries no velocities.
+  temperature for NVT, and the one-time velocity-initialization default
+  when the structure carries no velocities (both modes). Supplied
+  velocities/momenta may represent a different initial temperature; the
+  bath still targets `temperature_K`. There is no separate initialization
+  temperature field.
 - `velocity_seed` (integer, default `run.seed`): seeds the one-time
   velocity initialization only; it never reseeds a resume.
 - `friction_per_fs` (number > 0): required for NVT — the bath coupling
@@ -283,12 +286,15 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 - `resolved_config.json` records the schema version next to the effective
   parameters, so old run directories stay interpretable.
 
-## Current limitations (0.4.2)
+## Current limitations
 
 - Constraints: FixAtoms only — RATTLE/holonomic, energy-carrying and
   moving constraints are rejected explicitly, as is any variable-cell
   (NPT) dynamics.
-- NVE only; NVT is unsupported.
+- Released 0.4.2 supports NVE only. This development version adds plain
+  fixed-cell NVT (ASE Langevin) in reference and surrogate modes; adaptive
+  mode remains NVE-only, and `ensemble = "nvt"` with `mode = "adaptive"`
+  is rejected at validation time.
 - `checkpoint.keep_generations` is fixed at 2 by the runtime.
 - Model updates (online training) use the Python `GuardedUpdater` interface;
   resumable updates require state export and restore. Adaptive runs without
