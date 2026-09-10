@@ -217,6 +217,13 @@ software and model files; they are deselected by default and never count as
 passing when their dependency is missing. Configure production executables,
 model locations and compute resources in your own run setup.
 
+## Citing
+
+If you use Pyramid in your research, please cite the underlying method paper:
+
+- *Python wrapped ab initio molecular dynamics with energetic force-error
+  prediction*, arXiv:2609.09251 (2026). https://arxiv.org/abs/2609.09251
+
 ## License
 
 Pyramid is released under the [MIT License](LICENSE).
