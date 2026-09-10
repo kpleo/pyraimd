@@ -203,21 +203,31 @@ class EventLog:
         self._keys: set[str] = set()
         self._seq = 0
         self._torn_tail = False
-        if self.path.exists():
-            for event in self._read_events():
-                self._seq = max(self._seq, int(event.get("seq", 0)))
-                key = event.get("key")
-                if key is not None:
-                    self._keys.add(str(key))
-        if self._torn_tail:
-            # The torn bytes never committed; drop them so the next append
-            # does not glue a new event onto the partial line.  Committed
-            # events are never rewritten.
-            data = self.path.read_bytes()
-            keep = data.rstrip(b"\n").rfind(b"\n") + 1
-            with self.path.open("r+b") as fh:
-                fh.truncate(keep)
-        self._fh = self.path.open("a", encoding="utf-8")
+        try:
+            if self.path.exists():
+                for event in self._read_events():
+                    self._seq = max(self._seq, int(event.get("seq", 0)))
+                    key = event.get("key")
+                    if key is not None:
+                        self._keys.add(str(key))
+            if self._torn_tail:
+                # The torn bytes never committed; drop them so the next
+                # append does not glue a new event onto the partial line.
+                # Committed events are never rewritten.
+                data = self.path.read_bytes()
+                keep = data.rstrip(b"\n").rfind(b"\n") + 1
+                with self.path.open("r+b") as fh:
+                    fh.truncate(keep)
+            self._fh = self.path.open("a", encoding="utf-8")
+        except Exception:
+            # A failed construction must release the lock it just took —
+            # the caller keeps the original exception and no live handle.
+            self._closed = True
+            try:
+                self._lock_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
 
     @property
     def last_seq(self) -> int:

@@ -261,9 +261,9 @@ def export_run(run_dir: str | Path, *, force_source: str = "driving",
             f"no trajectory.db in {run_dir}; nothing to export — run the "
             "configuration first with `pyramid run`")
     run_id = infer_run_id(run_dir)
-    store = Store(db_path)
-    frames = frames_for_run(store, run_dir, run_id,
-                            force_source=force_source)
+    with Store(db_path) as store:
+        frames = frames_for_run(store, run_dir, run_id,
+                                force_source=force_source)
     if not frames:
         raise ExportError(
             f"run {run_id!r} has no committed evaluations to export")

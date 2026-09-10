@@ -33,11 +33,39 @@ STORE_SCHEMA_VERSION = 2
 
 
 class Store:
-    """Append-only wrapper around an ASE SQLite database."""
+    """Append-only wrapper around an ASE SQLite database.
+
+    Owns one connection for its lifetime: ASE 3.29's per-operation
+    ``managed_connection`` path relies on a temp connection that is never
+    explicitly closed (sqlite3's context manager commits but does not
+    close — the object lingers until GC).  Holding the connection and
+    committing after every write keeps per-write durability (no long
+    transaction may outlive a step announcement) while ``close()``
+    releases the handle deterministically.
+    """
 
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
         self._db = ase.db.connect(self.path)
+        self._db.__enter__()  # one owned connection per Store
+
+    def close(self) -> None:
+        db = getattr(self, "_db", None)
+        if db is not None:
+            self._db = None
+            db.__exit__(None, None, None)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:  # last resort only — owners call close()
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001, S110 - GC cleanup must never raise
+            pass
 
     def append(
         self,
@@ -93,9 +121,14 @@ class Store:
                 "energy": float(driving.energy),
                 "forces": np.array(driving.forces, dtype=float, copy=True),
             }
-        return int(
+        row_id = int(
             self._db.write(atoms, run_id=run_id, step=int(step), route=route, data=data)
         )
+        # Durability is per write: no open transaction may outlive a step
+        # announcement (the event log commits first, the row must follow
+        # immediately, and a crash must never find it uncommitted).
+        self._db.connection.commit()
+        return row_id
 
     def row_by_id(self, row_id: int) -> ase.db.row.AtomsRow:
         """Fetch one row by its database id (the commit-bound identity)."""

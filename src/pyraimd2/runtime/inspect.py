@@ -113,8 +113,9 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
                 raise EventLogError(
                     f"no events.jsonl and no unique *.db in {run_dir}; pass run_id"
                 )
-            run_ids = {str(r.key_value_pairs.get("run_id"))
-                       for r in Store(db_path)._db.select()}
+            with Store(db_path) as _store:
+                run_ids = {str(r.key_value_pairs.get("run_id"))
+                           for r in _store._db.select()}
             if len(run_ids) != 1:
                 raise EventLogError(
                     f"cannot infer run_id in {run_dir} (candidates: {sorted(run_ids)})"
@@ -141,53 +142,53 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
     last_evaluation = None
     db_path = _find_db(run_dir)
     if db_path is not None:
-        store = Store(db_path)
-        rows = sorted(store._db.select(run_id=run_id),
-                      key=lambda r: int(r.key_value_pairs["step"]))
-        trajectory["n_rows"] = len(rows)
-        pairs = list(store.iter_committed(events, run_id))
-        trajectory["n_committed"] = len(pairs)
-        trajectory["n_accepted"] = sum(
-            row.key_value_pairs["route"] == "ml" for _event, row in pairs)
-        if pairs:
-            # The current trajectory state is the last COMPLETE boundary
-            # (or the initial evaluation); the latest committed evaluation
-            # of any phase is reported separately with its phase marked (A4).
-            last_event, last_row = pairs[-1]
-            last_context_row = last_event.get("context") or {}
-            last_step_id = int(last_row.key_value_pairs["step"])
-            last_complete = (not md_kind) or last_step_id == -1 \
-                or last_step_id in complete_steps
-            driving = last_row.data.get("driving")
-            last_evaluation = {
-                "evaluation_id": int(last_context_row.get("evaluation_id",
-                                                         last_step_id + 1)),
-                "step_id": last_step_id,
-                "phase": last_context_row.get("phase"),
-                "physical_time_fs": last_context_row.get("physical_time_fs"),
-                "energy_eV": (None if driving is None
-                              else float(driving["energy"])),
-                "complete": bool(last_complete),
-            }
-            boundary = next(
-                ((event, row) for event, row in reversed(pairs)
-                 if (not md_kind)
-                 or int(row.key_value_pairs["step"]) == -1
-                 or int(row.key_value_pairs["step"]) in complete_steps),
-                None)
-            if boundary is not None:
-                _event, row = boundary
-                step = int(row.key_value_pairs["step"])
-                trajectory["last_step"] = step
-                driving = row.data.get("driving")
-                if driving is not None:
-                    trajectory["last_energy_eV"] = float(driving["energy"])
-                metadata = row.data.get("metadata") or {}
-                constraint = metadata.get("constraint") or {}
-                frame = store.complete_step_frame(
-                    row, Store.row_timestep_fs(row) or 0.0)
-                trajectory["last_temperature_K"] = _temperature_K(
-                    frame, n_fixed=int(constraint.get("n_fixed", 0)))
+        with Store(db_path) as store:
+            rows = sorted(store._db.select(run_id=run_id),
+                          key=lambda r: int(r.key_value_pairs["step"]))
+            trajectory["n_rows"] = len(rows)
+            pairs = list(store.iter_committed(events, run_id))
+            trajectory["n_committed"] = len(pairs)
+            trajectory["n_accepted"] = sum(
+                row.key_value_pairs["route"] == "ml" for _event, row in pairs)
+            if pairs:
+                # The current trajectory state is the last COMPLETE boundary
+                # (or the initial evaluation); the latest committed evaluation
+                # of any phase is reported separately with its phase marked (A4).
+                last_event, last_row = pairs[-1]
+                last_context_row = last_event.get("context") or {}
+                last_step_id = int(last_row.key_value_pairs["step"])
+                last_complete = (not md_kind) or last_step_id == -1 \
+                    or last_step_id in complete_steps
+                driving = last_row.data.get("driving")
+                last_evaluation = {
+                    "evaluation_id": int(last_context_row.get("evaluation_id",
+                                                             last_step_id + 1)),
+                    "step_id": last_step_id,
+                    "phase": last_context_row.get("phase"),
+                    "physical_time_fs": last_context_row.get("physical_time_fs"),
+                    "energy_eV": (None if driving is None
+                                  else float(driving["energy"])),
+                    "complete": bool(last_complete),
+                }
+                boundary = next(
+                    ((event, row) for event, row in reversed(pairs)
+                     if (not md_kind)
+                     or int(row.key_value_pairs["step"]) == -1
+                     or int(row.key_value_pairs["step"]) in complete_steps),
+                    None)
+                if boundary is not None:
+                    _event, row = boundary
+                    step = int(row.key_value_pairs["step"])
+                    trajectory["last_step"] = step
+                    driving = row.data.get("driving")
+                    if driving is not None:
+                        trajectory["last_energy_eV"] = float(driving["energy"])
+                    metadata = row.data.get("metadata") or {}
+                    constraint = metadata.get("constraint") or {}
+                    frame = store.complete_step_frame(
+                        row, Store.row_timestep_fs(row) or 0.0)
+                    trajectory["last_temperature_K"] = _temperature_K(
+                        frame, n_fixed=int(constraint.get("n_fixed", 0)))
 
     last_context = (committed[-1].get("context") if committed else None) or {}
     if (start or {}).get("event_schema_version") is not None:

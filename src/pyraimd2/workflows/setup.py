@@ -375,8 +375,9 @@ def check_run_directory_available(config: PyramidConfig) -> None:
     run_dir = config.run.directory
     db_path = run_dir / "trajectory.db"
     if db_path.is_file():
-        existing = {str(row.key_value_pairs.get("run_id"))
-                    for row in Store(db_path)._db.select()}
+        with Store(db_path) as _store:
+            existing = {str(row.key_value_pairs.get("run_id"))
+                        for row in _store._db.select()}
         if config.run.id in existing:
             raise WorkflowError(
                 f"run.id {config.run.id!r} already exists in {db_path}; a "
@@ -472,9 +473,10 @@ class RunOutputs:
     def regenerate_trajectory(self) -> None:
         # Same commit→row selection as the CLI export (R7): orphan rows
         # never enter the user-visible trajectory.
-        frames = frames_for_run(self._store(), self.run_dir, self.run_id,
-                                force_source="driving",
-                                interval_steps=self.trajectory_interval)
+        with self._store() as store:
+            frames = frames_for_run(store, self.run_dir, self.run_id,
+                                    force_source="driving",
+                                    interval_steps=self.trajectory_interval)
         if frames:
             write_extxyz(self.trajectory_path, frames)
 
@@ -484,22 +486,24 @@ class RunOutputs:
         evaluation_id = completed_steps
         if evaluation_id % self.trajectory_interval != 0:
             return
-        store = self._store()
-        # The frame comes from the commit-bound row of this evaluation, not
-        # from whichever row happens to sit at the step first (R7).
-        row = store.committed_row(
-            _read_events(self.run_dir / "events.jsonl"), self.run_id,
-            evaluation_id)
-        append_extxyz(self.trajectory_path,
-                      frame_from_row(row, self.run_id, force_source="driving",
-                                     store=store))
+        with self._store() as store:
+            # The frame comes from the commit-bound row of this evaluation,
+            # not from whichever row happens to sit at the step first (R7).
+            row = store.committed_row(
+                _read_events(self.run_dir / "events.jsonl"), self.run_id,
+                evaluation_id)
+            append_extxyz(self.trajectory_path,
+                          frame_from_row(row, self.run_id,
+                                         force_source="driving",
+                                         store=store))
 
     def write_summaries(self) -> None:
         info = inspect_run(self.run_dir, run_id=self.run_id)
         _write_json_atomic(self.run_dir / "summary.json", info)
-        csv_text = _summary_csv(
-            self._store(), self.run_id,
-            events=_read_events(self.run_dir / "events.jsonl"))
+        with self._store() as store:
+            csv_text = _summary_csv(
+                store, self.run_id,
+                events=_read_events(self.run_dir / "events.jsonl"))
         tmp = self.run_dir / "summary.csv.tmp"
         tmp.write_text(csv_text, encoding="utf-8")
         os.replace(tmp, self.run_dir / "summary.csv")

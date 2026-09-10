@@ -115,7 +115,12 @@ def test_abandoned_log_releases_the_handle_but_keeps_the_lock(tmp_path):
         warnings.simplefilter("always", ResourceWarning)
         gc.collect()
     assert fh.closed  # the handle was released without leaking
-    assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    # Only this log's own handle counts: a global gc.collect() may also
+    # finalize unrelated ASE SQLite connections left by other tests —
+    # their ResourceWarnings are not this test's business.
+    assert not [w for w in caught
+                if issubclass(w.category, ResourceWarning)
+                and "events.jsonl" in str(w.message)]
     assert (tmp_path / "events.jsonl.lock").exists()  # lock is crash evidence
     with EventLog(tmp_path, force=True):  # deliberate reclaim still works
         pass

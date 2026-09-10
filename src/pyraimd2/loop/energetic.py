@@ -1830,6 +1830,9 @@ class EnergeticRunner:
         self._failed = False
         self._stop_requested = False
         self.run_dir = None if run_dir is None else Path(run_dir)
+        # The caller's store outlives the runner; a store created by
+        # resume/fork is owned (and closed) by the runner (R4).
+        self._owns_store = False
         self.checkpoint_interval_steps = (None if checkpoint_interval_steps is None
                                           else int(checkpoint_interval_steps))
         self._checkpoints: CheckpointManager | None = None
@@ -1859,6 +1862,8 @@ class EnergeticRunner:
         """Release the event-log writer lock (a deliberate end of writing)."""
         if self.calc._event_log is not None:
             self.calc._event_log.close()
+        if self._owns_store:
+            self.calc.store.close()
 
     def _publish_model_artifact(self, model_id: str, record: dict) -> dict:
         """Immutable model artifact, persisted before the update event;
@@ -2022,6 +2027,7 @@ class EnergeticRunner:
         runner = cls.__new__(cls)
         runner.calc = calc
         runner.run_dir = run_dir
+        runner._owns_store = True  # resume created the store; runner closes it
         runner.checkpoint_interval_steps = (None if checkpoint_interval_steps is None
                                             else int(checkpoint_interval_steps))
         runner._stop_requested = False
@@ -2151,6 +2157,7 @@ class EnergeticRunner:
                      run_dir=new_run_dir,
                      checkpoint_interval_steps=checkpoint_interval_steps,
                      handle_sigint=handle_sigint, **policy)
+        runner._owns_store = True  # fork created the store; runner closes it
         runner.calc._emit("forked_from", parent_run_id=state["run_id"],
                           parent_run_dir=str(run_dir),
                           checkpoint_generation=generation,
