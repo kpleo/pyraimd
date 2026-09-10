@@ -6,10 +6,18 @@
 
 - Plain fixed-cell NVT MD (ASE Langevin, `fixcm=False`) in reference and
   surrogate modes, with complete-step checkpoints and resume of the
-  thermostat's random stream; adaptive MD remains NVE-only. `dynamics`
+  thermostat's random stream. `dynamics`
   gains `ensemble`, `integrator`, `friction_per_fs` and `thermostat_seed`;
   `temperature_K` is both the bath target and the one-time
   velocity-initialization default when the structure has no velocities.
+- Adaptive MD supports `ensemble = "nvt"` (Langevin) with a fixed base
+  model: the decision consumes the actual constraint-processed
+  configuration of each stochastic step, the bath's random quantities are
+  drawn once per step and recorded for exact resume, and the independent
+  check stream is role-derived (`role-derive-v1`) so it never shares a
+  generator with the bath or velocity streams. Re-anchoring is supported
+  and recorded per segment; online training under adaptive NVT remains
+  unavailable. New template: `harmonic-adaptive-nvt`.
 
 ### Fixed
 
@@ -20,6 +28,14 @@
 - The ASE-native QE attempt span is settled at its terminal exit, so the
   density-manifest write is counted once in the declared
   staging/process/validation span instead of being frozen out.
+- Plain MD resume verifies each persisted step-summary format by its own
+  semantics (0.4.x records carry none; the previous development batch's
+  complete-boundary JSON digest; the current array digest plus boundary
+  digest covering the thermostat stream) instead of rejecting older
+  records as corrupt, and crash-healed step records now carry the same
+  boundary digest as normal commits.
+- Stores opened by the MD workflows are closed on every controlled
+  failure path (setup, resume, adaptive), not left to garbage collection.
 
 ### Changed
 
