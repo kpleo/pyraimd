@@ -58,6 +58,18 @@ jobs:
       - run: python -m pip install -e '.[dev]'
       - run: python -m pytest tests/unit/test_resume.py tests/unit/test_plain_resume.py tests/unit/test_checkpoint.py -q
 
+  nvt-statistics:
+    # The long NVT sampling sanity runs (marked slow, deselected by default)
+    # stay an explicit CI task instead of silently dropping out.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - run: python -m pytest tests/unit/test_nvt_statistics.py -q --runslow
+
   wheel:
     # Build sdist + wheel, install each into a clean environment outside the
     # checkout, and smoke the CLI exactly as a user would.

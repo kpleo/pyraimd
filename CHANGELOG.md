@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Plain fixed-cell NVT MD (ASE Langevin, `fixcm=False`) in reference and
+  surrogate modes, with complete-step checkpoints and resume of the
+  thermostat's random stream; adaptive MD remains NVE-only. `dynamics`
+  gains `ensemble`, `integrator`, `friction_per_fs` and `thermostat_seed`;
+  `temperature_K` is both the bath target and the one-time
+  velocity-initialization default when the structure has no velocities.
+
 ### Fixed
 
 - An abandoned event log (a constructor or a failed resume dropping the
@@ -11,6 +20,15 @@
 - The ASE-native QE attempt span is settled at its terminal exit, so the
   density-manifest write is counted once in the declared
   staging/process/validation span instead of being frozen out.
+
+### Changed
+
+- The NVT statistics acceptance now identifies the ASE Langevin propagator
+  as Vanden-Eijnden–Ciccotti (not BAOAB) and carries its measured
+  timestep bias (+0.020% position variance, -0.042% mean kinetic energy at
+  dt=0.5 fs, from a deterministic discrete-Lyapunov covariance check)
+  instead of claiming zero bias; sampling tolerances are derived from the
+  actual discrete process at the run's budget rather than a fixed 7% gate.
 
 ## 0.4.2
 
