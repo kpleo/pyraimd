@@ -137,14 +137,23 @@ segment), `IndependentCheckBound` (accepted-force check accounting).
 ## `pyraimd2.loop` — dynamics and updates
 
 `EnergeticCalculator` (ASE calculator implementing the energetic policy) and
-`EnergeticRunner` (fixed-cell NVE Velocity Verlet, with optional `FixAtoms`,
-checkpointing, resume and fork) drive adaptive MD; `EnergeticRunSummary`
-reports a run. Direct runner checkpointing requires `run_dir` and `event_log`;
-the configured workflow supplies them. Model updates go
-through `GuardedUpdater` + `UpdatePolicy` (candidate → guard-set validation →
-publish or roll back); `LegacyCallbackAdapter` adapts 0.3.0-era `OnlineUpdater`
-callbacks. Resuming model updates requires a `StatefulUpdater`; a plain
-callback cannot restore model and label-consumption state. The pre-0.4
-switching interface (`Runner`, `RunSummary`,
+`EnergeticRunner` (fixed-cell NVE Velocity Verlet or NVT Langevin, with
+optional `FixAtoms`, checkpointing, resume and fork) drive adaptive MD;
+`EnergeticRunSummary` reports a run. Direct runner checkpointing requires
+`run_dir` and `event_log`; the configured workflow supplies them.
+
+Two entry levels have different model-update support, stated explicitly:
+
+- The TOML/CLI workflow (`pyramid run` on a config file) runs adaptive MD
+  with a **fixed base model** in both ensembles; configuration has no way
+  to install an update callback, and none is implied by the templates.
+- The Python interface installs model updates explicitly:
+  `EnergeticRunner(on_label=...)` with `GuardedUpdater` + `UpdatePolicy`
+  (candidate → guard-set validation → publish or roll back), in both
+  ensembles; `LegacyCallbackAdapter` adapts 0.3.0-era `OnlineUpdater`
+  callbacks. Resuming model updates requires a `StatefulUpdater`; a plain
+  callback cannot restore model and label-consumption state.
+
+The pre-0.4 switching interface (`Runner`, `RunSummary`,
 `SwitchingCalculator`, and the scheduled/conformal policies in
 `pyraimd2.switch`) remains available unchanged.

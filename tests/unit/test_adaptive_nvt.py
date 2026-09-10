@@ -634,10 +634,24 @@ def test_b_forced_reanchor_closes_old_segment_with_old_correction(tmp_path):
     rows = _rows(run_dir)
     anchors = _anchors(run_dir)
     commits = _commit_by_evaluation(run_dir)
-    # the time cap forces re-anchoring: several segments, each with its own
-    # correction (the anchors sit at different positions, and the residual
-    # is position-dependent in y)
+    # re-anchoring measured here is driven by transverse-domain refusal
+    # (elapsed stays at or below the 1 fs time cap in every refused
+    # evaluation): several segments, each with its own correction (the
+    # anchors sit at different positions, and the residual is
+    # position-dependent in y)
     assert len(anchors) >= 2
+    proposals = [e for e in events(run_dir)
+                 if e["type"] == "evaluation_proposed"
+                 and e.get("anchor_record") is not None]
+    refused = [p for p in proposals if not p["accepted"]]
+    assert refused
+    for proposal in refused:
+        anchor = proposal["anchor_record"]
+        elapsed = (int(proposal["context"]["evaluation_id"])
+                   - int(anchor["evaluation_index"])) * DT
+        assert elapsed <= 1.0  # the time cap never fired
+        assert min(f["transverse_fraction"]
+                   for f in proposal["forecasts"]) > 0.1  # the domain stop
     corrections = {segment: np.array(record["correction_eV_A"], dtype=float)
                    for segment, record in anchors.items()}
     for first, second in zip(sorted(corrections), sorted(corrections)[1:]):
