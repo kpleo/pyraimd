@@ -51,6 +51,12 @@ __all__ = [
 STREAM_SCHEME = "role-derive-v1"
 _ROLE_CODES = {"velocity": 1, "thermostat": 2}
 
+# Persisted step-summary format emitted by the current code.  0.4.x runs
+# recorded no step summary at all; the previous batch persisted only the
+# CommittedStepState digest (JSON); this batch persists the array digest
+# plus the full boundary digest including the thermostat stream state.
+DIGEST_FORMAT = "boundary-v2"
+
 
 def derive_stream_seed(seed: int, role: str) -> int:
     """The effective seed for one named stream (fixed role convention).
@@ -166,7 +172,16 @@ class CommittedStepState:
         )
 
     def digest(self) -> str:
-        """Identity over the boundary state (not the volatile RNG blob)."""
+        """Full boundary identity: state, model, integrator AND the bath
+        stream (a boundary that cannot name its RNG is not a complete
+        stochastic state)."""
+        canonical = json.dumps(self.as_dict(), sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:24]
+
+    def legacy_digest(self) -> str:
+        """The previous batch's identity (state/model/integrator WITHOUT
+        the bath stream) — only for verifying records written in that
+        format; never written any more."""
         canonical = json.dumps(
             {key: value for key, value in self.as_dict().items()
              if key != "thermostat_rng"},

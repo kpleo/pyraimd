@@ -39,7 +39,9 @@ from pyraimd2.loop import EnergeticRunner
 from pyraimd2.loop.constraints import validate_constraints
 from pyraimd2.loop.energetic import EnergeticRunSummary
 from pyraimd2.loop.integrators import (
+    DIGEST_FORMAT,
     STREAM_SCHEME,
+    CommittedStepState,
     IntegratorSpec,
     LangevinAdapter,
     VelocityVerletAdapter,
@@ -366,6 +368,32 @@ def _make_integrator(spec: IntegratorSpec, atoms: Atoms,
     return VelocityVerletAdapter(atoms, spec)
 
 
+def _boundary_from_event(row: object, step_event: dict,
+                         commit: dict | None) -> CommittedStepState:
+    """Rebuild the boundary state a persisted step event claims to bind.
+
+    Reconstruction sources the authoritative committed row for the arrays,
+    the row's route for the driving source, and the evaluation commit for
+    the model identity; the step event itself contributes the step number,
+    physical time, integrator block and thermostat stream.  The digest of
+    this state is what both the normal step commit and the crash-healing
+    commit write, and what resume verifies (S0b).
+    """
+    atoms = row.toatoms()
+    context = (commit or {}).get("context") or {}
+    route = row.key_value_pairs.get("route")
+    return CommittedStepState(
+        step=int(step_event["step_id"]),
+        physical_time_fs=float(step_event["physical_time_fs"]),
+        positions=np.asarray(atoms.positions, dtype=float),
+        momenta=np.asarray(atoms.get_momenta(), dtype=float),
+        driving_source=("reference" if route == "dft" else "surrogate"),
+        model_id=str(context.get("model_id", "")),
+        spec=IntegratorSpec(**dict(step_event["integrator"])),
+        nsteps=int(step_event["step_id"]) + 1,
+        thermostat_rng=step_event.get("thermostat_rng"))
+
+
 def _label_from_row(row: object, section: str) -> object | None:
     """Rebuild the boundary label object from a committed store row.
 
@@ -678,6 +706,10 @@ class _PlainDriver:
                 step_payload = {"run_id": self.run_id, "step_id": step - 1,
                                 "physical_time_fs": step * self.config.dynamics.timestep_fs,
                                 "integrator": self.spec.as_dict(),
+                                # format marker (S0b): records without it are
+                                # verified by their recognizable older
+                                # semantics, never silently skipped
+                                "digest_format": DIGEST_FORMAT,
                                 # array-level digest: verified against the
                                 # authoritative row on resume (R3)
                                 "state_digest": state_digest(
@@ -1297,16 +1329,21 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                                   ["evaluation_id"]) == heal_id)
             # The step commit names the full boundary state of the authoritative
             # row; its bath stream comes from the evaluation commit.  Resume
-            # re-emits it idempotently instead of recomputing the step.
+            # re-emits it idempotently instead of recomputing the step.  The
+            # payload is field-identical to a normal step commit (S0b),
+            # including the boundary digest over the bath stream.
             heal_payload = {"run_id": config.run.id, "step_id": current,
                             "physical_time_fs": (current + 1)
                             * config.dynamics.timestep_fs,
                             "integrator": spec.as_dict(),
+                            "digest_format": DIGEST_FORMAT,
                             "state_digest": state_digest(
                                 heal_row.toatoms().positions,
                                 heal_row.toatoms().get_momenta())}
             if commit.get("thermostat_rng") is not None:
                 heal_payload["thermostat_rng"] = commit["thermostat_rng"]
+            heal_payload["boundary_digest"] = _boundary_from_event(
+                heal_row, heal_payload, commit).digest()
             event_log.append_once(f"step:{config.run.id}:{current}",
                                   STEP_COMPLETED, heal_payload)
             current += 1
@@ -1318,7 +1355,8 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
         # The boundary is the last committed evaluation's row — never an orphan
         # and never a recomputed state (C1/R3).  NVT additionally restores the
         # bath stream from that commit; a step boundary digest, when present,
-        # is verified against the row before use.
+        # is verified against the row before use, by the semantics of the
+        # format that wrote it (S0b).
         if current >= 1:
             row = store.committed_row(event_log, config.run.id, current)
             atoms = row.toatoms()
@@ -1327,12 +1365,53 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                                   if e.get("type") == STEP_COMPLETED
                                   and int(e["step_id"]) == current - 1), None)
             if boundary_step is not None and boundary_step.get("state_digest"):
-                actual = state_digest(atoms.positions, atoms.get_momenta())
-                if actual != boundary_step["state_digest"]:
+                commit = next(
+                    (e for e in reversed(events)
+                     if e.get("type") == EVALUATION_COMMITTED
+                     and int((e.get("context") or {})
+                             ["evaluation_id"]) == current), None)
+                boundary = _boundary_from_event(row, boundary_step, commit)
+                digest_format = boundary_step.get("digest_format")
+                if digest_format == DIGEST_FORMAT:
+                    # boundary-v2: the array digest binds the row's
+                    # positions/momenta; the boundary digest binds the
+                    # complete reconstructed state, bath stream included.
+                    mismatches = []
+                    actual = state_digest(atoms.positions, atoms.get_momenta())
+                    if actual != boundary_step["state_digest"]:
+                        mismatches.append(
+                            f"state digest ({boundary_step['state_digest']} "
+                            f"vs {actual})")
+                    actual = boundary.digest()
+                    if actual != boundary_step.get("boundary_digest"):
+                        mismatches.append(
+                            f"boundary digest "
+                            f"({boundary_step.get('boundary_digest')} vs "
+                            f"{actual})")
+                elif digest_format is None:
+                    # The previous development batch: the single digest is
+                    # the complete-boundary JSON identity without the bath
+                    # stream; rebuild and verify it under that semantics —
+                    # old records are verified, never rewritten.
+                    mismatches = []
+                    actual = boundary.legacy_digest()
+                    if actual != boundary_step["state_digest"]:
+                        mismatches.append(
+                            f"legacy boundary digest "
+                            f"({boundary_step['state_digest']} vs {actual})")
+                else:
                     raise WorkflowError(
-                        f"the step-{current - 1} boundary digest does not match "
-                        f"the committed row ({boundary_step['state_digest']} vs "
-                        f"{actual}); the run directory is inconsistent")
+                        f"the step-{current - 1} record claims an unknown "
+                        f"digest format {digest_format!r}; the run directory "
+                        "is inconsistent")
+                if mismatches:
+                    raise WorkflowError(
+                        f"the step-{current - 1} boundary does not match the "
+                        f"committed row ({'; '.join(mismatches)}); the run "
+                        "directory is inconsistent")
+            # A boundary with no step summary at all is a 0.4.x record: the
+            # committed-row binding above (row id + row digest) is the only
+            # verification that format carries.
         else:
             atoms = Atoms(numbers=np.array(arrays["numbers"]),
                           positions=np.array(arrays["positions"], dtype=float),
