@@ -44,6 +44,7 @@ from typing import ClassVar
 import numpy as np
 from ase import Atoms, units
 from ase.calculators.calculator import Calculator, all_changes
+from ase.md.langevin import Langevin
 from ase.md.velocitydistribution import thermalize_momenta
 from ase.md.verlet import VelocityVerlet
 
@@ -67,7 +68,14 @@ from pyraimd2.loop.constraints import (
     FixAtomsProjection,
     validate_constraints,
 )
-from pyraimd2.loop.integrators import IntegratorSpec, state_digest
+from pyraimd2.loop.integrators import (
+    DIGEST_FORMAT,
+    STREAM_SCHEME,
+    CommittedStepState,
+    IntegratorSpec,
+    derive_stream_seed,
+    state_digest,
+)
 from pyraimd2.runtime import (
     EvaluationContext,
     EvaluationPhase,
@@ -194,6 +202,11 @@ class _Pending:
     label_id: str | None = None
     label_task_id: str | None = None
     label_attempt: int = 0
+    # NVT: the bath stream state before this step's draws (rng_before) —
+    # the realized increments stay with the dynamics and are committed
+    # verbatim; a rebuilt pending re-derives them from rng_before through
+    # ASE itself, never through a fresh draw (M3A-3).
+    bath_step: dict | None = None
     # (segment, n_calibrations) frozen by a recalibration that ran before an
     # uncommitted proposal; applied when the rebuilt evaluation commits (C4).
     restored_counters: tuple[int, int] | None = None
@@ -355,6 +368,7 @@ class EnergeticCalculator(Calculator):
         event_log: EventLog | None = None,
         label_cache: bool = True,
         force_metric: str = "active_dofs_max_atom",
+        integrator_spec: IntegratorSpec | dict | None = None,
         _resume_state: dict | None = None,
     ) -> None:
         super().__init__()
@@ -395,12 +409,26 @@ class EnergeticCalculator(Calculator):
         )
         self._engine_fingerprint = fingerprint_of(engine)
         self.direction, self.on_label = direction, on_label
-        self._integrator_spec = IntegratorSpec(
-            algorithm="velocity_verlet", ensemble="nve",
-            timestep_fs=float(timestep_fs))
+        if integrator_spec is None:
+            integrator_spec = IntegratorSpec(
+                algorithm="velocity_verlet", ensemble="nve",
+                timestep_fs=float(timestep_fs))
+        elif isinstance(integrator_spec, dict):
+            integrator_spec = IntegratorSpec(**dict(integrator_spec))
+        if integrator_spec.timestep_fs != float(timestep_fs):
+            raise ValueError("the integrator spec's timestep must match "
+                             "timestep_fs")
+        self._integrator_spec = integrator_spec
         self.check_probability, self.check_seed = float(check_probability), int(check_seed)
         self.failure_probability, self.tilt = float(failure_probability), float(tilt)
-        self._rng = np.random.default_rng(check_seed)
+        # The check stream's effective seed (M3A-4): adaptive NVT derives it
+        # by role so the check, bath and velocity streams never share a
+        # generator, even when all seed fields are equal; historical NVE
+        # behavior (the raw seed) is unchanged.
+        self._check_seed_effective = (
+            derive_stream_seed(self.check_seed, "verification")
+            if self._integrator_spec.ensemble == "nvt" else self.check_seed)
+        self._rng = np.random.default_rng(self._check_seed_effective)
         self.verification = (IndependentCheckBound(check_probability, failure_probability, tilt)
                              if check_probability > 0 else None)
         self.step = -1
@@ -424,6 +452,16 @@ class EnergeticCalculator(Calculator):
         # Set once the integrator schedules its first evaluation: afterwards
         # unscheduled property requests are re-reads of committed facts.
         self._integrator_owned = False
+        # Bath wiring for adaptive NVT (M3A-2/3): the runner points
+        # ``_bath_dyn`` at the Langevin dynamics so commits can pin the
+        # thermostat stream and the realized per-step increments;
+        # ``_bath_step`` carries the pre-draw RNG state of the in-flight
+        # step from the integrator to the proposal record.
+        self._bath_dyn: object | None = None
+        self._bath_step: dict | None = None
+        self._last_committed_route: str | None = None
+        self._last_committed_segment: int | None = None
+        self._last_committed_model_id: str | None = None
         # WP02 run records: authoritative event log (optional — direct legacy
         # use stays event-free), task/label ID counters, and the numeric
         # label cache (§5.4; disabled unless the reference declares a
@@ -446,6 +484,17 @@ class EnergeticCalculator(Calculator):
                        reference_id=self._engine_fingerprint,
                        model_id=self.model_id,
                        surrogate_fingerprint=fingerprint_of(self.surrogate),
+                       # The effective random-stream identities (M3A-4): NVT
+                       # derives all three by role (role-derive-v1); NVE
+                       # keeps the historical raw-seed check stream.
+                       streams=({
+                           "scheme": STREAM_SCHEME,
+                           "thermostat_seed": self._integrator_spec.thermostat_seed,
+                           "check_seed": self._check_seed_effective,
+                       } if self._integrator_spec.ensemble == "nvt" else {
+                           "scheme": None,
+                           "check_seed": self.check_seed,
+                       }),
                        policy={"force_budget_eV_A": self.force_budget,
                                "timestep_fs": self.timestep_fs,
                                "probe_steps_A": self.probe_steps.tolist(),
@@ -455,7 +504,8 @@ class EnergeticCalculator(Calculator):
                                "check_probability": self.check_probability,
                                "check_seed": self.check_seed,
                                "failure_probability": failure_probability,
-                               "tilt": tilt})
+                               "tilt": tilt,
+                               "integrator": self._integrator_spec.as_dict()})
         else:
             self._apply_checkpoint_state(_resume_state["state"],
                                          _resume_state["arrays"])
@@ -533,7 +583,8 @@ class EnergeticCalculator(Calculator):
                 "check_seed": self.check_seed,
                 "failure_probability": self.failure_probability,
                 "tilt": self.tilt,
-                "force_metric": self.force_metric}
+                "force_metric": self.force_metric,
+                "integrator_spec": self._integrator_spec.as_dict()}
 
     def _checkpoint_payload(self, boundary_atoms: Atoms) -> tuple[dict, dict]:
         """Complete-step state for ``CheckpointManager.write``.
@@ -562,6 +613,12 @@ class EnergeticCalculator(Calculator):
             "verification": (None if self.verification is None
                              else self.verification.as_dict()),
             "check_rng": rng_state_to_json(self._rng.bit_generator.state),
+            # The bath stream at this boundary (NVT): the runner wires the
+            # Langevin dynamics in; resume restores it verbatim, never
+            # re-seeds.  NVE checkpoints carry None (no bath exists).
+            "thermostat": (None if self._bath_dyn is None
+                           else {"rng": rng_state_to_json(
+                               self._bath_dyn.rng.bit_generator.state)}),
             "policy": self._policy_dict(),
             "driving_energy_eV": (None if not self.results
                                   else float(self.results["energy"])),
@@ -651,7 +708,7 @@ class EnergeticCalculator(Calculator):
             object.__setattr__(bound, "accepted_count", int(recorded["accepted_count"]))
             object.__setattr__(bound, "detected_count", int(recorded["detected_count"]))
             self.verification = bound
-        self._rng = np.random.default_rng(self.check_seed)
+        self._rng = np.random.default_rng(self._check_seed_effective)
         self._rng.bit_generator.state = state["check_rng"]
         self._anchor = (_anchor_from_record(state["anchor"])
                         if state["anchor"] is not None else None)
@@ -880,6 +937,7 @@ class EnergeticCalculator(Calculator):
             # consumed draw; without it the next fresh draw repeats the
             # persisted one (F01).
             self._rng.bit_generator.state = proposal["check_rng_after"]
+        bath_step = proposal.get("bath_step")
         return _Pending(
             atoms, int(context.evaluation_id), prediction, anchor,
             bool(proposal["accepted"]), proposal["reason"],
@@ -893,6 +951,7 @@ class EnergeticCalculator(Calculator):
             dict(proposal["calls_before"]),
             context=context,
             model_generation=int(proposal["model_generation"]),
+            bath_step=None if bath_step is None else dict(bath_step),
             restored_counters=pending_counters)
 
     def _check_identity(self, atoms: Atoms) -> None:
@@ -932,7 +991,7 @@ class EnergeticCalculator(Calculator):
         if self._expected_positions is not None and not np.allclose(
             atoms.positions, self._expected_positions, rtol=1e-12, atol=1e-12
         ):
-            raise ValueError("positions do not match the scheduled unwrapped Verlet step")
+            raise ValueError("positions do not match the scheduled integrator step")
 
     def get_property(self, name, atoms: Atoms | None = None, allow_calculation: bool = True):
         # A committed evaluation's cached results are valid only for the model
@@ -1055,7 +1114,26 @@ class EnergeticCalculator(Calculator):
         return label, label_id
 
     def _directions(self, atoms: Atoms) -> np.ndarray | None:
-        raw = atoms.get_velocities() if self.direction is None else self.direction(atoms.copy())
+        """Probe direction(s) for calibration.
+
+        NVE keeps the historical default (``atoms.velocities``).  For NVT
+        the force evaluation happens mid-step: the Atoms momenta are the
+        *previous* boundary momenta then, not ASE's internal instantaneous
+        velocity (that lives on the dynamics object), so the defined
+        default is the realized displacement of the step that produced
+        this configuration — random increment included, transverse
+        component and all.  Unavailable (no committed boundary yet) or
+        exactly zero displacements defer calibration to the existing safe
+        fallback (reference route, reason recorded).
+        """
+        if self.direction is not None:
+            raw = self.direction(atoms.copy())
+        elif self._integrator_spec.ensemble == "nvt":
+            if self._last_committed_positions is None:
+                return None
+            raw = atoms.positions - self._last_committed_positions
+        else:
+            raw = atoms.get_velocities()
         if raw is None:
             return None
         directions = np.array(raw, dtype=float, copy=True)
@@ -1250,11 +1328,19 @@ class EnergeticCalculator(Calculator):
                   anchor.prediction.energy) if accepted else None
         draw = float(self._rng.random()) if accepted and self.check_probability > 0 else None
         checked = draw is not None and draw < self.check_probability
+        bath_step = None
+        if (self._bath_step is not None
+                and self._bath_step["evaluation_id"] == index):
+            # The integrator pinned the pre-draw bath state for this step;
+            # the proposal record carries it so a rebuilt pending resumes
+            # the identical stochastic step (M3A-3).
+            bath_step = {"rng_before": self._bath_step["rng_before"]}
         return _Pending(atoms.copy(), index, prediction, anchor, accepted, reason,
                         forecasts, selected, open_prefix, energy, forces, checked, draw,
                         self._evaluation_calls_before.copy(),
                         context=self._context_for(index),
-                        model_generation=self._model_generation)
+                        model_generation=self._model_generation,
+                        bath_step=bath_step)
 
     def _constraint_record(self, pending: _Pending) -> dict | None:
         """Raw physical forces, the projected driving force and the actual
@@ -1428,6 +1514,30 @@ class EnergeticCalculator(Calculator):
         }
         if pending.index == 0:
             committed_payload["input_hash"] = atoms_input_hash(pending.atoms)
+        if (self._integrator_spec.algorithm == "langevin"
+                and self._bath_dyn is not None):
+            # The commit pins the bath stream at this evaluation (post-draw
+            # for a step evaluation, the seeded state for the initial one);
+            # a step evaluation additionally records the realized random
+            # increments verbatim — the strict completion key for the
+            # boundary, so resume never re-draws them (M3A-3).  Units are
+            # ASE-internal (ase.md.langevin rnd_pos/rnd_vel), consumed only
+            # by the matching completion formula.
+            committed_payload["thermostat_rng"] = rng_state_to_json(
+                self._bath_dyn.rng.bit_generator.state)
+            if pending.bath_step is not None:
+                committed_payload["bath_step"] = {
+                    "rnd_pos": np.asarray(self._bath_dyn.rnd_pos,
+                                          dtype=float).tolist(),
+                    "rnd_vel": np.asarray(self._bath_dyn.rnd_vel,
+                                          dtype=float).tolist()}
+        self._last_committed_route = committed_payload["route"]
+        self._last_committed_segment = committed_payload["segment_id"]
+        # The driving model identity of this evaluation — a label callback
+        # below may advance the generation within the same MD step, so the
+        # step record must bind the commit's frozen identity, not the live
+        # one.
+        self._last_committed_model_id = committed_payload["model_id"]
         self._emit_once(f"evaluation:{self.run_id}:{pending.index}",
                         EVALUATION_COMMITTED, **committed_payload)
         if pending.restored_counters is not None:
@@ -1569,6 +1679,16 @@ class EnergeticCalculator(Calculator):
         # ASE may still have the preceding geometry's successful values.
         self.results = {}
         self._validate_atoms(self.atoms)
+        if (self._scheduled_index is not None
+                and self._expected_positions is None
+                and self._integrator_spec.algorithm == "langevin"):
+            # NVT hook (M3A-2): the schedule fixed the evaluation index and
+            # physical time before the step; the configuration itself is
+            # adopted here, at evaluation time — ASE finalizes positions
+            # (random increments and FixAtoms applied) before requesting
+            # forces, so the forecast and the commit see exactly the
+            # configuration that propagates.
+            self._expected_positions = self.atoms.positions.copy()
         index = self.n_evaluations if self._scheduled_index is None else self._scheduled_index
         if index != self.n_evaluations:
             raise ValueError("evaluation clock is not consecutive; do not modify a stored MD state")
@@ -1602,6 +1722,11 @@ class EnergeticCalculator(Calculator):
                                     else self._pending.forces.tolist()),
                 open_prefix=[bool(v) for v in self._pending.open_prefix],
                 selected_direction=self._pending.selected_direction,
+                # NVT pending record: the pre-draw bath state of this step
+                # (M3A-3).  The realized increments stay on the dynamics and
+                # enter the commit; rng_before is the strict rebuild key.
+                bath_step=(None if self._pending.bath_step is None else
+                           dict(self._pending.bath_step)),
                 calls_before=dict(self._pending.calls_before),
                 model_generation=self._pending.model_generation,
                 anchor_record=self._anchor_record(self._pending.anchor),
@@ -1757,20 +1882,117 @@ class _EnergeticVerlet(VelocityVerlet):
         result = super().step(forces)
         # The full-step boundary is now complete: ASE promoted the half-step
         # momenta inside step().  Commit the step with the integrator
-        # identity and the boundary content digest bound (M1) — the digest
-        # covers exactly the state resume later reconstructs.
+        # identity and the complete boundary bound (M1, S0b): the v2 digest
+        # covers exactly the state resume later reconstructs and verifies.
+        boundary = CommittedStepState(
+            step=self.nsteps,
+            physical_time_fs=(self.nsteps + 1) * calc.timestep_fs,
+            positions=atoms.positions.copy(),
+            momenta=atoms.get_momenta().copy(),
+            driving_source=("surrogate" if calc._last_committed_route == "ml"
+                            else "reference"),
+            model_id=str(calc._last_committed_model_id),
+            spec=calc._integrator_spec,
+            nsteps=self.nsteps + 1)
         calc._emit_once(
             f"step:{calc.run_id}:{self.nsteps}", STEP_COMPLETED,
             step_id=self.nsteps,
             physical_time_fs=(self.nsteps + 1) * calc.timestep_fs,
             integrator=calc._integrator_spec.as_dict(),
+            digest_format=DIGEST_FORMAT,
             state_digest=state_digest(atoms.positions,
-                                      atoms.get_momenta()))
+                                      atoms.get_momenta()),
+            boundary_digest=boundary.digest(),
+            segment_id=calc._last_committed_segment,
+            model_id=calc._last_committed_model_id)
         return result
 
 
+class _EnergeticLangevin(Langevin):
+    """ASE Langevin (fixcm=False) behind the complete-boundary contract.
+
+    ASE finalizes the new configuration — both bath draws, the drift and
+    FixAtoms — before requesting forces, so the schedule fixes only the
+    deterministic clock (evaluation index, physical time) before the step,
+    and the calculator adopts the actual positions at evaluation time:
+    forecast, proposal record and commit all see exactly the configuration
+    that propagates (M3A-2).  The bath draws happen once per step, inside
+    ASE; no decision path (refusal, probe, check, re-anchor, logging or
+    retry) ever draws again.
+    """
+
+    def step(self, forces=None):
+        atoms = self.atoms
+        calc = atoms.calc
+        if forces is None:
+            forces = atoms.get_forces(md=True)
+        # Pin the pre-draw bath state of this step: a pending record rebuilt
+        # after a crash restores it and ASE re-draws the identical
+        # increments — never a fresh draw on resume (M3A-3).
+        calc._bath_step = {"evaluation_id": self.nsteps + 1,
+                           "rng_before": rng_state_to_json(
+                               self.rng.bit_generator.state)}
+        calc._schedule(self.nsteps + 1, None,
+                       physical_time_fs=(self.nsteps + 1) * calc.timestep_fs)
+        result = super().step(forces)
+        # Langevin momenta are complete at the boundary (no half-kick
+        # applies).  The step commit binds the full stochastic state:
+        # positions, complete momenta, bath stream, driving label, anchor
+        # segment and model identity (M3A-3).
+        if not np.array_equal(atoms.positions, calc._expected_positions):
+            raise RuntimeError(
+                "the completed Langevin boundary differs from the "
+                "configuration the force evaluation saw")
+        boundary = CommittedStepState(
+            step=self.nsteps,
+            physical_time_fs=(self.nsteps + 1) * calc.timestep_fs,
+            positions=atoms.positions.copy(),
+            momenta=atoms.get_momenta().copy(),
+            driving_source=("surrogate" if calc._last_committed_route == "ml"
+                            else "reference"),
+            model_id=str(calc._last_committed_model_id),
+            spec=calc._integrator_spec,
+            nsteps=self.nsteps + 1,
+            thermostat_rng=dict(self.rng.bit_generator.state))
+        calc._emit_once(
+            f"step:{calc.run_id}:{self.nsteps}", STEP_COMPLETED,
+            step_id=self.nsteps,
+            physical_time_fs=(self.nsteps + 1) * calc.timestep_fs,
+            integrator=calc._integrator_spec.as_dict(),
+            digest_format=DIGEST_FORMAT,
+            state_digest=state_digest(atoms.positions,
+                                      atoms.get_momenta()),
+            boundary_digest=boundary.digest(),
+            thermostat_rng=boundary.thermostat_rng,
+            segment_id=calc._last_committed_segment,
+            model_id=calc._last_committed_model_id)
+        return result
+
+    def complete_momenta(self, boundary_positions: np.ndarray,
+                         committed_positions: np.ndarray,
+                         rnd_pos: np.ndarray, rnd_vel: np.ndarray,
+                         driving_forces: np.ndarray,
+                         projection: FixAtomsProjection | None) -> np.ndarray:
+        """The exact post-force update of ASE 3.29.0 ``Langevin.step``
+        (``v = (x_new - x_old - rnd_pos)/dt``; ``v += c1*f/m - c2*v +
+        rnd_vel``; momenta ``v*m``), applied to a committed step's recorded
+        increments — the strict boundary completion for resume, never a
+        recomputation.  The association order matches the upstream source
+        bit-for-bit; FixAtoms zeroes the fixed momenta exactly as
+        ``set_momenta`` does."""
+        v_mid = (np.asarray(committed_positions, dtype=float)
+                 - np.asarray(boundary_positions, dtype=float)
+                 - np.asarray(rnd_pos, dtype=float)) / self.dt
+        momenta = (v_mid + (self.c1 * np.asarray(driving_forces, dtype=float)
+                            / self.masses - self.c2 * v_mid
+                            + np.asarray(rnd_vel, dtype=float))) * self.masses
+        if projection is not None:
+            momenta = projection.project_displacement(momenta)
+        return momenta
+
+
 class EnergeticRunner:
-    """Fixed-cell NVE with energetic force-error prediction and reference checks.
+    """Fixed-cell NVE/NVT with energetic force-error prediction and reference checks.
 
     Existing momenta are preserved. If missing, a seeded thermal distribution
     at ``temperature_K`` initializes them once. Force-call costs count every
@@ -1801,6 +2023,7 @@ class EnergeticRunner:
         direction: Direction | None = None, on_label: LabelCallback | None = None,
         temperature_K: float = 300.0, velocity_seed: int = 0,
         force_metric: str = "active_dofs_max_atom",
+        integrator_spec: IntegratorSpec | None = None,
         event_log: EventLog | None = None, label_cache: bool = True,
         run_dir: str | Path | None = None, checkpoint_interval_steps: int | None = None,
         handle_sigint: bool = False,
@@ -1811,6 +2034,16 @@ class EnergeticRunner:
                 or not isinstance(checkpoint_interval_steps, (int, np.integer))
                 or checkpoint_interval_steps < 1):
             raise ValueError("checkpoint_interval_steps must be a positive integer")
+        if integrator_spec is None:
+            integrator_spec = IntegratorSpec(
+                algorithm="velocity_verlet", ensemble="nve",
+                timestep_fs=float(timestep_fs))
+        elif isinstance(integrator_spec, dict):
+            # resume/fork restore the spec from the checkpoint's policy
+            integrator_spec = IntegratorSpec(**dict(integrator_spec))
+        if integrator_spec.timestep_fs != float(timestep_fs):
+            raise ValueError("the integrator spec's timestep must match "
+                             "timestep_fs")
         self.calc = EnergeticCalculator(
             surrogate, engine, store, run_id, force_budget=force_budget, timestep_fs=timestep_fs,
             probe_steps=probe_steps, numerical_floor=numerical_floor, time_cap_fs=time_cap_fs,
@@ -1818,15 +2051,30 @@ class EnergeticRunner:
             check_seed=check_seed, failure_probability=failure_probability, tilt=tilt,
             direction=direction, on_label=on_label, event_log=event_log,
             label_cache=label_cache, force_metric=force_metric,
+            integrator_spec=integrator_spec,
         )
         self.calc._validate_atoms(atoms)
         if "momenta" not in atoms.arrays:
-            thermalize_momenta(atoms, temperature_K, rng=np.random.default_rng(velocity_seed))
+            # NVT derives the initialization stream by role so it never
+            # shares a generator with the bath (same convention as the
+            # plain driver); NVE keeps the historical raw seed.
+            init_seed = (derive_stream_seed(velocity_seed, "velocity")
+                         if integrator_spec.ensemble == "nvt" else velocity_seed)
+            thermalize_momenta(atoms, temperature_K, rng=np.random.default_rng(init_seed))
         self.atoms = atoms
         self.timestep_fs = self.calc.timestep_fs
         atoms.calc = self.calc
         self.calc._schedule(0)
-        self.dyn = _EnergeticVerlet(atoms, self.timestep_fs * units.fs)
+        if integrator_spec.algorithm == "langevin":
+            self.dyn = _EnergeticLangevin(
+                atoms, self.timestep_fs * units.fs,
+                temperature_K=integrator_spec.temperature_K,
+                friction=integrator_spec.friction_per_fs / units.fs,
+                fixcm=False,
+                rng=np.random.default_rng(integrator_spec.thermostat_seed))
+            self.calc._bath_dyn = self.dyn
+        else:
+            self.dyn = _EnergeticVerlet(atoms, self.timestep_fs * units.fs)
         self._failed = False
         self._stop_requested = False
         self.run_dir = None if run_dir is None else Path(run_dir)
@@ -2045,42 +2293,149 @@ class EnergeticRunner:
         atoms.set_momenta(np.array(arrays["momenta"], dtype=float))
         timestep_ase = calc.timestep_fs * units.fs
         last_eval = calc.n_evaluations - 1
+        spec = calc._integrator_spec
         driving_energy = state["driving_energy_eV"]
         driving_forces = (np.array(arrays["driving_forces"], dtype=float)
                           if driving_energy is not None else None)
+        boundary_row = None
+        boundary_commit = None
         if last_eval >= 1:
-            row = store.committed_row(event_log, run_id, last_eval)
-            atoms.positions = row.toatoms().positions
+            boundary_row = store.committed_row(event_log, run_id, last_eval)
+            atoms.positions = boundary_row.toatoms().positions
             # Positions, driving forces and the boundary momenta all come
             # from the same verified committed row — an orphan row at the
             # same step is never read (C1).
-            driving_energy, driving_forces = store.driving_label_for_row(row)
-            # ASE's velocity-Verlet kick adds 0.5*dt*F to the momenta (no
-            # mass division — momenta, not velocities); the drift divides.
-            full_step = (row.toatoms().get_momenta()
-                         + 0.5 * timestep_ase * driving_forces)
-            atoms.set_momenta(full_step)
+            driving_energy, driving_forces = store.driving_label_for_row(
+                boundary_row)
+            boundary_commit = next(
+                (e for e in reversed(events)
+                 if e.get("type") == EVALUATION_COMMITTED
+                 and int((e.get("context") or {})
+                         .get("evaluation_id", -1)) == last_eval), None)
+            if spec.algorithm == "velocity_verlet":
+                # ASE's velocity-Verlet kick adds 0.5*dt*F to the momenta (no
+                # mass division — momenta, not velocities); the drift divides.
+                full_step = (boundary_row.toatoms().get_momenta()
+                             + 0.5 * timestep_ase * driving_forces)
+                atoms.set_momenta(full_step)
+            # The Langevin boundary momenta are completed below, once the
+            # dynamics (and with it c1/c2 and the masses layout) exists.
         runner.atoms = atoms
         runner.timestep_fs = calc.timestep_fs
+        if spec.algorithm == "langevin":
+            # Restore the bath stream — checkpoint state first, then the
+            # newest post-cursor commit's pinned state, then the pending
+            # proposal's pre-draw state — so the resume never re-seeds and
+            # never re-draws a committed step (M3A-3/M3A-4).
+            thermostat = (state.get("thermostat") or {}).get("rng")
+            if thermostat is None:
+                raise ResumeError(
+                    "the checkpoint of this adaptive NVT run carries no "
+                    "thermostat stream; the run directory predates the "
+                    "complete-state protocol — fork instead of resume")
+            for event in events:
+                if (int(event.get("seq", 0)) > cursor
+                        and event.get("type") == EVALUATION_COMMITTED
+                        and event.get("thermostat_rng") is not None):
+                    thermostat = event["thermostat_rng"]
+            if tail is not None and tail.get("bath_step") is not None:
+                thermostat = tail["bath_step"]["rng_before"]
+            bath_rng = np.random.default_rng()
+            bath_rng.bit_generator.state = thermostat
+            runner.dyn = _EnergeticLangevin(
+                atoms, timestep_ase, temperature_K=spec.temperature_K,
+                friction=spec.friction_per_fs / units.fs, fixcm=False,
+                rng=bath_rng)
+            calc._bath_dyn = runner.dyn
+            if last_eval >= 1:
+                bath = (boundary_commit or {}).get("bath_step")
+                if bath is None:
+                    raise ResumeError(
+                        f"the committed evaluation {last_eval} has no "
+                        "recorded bath increments; the stochastic boundary "
+                        "cannot be reconstructed exactly — the run directory "
+                        "predates the complete-state protocol")
+                previous = store.committed_row(
+                    event_log, run_id, last_eval - 1).toatoms().positions
+                atoms.set_momenta(runner.dyn.complete_momenta(
+                    previous, atoms.positions,
+                    np.array(bath["rnd_pos"], dtype=float),
+                    np.array(bath["rnd_vel"], dtype=float),
+                    driving_forces, calc._projection))
+        else:
+            runner.dyn = _EnergeticVerlet(atoms, runner.timestep_fs * units.fs)
         atoms.calc = calc
         calc.atoms = atoms.copy()
-        runner.dyn = _EnergeticVerlet(atoms, runner.timestep_fs * units.fs)
+        calc._last_committed_positions = atoms.positions.copy()
+        # The step record of the first post-resume step binds the identity
+        # of the newest commit — replay restored the counters, and these
+        # fields come from the same authoritative event.
+        newest_commit = next(
+            (e for e in reversed(events)
+             if e.get("type") == EVALUATION_COMMITTED), None)
+        if newest_commit is not None:
+            calc._last_committed_route = newest_commit.get("route")
+            calc._last_committed_segment = newest_commit.get("segment_id")
+            calc._last_committed_model_id = newest_commit.get("model_id")
         runner.dyn.nsteps = max(last_eval, 0)
+        if last_eval >= 1 and boundary_commit is not None:
+            # Verify the reconstructed boundary against its step record when
+            # one carries the versioned format (S0b/M3A-3).  Older adaptive
+            # records predate the format marker; their binding is the
+            # commit's row digest, already verified by committed_row.
+            step_event = next(
+                (e for e in reversed(events)
+                 if e.get("type") == STEP_COMPLETED
+                 and int(e.get("step_id", -1)) == last_eval - 1), None)
+            if (step_event is not None
+                    and step_event.get("digest_format") == DIGEST_FORMAT):
+                boundary = CommittedStepState(
+                    step=last_eval - 1,
+                    physical_time_fs=last_eval * calc.timestep_fs,
+                    positions=atoms.positions.copy(),
+                    momenta=atoms.get_momenta().copy(),
+                    driving_source=("surrogate"
+                                    if boundary_commit.get("route") == "ml"
+                                    else "reference"),
+                    model_id=str(boundary_commit.get("model_id", "")),
+                    spec=spec, nsteps=last_eval,
+                    thermostat_rng=boundary_commit.get("thermostat_rng"))
+                problems = []
+                if state_digest(atoms.positions, atoms.get_momenta()) \
+                        != step_event.get("state_digest"):
+                    problems.append("state digest")
+                if boundary.digest() != step_event.get("boundary_digest"):
+                    problems.append("boundary digest")
+                if step_event.get("segment_id") != boundary_commit.get(
+                        "segment_id"):
+                    problems.append("anchor segment")
+                if step_event.get("model_id") != boundary_commit.get(
+                        "model_id"):
+                    problems.append("model identity")
+                if problems:
+                    raise ResumeError(
+                        f"the step-{last_eval - 1} record does not match the "
+                        f"reconstructed boundary ({'; '.join(problems)}); "
+                        "the run directory is inconsistent")
         if tail is not None:
-            # Resume the uncommitted frozen proposal mid-step: the integrator
-            # redoes exactly one first half-kick and drift, landing on the
-            # persisted positions bit-identically.
             eval_id = int(tail["context"]["evaluation_id"])
             if eval_id != calc.n_evaluations:
                 raise ResumeError(
                     f"uncommitted proposal {eval_id} does not follow the "
                     f"replayed state {calc.n_evaluations}")
             positions = np.array(tail["positions_A"], dtype=float)
-            half_step = (atoms.get_momenta()
-                         + 0.5 * timestep_ase * driving_forces)
             pending_atoms = atoms.copy()
             pending_atoms.positions = positions.copy()
-            pending_atoms.set_momenta(half_step)
+            if spec.algorithm == "velocity_verlet":
+                # The integrator redoes exactly one first half-kick and
+                # drift, landing on the persisted positions bit-identically.
+                half_step = (atoms.get_momenta()
+                             + 0.5 * timestep_ase * driving_forces)
+                pending_atoms.set_momenta(half_step)
+            # Langevin: the atoms still carry the boundary momenta at the
+            # force evaluation (ASE updates momenta only at step end), and
+            # the restored bath stream re-draws the identical increments —
+            # the step itself lands on the persisted positions.
             calc._pending = calc._rebuild_pending(tail, pending_atoms)
             calc._schedule(eval_id, positions,
                            physical_time_fs=eval_id * calc.timestep_fs)

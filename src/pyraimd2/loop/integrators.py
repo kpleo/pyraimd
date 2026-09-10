@@ -17,6 +17,12 @@ exports consume (M1).  Two adapters exist: :class:`VelocityVerletAdapter`
   before and after the step's draws (never a fresh draw on resume), the
   configuration to evaluate, and the evaluation/update identities.
 
+The named random streams are derived from the run seeds by fixed role
+codes ("role-derive-v1"): ``velocity`` (1) initializes momenta once,
+``thermostat`` (2) drives the Langevin bath, ``verification`` (3) draws
+the adaptive mode's independent-check Bernoulli sequence.  Roles never
+share a generator, even when the user seeds them identically.
+
 Each adapter creates/advances one step, exports the committed-step state,
 restores it, and hands the integrator the configuration to evaluate.
 Velocity Verlet completes mid-step momenta with its exact second
@@ -49,7 +55,7 @@ __all__ = [
 # seeds are deterministic across processes (unlike Python's salted hash),
 # and two roles never share a generator even at the same user seed.
 STREAM_SCHEME = "role-derive-v1"
-_ROLE_CODES = {"velocity": 1, "thermostat": 2}
+_ROLE_CODES = {"velocity": 1, "thermostat": 2, "verification": 3}
 
 # Persisted step-summary format emitted by the current code.  0.4.x runs
 # recorded no step summary at all; the previous batch persisted only the
