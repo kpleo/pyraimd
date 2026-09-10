@@ -384,3 +384,319 @@ def test_a_zero_displacement_falls_back_safely(tmp_path):
         if event["type"] == "step_completed":
             assert event["digest_format"] == "boundary-v2"
             assert event["boundary_digest"]
+
+
+# --- B. analytic residual: decisions and residual work -----------------------
+
+_B_CENTER = np.array([R0, R0, R0])
+_B_K_REF = np.array([1.0, 1.62, 0.4])
+_B_K_BASE = np.array([1.0, 1.5, 0.4])
+
+
+def _aniso_energy(k3, positions):
+    dr = np.asarray(positions, dtype=float) - _B_CENTER
+    return 0.5 * float((k3 * dr**2).sum())
+
+
+def _aniso_forces(k3, positions):
+    return -(k3 * (np.asarray(positions, dtype=float) - _B_CENTER))
+
+
+class _AnisoReference:
+    """Engine: U = 1/2 sum k3 (x - center)^2 per Cartesian component."""
+
+    name = "aniso-reference"
+
+    def __init__(self, k3):
+        self.k3 = np.asarray(k3, dtype=float)
+        self.attempts = 0
+
+    @property
+    def fingerprint(self):
+        import hashlib
+
+        return ("aniso-reference:"
+                + hashlib.sha256(self.k3.tobytes()).hexdigest()[:12])
+
+    def compute(self, atoms):
+        self.attempts += 1
+        return EngineResult(_aniso_energy(self.k3, atoms.positions),
+                            _aniso_forces(self.k3, atoms.positions), None, 0.0)
+
+
+class _AnisoModel:
+    """Surrogate with a slightly different Hessian (y only)."""
+
+    def __init__(self, k3):
+        self.k3 = np.asarray(k3, dtype=float)
+
+    @property
+    def fingerprint(self):
+        import hashlib
+
+        return ("aniso-model:"
+                + hashlib.sha256(self.k3.tobytes()).hexdigest()[:12])
+
+    @property
+    def capabilities(self):
+        return None
+
+    def predict(self, atoms):
+        return SurrogatePrediction(_aniso_energy(self.k3, atoms.positions),
+                                   _aniso_forces(self.k3, atoms.positions),
+                                   None, np.full(len(atoms), np.nan))
+
+
+def _b_world(tmp_path, **overrides):
+    engine = _AnisoReference(_B_K_REF)
+    options = dict(steps=14, surrogate=_AnisoModel(_B_K_BASE), engine=engine,
+                   time_cap_fs=1.0, force_budget=0.02, check_probability=1.0,
+                   check_seed=3, checkpoint_interval=4, temperature=100.0,
+                   spec=_spec(temperature=100.0),
+                   momenta=[[0.1, 0.04, 0.0], [-0.06, 0.02, 0.0]],
+                   positions=[[0.82, 0.9, 0.9], [0.98, 0.9, 0.9]])
+    options.update(overrides)
+    run_dir = _adaptive(tmp_path, **options)
+    return run_dir, engine
+
+
+def _anchors(run_dir):
+    """Segment anchor records keyed by segment id, from the row metadata."""
+    out = {}
+    for row in _rows(run_dir):
+        record = (row.data.get("metadata") or {}).get("new_anchor")
+        if record is not None:
+            out[int(record["segment_id"])] = record
+    return out
+
+
+def _commit_by_evaluation(run_dir):
+    return {int((e.get("context") or {})["evaluation_id"]): e
+            for e in events(run_dir) if e["type"] == "evaluation_committed"}
+
+
+def test_b_decision_sees_the_realized_displacement(tmp_path):
+    from pyraimd2.loop.energetic import _response_from_dict
+
+    run_dir, _ = _b_world(tmp_path / "b")
+    proposals = [e for e in events(run_dir)
+                 if e["type"] == "evaluation_proposed"]
+    # the deterministic seed admits at least one accepted prefix and shows
+    # refusals with re-anchoring (segments advance)
+    assert any(p["accepted"] for p in proposals)
+    assert any(not p["accepted"] for p in proposals)
+    segments = {p.get("segment_id") for p in proposals if p.get("segment_id")}
+    assert len(segments) >= 2
+
+    admitted_with_transverse = 0
+    for proposal in proposals:
+        anchor = proposal.get("anchor_record")
+        if anchor is None:
+            continue
+        index = int(proposal["context"]["evaluation_id"])
+        displacement = (np.array(proposal["positions_A"], dtype=float)
+                        - np.array(anchor["positions_A"], dtype=float))
+        responses = [_response_from_dict(r)
+                     for r in anchor["calibration"]["responses"]]
+        assert len(responses) == len(proposal["forecasts"])
+        elapsed = (index - int(anchor["evaluation_index"])) * DT
+        for response, recorded in zip(responses, proposal["forecasts"]):
+            forecast = response.forecast(
+                displacement, elapsed, force_budget=0.02,
+                numerical_floor=0.0, time_cap_fs=1.0, transverse_cap=0.1)
+            # the recorded decision inputs recompute exactly from the
+            # actual, realized displacement — random transverse part included
+            assert forecast.linear_error == pytest.approx(
+                recorded["linear_error_eV_A"], rel=0, abs=1e-15)
+            assert forecast.envelope == pytest.approx(
+                recorded["envelope_eV_A"], rel=0, abs=1e-15)
+            assert forecast.predicted_work == pytest.approx(
+                recorded["predicted_work_eV"], rel=0, abs=1e-15)
+            assert forecast.transverse_fraction == pytest.approx(
+                recorded["transverse_fraction"], rel=0, abs=1e-15)
+            assert forecast.admitted == recorded["admitted"]
+        if proposal["accepted"] and proposal["forecasts"]:
+            if proposal["forecasts"][0]["transverse_fraction"] > 0.01:
+                admitted_with_transverse += 1
+    # a deterministic-seed case where the bath displacement is not collinear
+    # with the boundary velocity: the admitted decision consumed the
+    # transverse (random) component — the old Verlet extrapolation bug
+    # class.
+    assert admitted_with_transverse >= 1
+
+
+def test_b_actual_step_is_not_the_verlet_extrapolation(tmp_path):
+    # For accepted steps the actual displacement differs materially from the
+    # deterministic velocity-Verlet extrapolation of the previous boundary
+    # (the bath increment is in the scheduled configuration).
+    run_dir, _ = _b_world(tmp_path / "b")
+    boundaries = _complete_boundaries(run_dir)
+    store = Store(run_dir / "trajectory.db")
+    proposals = {int((e.get("context") or {})["evaluation_id"]): e
+                 for e in events(run_dir)
+                 if e["type"] == "evaluation_proposed"}
+    deviations = []
+    for index in range(2, len(boundaries)):
+        if not proposals[index]["accepted"]:
+            continue
+        positions_prev, momenta_prev = boundaries[index - 1]
+        row_prev = _rows(run_dir)[index - 1]
+        _, forces_prev = store.driving_label_for_row(row_prev)
+        masses = row_prev.toatoms().get_masses()[:, None]
+        verlet = positions_prev + DT * units.fs * (
+            momenta_prev + 0.5 * DT * units.fs * forces_prev) / masses
+        actual = boundaries[index][0]
+        deviations.append(float(np.max(np.abs(actual - verlet))))
+    assert deviations and max(deviations) > 1e-4  # bath-scale, not rounding
+
+
+def test_b_residual_work_closes_two_ways_per_segment(tmp_path):
+    from pyraimd2.energetics.work import (
+        integrate_residual_work, residual_work)
+
+    run_dir, _ = _b_world(tmp_path / "b")
+    rows = _rows(run_dir)
+    anchors = _anchors(run_dir)
+    commits = _commit_by_evaluation(run_dir)
+    checked = [e for e in commits.values() if e.get("observed") is not None]
+    assert checked, "expected at least one label-carrying evaluation"
+
+    for commit in checked:
+        index = int(commit["context"]["evaluation_id"])
+        segment = int(commit["segment_id"])
+        anchor = anchors[segment]
+        anchor_index = int(anchor["evaluation_index"])
+        anchor_positions = np.array(anchor["positions_A"], dtype=float)
+        correction = np.array(anchor["correction_eV_A"], dtype=float)
+        positions = rows[index].toatoms().positions
+        # endpoint identity, recomputed analytically from the potentials:
+        # W_R,s = ΔU_ref − ΔU_anchor,s (residual_work's own convention)
+        endpoint = residual_work(
+            anchor_positions, positions,
+            _aniso_energy(_B_K_BASE, anchor_positions),
+            _aniso_energy(_B_K_BASE, positions),
+            float(anchor["reference_energy_eV"]),
+            float(rows[index].data["engine"]["energy"]),
+            correction)
+        assert endpoint == pytest.approx(
+            commit["observed"]["endpoint_work_eV"], rel=0, abs=1e-12)
+        # trapezoidal path integral of the independent force residual
+        # R_s = F_base + c_s − F_ref along the recorded segment states;
+        # harmonic forces are linear, so the segment quadrature is exact.
+        path = [rows[j].toatoms().positions
+                for j in range(anchor_index, index + 1)]
+        residuals = [_aniso_forces(_B_K_BASE, p) + correction
+                     - _aniso_forces(_B_K_REF, p) for p in path]
+        trapezoidal = float(integrate_residual_work(
+            np.array(path), np.array(residuals))[-1].sum())
+        assert trapezoidal == pytest.approx(endpoint, rel=0, abs=1e-12)
+
+        # ΔH_ref = W_R,s + ΔH_anchor,s — an algebra identity on the
+        # recorded numbers, checked with the complete boundary momenta.
+        boundaries = _complete_boundaries(run_dir)
+        masses = rows[0].toatoms().get_masses()
+
+        def kinetic(boundary):
+            _, momenta = boundaries[boundary]
+            return float((0.5 * momenta**2 / masses[:, None]).sum())
+
+        def anchor_energy(pos):
+            return (_aniso_energy(_B_K_BASE, pos)
+                    - float((correction * (pos - anchor_positions)).sum()))
+
+        delta_h_anchor = (kinetic(index) + anchor_energy(positions)
+                          - kinetic(anchor_index)
+                          - anchor_energy(anchor_positions))
+        delta_h_ref = (kinetic(index)
+                       + float(rows[index].data["engine"]["energy"])
+                       - kinetic(anchor_index)
+                       - float(anchor["reference_energy_eV"]))
+        assert delta_h_ref == pytest.approx(endpoint + delta_h_anchor,
+                                            rel=0, abs=1e-12)
+        # predicted work and reference-endpoint work stay distinct fields
+        proposal = next(e for e in events(run_dir)
+                        if e["type"] == "evaluation_proposed"
+                        and int(e["context"]["evaluation_id"]) == index)
+        if proposal["forecasts"]:
+            assert "predicted_work_eV" in proposal["forecasts"][0]
+            assert "endpoint_work_eV" in commit["observed"]
+
+
+def test_b_forced_reanchor_closes_old_segment_with_old_correction(tmp_path):
+    from pyraimd2.energetics.work import residual_work
+
+    run_dir, engine = _b_world(tmp_path / "b")
+    rows = _rows(run_dir)
+    anchors = _anchors(run_dir)
+    commits = _commit_by_evaluation(run_dir)
+    # the time cap forces re-anchoring: several segments, each with its own
+    # correction (the anchors sit at different positions, and the residual
+    # is position-dependent in y)
+    assert len(anchors) >= 2
+    corrections = {segment: np.array(record["correction_eV_A"], dtype=float)
+                   for segment, record in anchors.items()}
+    for first, second in zip(sorted(corrections), sorted(corrections)[1:]):
+        assert not np.allclose(corrections[first], corrections[second],
+                               rtol=0, atol=1e-15)
+
+    for commit in commits.values():
+        if commit.get("observed") is None:
+            continue
+        index = int(commit["context"]["evaluation_id"])
+        segment = int(commit["segment_id"])
+        anchor = anchors[segment]
+        anchor_positions = np.array(anchor["positions_A"], dtype=float)
+        positions = rows[index].toatoms().positions
+        base = _aniso_energy
+        own = residual_work(
+            anchor_positions, positions, base(_B_K_BASE, anchor_positions),
+            base(_B_K_BASE, positions), float(anchor["reference_energy_eV"]),
+            float(rows[index].data["engine"]["energy"]),
+            corrections[segment])
+        # the recorded work used THIS segment's correction …
+        assert own == pytest.approx(commit["observed"]["endpoint_work_eV"],
+                                    rel=0, abs=1e-12)
+        # … and a neighboring segment's correction would give a materially
+        # different number — cross-segment work is never interchangeable.
+        others = [s for s in corrections if s != segment]
+        if others:
+            foreign = residual_work(
+                anchor_positions, positions, base(_B_K_BASE, anchor_positions),
+                base(_B_K_BASE, positions),
+                float(anchor["reference_energy_eV"]),
+                float(rows[index].data["engine"]["energy"]),
+                corrections[others[0]])
+            assert foreign != pytest.approx(own, rel=0, abs=1e-12)
+
+
+def test_b_call_counts_and_error_records(tmp_path):
+    run_dir, engine = _b_world(tmp_path / "b")
+    evs = events(run_dir)
+    reference_tasks = [e for e in evs if e["type"] == "task"
+                       and e.get("operation") == "reference"]
+    # every real engine execution is ledgered exactly once; the toy engine
+    # has no cache, so tasks never hit the label cache here
+    assert engine.attempts == len(reference_tasks)
+    assert all(t["status"] == "success" for t in reference_tasks)
+    by_purpose = {}
+    for task in reference_tasks:
+        by_purpose[task["purpose"]] = by_purpose.get(task["purpose"], 0) + 1
+    proposals = [e for e in evs if e["type"] == "evaluation_proposed"]
+    # anchor-route calls bill as "anchor" (initial) and "refusal"; probes:
+    # 4 per calibration that produced an anchor; checks: one per checked
+    # accept
+    n_refused = sum(1 for p in proposals
+                    if not p["accepted"] and p["reason"] != "initial_reference")
+    n_checked = sum(1 for p in proposals if p["accepted"] and p["checked"])
+    anchors_in_rows = _anchors(run_dir)
+    assert by_purpose.get("anchor", 0) == 1  # the initial evaluation
+    assert by_purpose.get("refusal", 0) == n_refused
+    assert by_purpose.get("probe", 0) == 4 * len(anchors_in_rows)
+    assert by_purpose.get("verification", 0) == n_checked
+    assert engine.attempts == 1 + n_refused + 4 * len(anchors_in_rows) + n_checked
+    # predicted vs measured error are both recorded per checked evaluation
+    for commit in _commit_by_evaluation(run_dir).values():
+        if commit.get("observed") is not None and commit["checked"]:
+            observed = commit["observed"]
+            assert observed["force_budget_exceeded"] == (
+                observed["max_force_error_eV_A"] > 0.02)
