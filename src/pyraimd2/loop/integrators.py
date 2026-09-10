@@ -47,6 +47,7 @@ __all__ = [
     "LangevinAdapter",
     "PendingStepState",
     "VelocityVerletAdapter",
+    "complete_langevin_momenta",
     "derive_stream_seed",
     "state_digest",
 ]
@@ -133,6 +134,35 @@ def state_digest(*arrays: np.ndarray) -> str:
         hasher.update(json.dumps(list(array.shape)).encode())
         hasher.update(array.tobytes())
     return hasher.hexdigest()[:24]
+
+
+def complete_langevin_momenta(*, timestep_fs: float, friction_per_fs: float,
+                              masses: np.ndarray,
+                              boundary_positions: np.ndarray,
+                              committed_positions: np.ndarray,
+                              rnd_pos: np.ndarray, rnd_vel: np.ndarray,
+                              driving_forces: np.ndarray) -> np.ndarray:
+    """The complete-step momenta of a committed Langevin mid-step record.
+
+    Applies the post-force velocity update of ASE 3.29.0
+    ``ase.md.langevin.Langevin.step`` (``v = (x_new - x_old - rnd_pos)/dt``
+    then ``v += c1*f/m - c2*v + rnd_vel``, momenta ``v*m``) to the step's
+    recorded bath increments — the strict boundary completion shared by the
+    runner's resume and the store's export view, never a recomputation.
+    The coefficient expressions replicate ``Langevin.updatevars`` verbatim
+    (same operation order, bit-identical); the step-by-step ASE comparison
+    in the adaptive-NVT acceptance guards against drift.
+    """
+    dt = timestep_fs * units.fs
+    fr = friction_per_fs / units.fs
+    c1 = dt / 2.0 - dt * dt * fr / 8.0
+    c2 = dt * fr / 2 - dt * dt * fr * fr / 8.0
+    m = np.asarray(masses, dtype=float)[:, None]
+    v_mid = (np.asarray(committed_positions, dtype=float)
+             - np.asarray(boundary_positions, dtype=float)
+             - np.asarray(rnd_pos, dtype=float)) / dt
+    return (v_mid + (c1 * np.asarray(driving_forces, dtype=float) / m
+                     - c2 * v_mid + np.asarray(rnd_vel, dtype=float))) * m
 
 
 @dataclass

@@ -73,6 +73,7 @@ from pyraimd2.loop.integrators import (
     STREAM_SCHEME,
     CommittedStepState,
     IntegratorSpec,
+    complete_langevin_momenta,
     derive_stream_seed,
     state_digest,
 )
@@ -1333,8 +1334,15 @@ class EnergeticCalculator(Calculator):
                 and self._bath_step["evaluation_id"] == index):
             # The integrator pinned the pre-draw bath state for this step;
             # the proposal record carries it so a rebuilt pending resumes
-            # the identical stochastic step (M3A-3).
-            bath_step = {"rng_before": self._bath_step["rng_before"]}
+            # the identical stochastic step (M3A-3).  The boundary the step
+            # started from is frozen too: at freeze time
+            # ``_last_committed_positions`` still names the previous
+            # committed evaluation (it advances at this one's commit).
+            bath_step = {
+                "rng_before": self._bath_step["rng_before"],
+                "boundary_positions_A": None
+                if self._last_committed_positions is None
+                else self._last_committed_positions.tolist()}
         return _Pending(atoms.copy(), index, prediction, anchor, accepted, reason,
                         forecasts, selected, open_prefix, energy, forces, checked, draw,
                         self._evaluation_calls_before.copy(),
@@ -1525,8 +1533,13 @@ class EnergeticCalculator(Calculator):
             # by the matching completion formula.
             committed_payload["thermostat_rng"] = rng_state_to_json(
                 self._bath_dyn.rng.bit_generator.state)
+            # The commit names its own integrator settings so the boundary
+            # completion (resume and export) is self-describing.
+            committed_payload["integrator"] = self._integrator_spec.as_dict()
             if pending.bath_step is not None:
                 committed_payload["bath_step"] = {
+                    "boundary_positions_A":
+                        pending.bath_step["boundary_positions_A"],
                     "rnd_pos": np.asarray(self._bath_dyn.rnd_pos,
                                           dtype=float).tolist(),
                     "rnd_vel": np.asarray(self._bath_dyn.rnd_vel,
@@ -1973,19 +1986,19 @@ class _EnergeticLangevin(Langevin):
                          rnd_pos: np.ndarray, rnd_vel: np.ndarray,
                          driving_forces: np.ndarray,
                          projection: FixAtomsProjection | None) -> np.ndarray:
-        """The exact post-force update of ASE 3.29.0 ``Langevin.step``
-        (``v = (x_new - x_old - rnd_pos)/dt``; ``v += c1*f/m - c2*v +
-        rnd_vel``; momenta ``v*m``), applied to a committed step's recorded
-        increments — the strict boundary completion for resume, never a
-        recomputation.  The association order matches the upstream source
-        bit-for-bit; FixAtoms zeroes the fixed momenta exactly as
-        ``set_momenta`` does."""
-        v_mid = (np.asarray(committed_positions, dtype=float)
-                 - np.asarray(boundary_positions, dtype=float)
-                 - np.asarray(rnd_pos, dtype=float)) / self.dt
-        momenta = (v_mid + (self.c1 * np.asarray(driving_forces, dtype=float)
-                            / self.masses - self.c2 * v_mid
-                            + np.asarray(rnd_vel, dtype=float))) * self.masses
+        """Boundary completion for resume via the shared primitive
+        (:func:`pyraimd2.loop.integrators.complete_langevin_momenta` —
+        ASE 3.29.0's post-force update applied to the committed step's
+        recorded increments, never a recomputation); FixAtoms zeroes the
+        fixed momenta exactly as ``set_momenta`` does."""
+        momenta = complete_langevin_momenta(
+            timestep_fs=self.dt / units.fs,
+            friction_per_fs=self.fr * units.fs,
+            masses=self.masses[:, 0],
+            boundary_positions=boundary_positions,
+            committed_positions=committed_positions,
+            rnd_pos=rnd_pos, rnd_vel=rnd_vel,
+            driving_forces=driving_forces)
         if projection is not None:
             momenta = projection.project_displacement(momenta)
         return momenta
@@ -2379,15 +2392,44 @@ class EnergeticRunner:
             calc._last_committed_model_id = newest_commit.get("model_id")
         runner.dyn.nsteps = max(last_eval, 0)
         if last_eval >= 1 and boundary_commit is not None:
-            # Verify the reconstructed boundary against its step record when
-            # one carries the versioned format (S0b/M3A-3).  Older adaptive
+            # The boundary's step record: verify it when present in the
+            # versioned format (S0b/M3A-3); heal it when the crash window
+            # left a committed evaluation without its step commit (the same
+            # window the plain driver heals — the commit plus the recorded
+            # bath increments prove the step completed, so resume re-emits
+            # the record idempotently instead of leaving a gap the
+            # committed-frames view would silently drop).  Older adaptive
             # records predate the format marker; their binding is the
             # commit's row digest, already verified by committed_row.
             step_event = next(
                 (e for e in reversed(events)
                  if e.get("type") == STEP_COMPLETED
                  and int(e.get("step_id", -1)) == last_eval - 1), None)
-            if (step_event is not None
+            if step_event is None and spec.algorithm == "langevin":
+                boundary = CommittedStepState(
+                    step=last_eval - 1,
+                    physical_time_fs=last_eval * calc.timestep_fs,
+                    positions=atoms.positions.copy(),
+                    momenta=atoms.get_momenta().copy(),
+                    driving_source=("surrogate"
+                                    if boundary_commit.get("route") == "ml"
+                                    else "reference"),
+                    model_id=str(boundary_commit.get("model_id", "")),
+                    spec=spec, nsteps=last_eval,
+                    thermostat_rng=boundary_commit.get("thermostat_rng"))
+                calc._emit_once(
+                    f"step:{run_id}:{last_eval - 1}", STEP_COMPLETED,
+                    step_id=last_eval - 1,
+                    physical_time_fs=last_eval * calc.timestep_fs,
+                    integrator=spec.as_dict(),
+                    digest_format=DIGEST_FORMAT,
+                    state_digest=state_digest(atoms.positions,
+                                              atoms.get_momenta()),
+                    boundary_digest=boundary.digest(),
+                    thermostat_rng=boundary_commit.get("thermostat_rng"),
+                    segment_id=boundary_commit.get("segment_id"),
+                    model_id=boundary_commit.get("model_id"))
+            elif (step_event is not None
                     and step_event.get("digest_format") == DIGEST_FORMAT):
                 boundary = CommittedStepState(
                     step=last_eval - 1,

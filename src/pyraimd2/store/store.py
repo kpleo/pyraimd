@@ -148,19 +148,24 @@ class Store:
         return None
 
     def complete_step_frame(self, row: ase.db.row.AtomsRow,
-                            timestep_fs: float) -> Atoms:
+                            timestep_fs: float,
+                            commit: dict | None = None) -> Atoms:
         """Complete-step view of one store row, without touching the record.
 
-        Energetic rows are logged mid-step and carry half-step momenta; the
-        complete step's momenta are reconstructed from the row's driving
-        force with the same kick ASE applies (``p += 0.5*dt*F``, no mass
-        division). The initial evaluation is exempt: it stores the complete
-        initial momenta, not a mid-step state (A1). Plain rows are logged
-        after the step completes and are returned as-is. The returned atoms
-        carry ``momenta_source`` in ``info`` ("complete_step_reconstructed",
-        "complete_step_recorded", "initial_evaluation_record" or
-        "force_evaluation_record") so downstream users can tell the phase
-        apart instead of mistaking a half-step record for a complete step.
+        Energetic rows are logged mid-step: Verlet (NVE) records carry
+        half-step momenta, reconstructed with the row's driving force
+        (``p += 0.5*dt*F``, no mass division); Langevin (NVT) records carry
+        the *previous boundary* momenta — the half-kick formula never
+        applies to them — and are completed from the commit's recorded bath
+        increments (``complete_langevin_momenta``, the same primitive the
+        runner's resume uses).  The initial evaluation is exempt: it stores
+        the complete initial momenta, not a mid-step state (A1).  Plain rows
+        are logged after the step completes and are returned as-is.  The
+        returned atoms carry ``momenta_source`` in ``info``
+        ("complete_step_reconstructed", "complete_step_recorded",
+        "initial_evaluation_record" or "force_evaluation_record") so
+        downstream users can tell the phase apart instead of mistaking a
+        mid-step record for a complete step.
         """
         atoms = row.toatoms()
         atoms.calc = None
@@ -174,7 +179,31 @@ class Store:
                 momenta_source = "initial_evaluation_record"
             else:
                 driving = row.data.get("driving")
-                if driving is not None and timestep_fs > 0:
+                bath = (commit or {}).get("bath_step")
+                if bath is not None:
+                    # Adaptive NVT: the realized random increments complete
+                    # the stochastic step exactly (M3A-3) — the Verlet
+                    # half-kick below never applies to a Langevin record.
+                    from pyraimd2.loop.integrators import complete_langevin_momenta
+
+                    spec = commit["integrator"]
+                    momenta = complete_langevin_momenta(
+                        timestep_fs=float(spec["timestep_fs"]),
+                        friction_per_fs=float(spec["friction_per_fs"]),
+                        masses=atoms.get_masses(),
+                        boundary_positions=bath["boundary_positions_A"],
+                        committed_positions=atoms.positions,
+                        rnd_pos=np.asarray(bath["rnd_pos"], dtype=float),
+                        rnd_vel=np.asarray(bath["rnd_vel"], dtype=float),
+                        driving_forces=np.asarray(driving["forces"],
+                                                  dtype=float))
+                    constraint = metadata.get("constraint")
+                    if constraint is not None:
+                        momenta = momenta.copy()
+                        momenta[list(constraint["indices"])] = 0.0
+                    atoms.set_momenta(momenta)
+                    momenta_source = "complete_step_reconstructed"
+                elif driving is not None and timestep_fs > 0:
                     from ase import units as _units
 
                     forces = np.asarray(driving["forces"], dtype=float)

@@ -87,16 +87,17 @@ def completed_step_ids(run_dir: str | Path) -> set[int]:
 
 def frame_from_row(row, run_id: str, *, force_source: str,
                    wrap: bool = False, timestep_fs: float | None = None,
-                   store: Store | None = None) -> Atoms:
+                   store: Store | None = None, commit: dict | None = None) -> Atoms:
     """One export frame from one store row (see module docstring for the
     missing-data marking rules).
 
     Coordinates in the store are continuous unwrapped positions; pass
     ``wrap=True`` to export them wrapped back into the cell instead (the
     store itself is never rewritten). Momenta are the complete-step values:
-    mid-step (half-step) records are reconstructed with the row's driving
-    force and marked in ``info['momenta_source']`` — the original record is
-    never overwritten.
+    mid-step records are reconstructed from the row's driving force —
+    Verlet half-kick for NVE, the commit's recorded bath increments for
+    NVT (never the half-kick) — and marked in ``info['momenta_source']``;
+    the original record is never overwritten.
     """
     data = row.data
     route = str(row.key_value_pairs["route"])
@@ -106,7 +107,8 @@ def frame_from_row(row, run_id: str, *, force_source: str,
     if store is not None:
         atoms = store.complete_step_frame(row, timestep_fs
                                           if timestep_fs is not None
-                                          else (_row_timestep_fs(row) or 0.0))
+                                          else (_row_timestep_fs(row) or 0.0),
+                                          commit=commit)
     else:
         atoms = row.toatoms()
         atoms.calc = None
@@ -189,7 +191,7 @@ def frames_from_store(store: Store, run_id: str, *, force_source: str,
         if complete_steps is not None and step >= 0 and step not in complete_steps:
             continue
         frame = frame_from_row(row, run_id, force_source=force_source,
-                               wrap=wrap, store=store)
+                               wrap=wrap, store=store, commit=event)
         frame.info["evaluation_id"] = evaluation_id
         frame.info["integration_phase"] = (
             "initial_evaluation" if step < 0 else "complete_step")
