@@ -16,9 +16,14 @@ rather than a guessed precision:
 2. A short end-to-end sampling-chain check (400 warmup + 1200 retained
    steps, a few seconds) whose tolerances come from the same oracle at the
    same budget: exact estimator SEMs via the stationary autocovariance, no
-   fixed "7%" gate.  The two timesteps run with different seeds — same-seed
-   kinetic estimates are positively correlated (the oracle measures ~0.24),
-   so a shared seed would understate the joint error.
+   fixed "7%" gate.  The block-SEM self-consistency check asserts on
+   R = sem^2/E[sem^2] with acceptance edges taken as empirical 1e-3
+   quantiles of R under 4000 fixed-seed replicas of the exact discrete
+   process (an iid-block chi^2 reference under-spreads here — adjacent
+   block means correlate and block means of x^2 are skewed).  The two
+   timesteps run with different seeds — same-seed kinetic estimates are
+   positively correlated (the oracle measures ~0.24), so a shared seed
+   would understate the joint error.
 3. The long 6000-sample run stays as a coarse sanity check, marked ``slow``
    (runs under ``--runslow``; the CI statistical job executes it).  Its
    gates likewise use oracle SEMs at its own budget (about 8.0%, 7.4% and
@@ -214,14 +219,57 @@ def _block_mean_sem(samples, n_blocks):
     return float(means.mean()), float(means.std(ddof=1) / np.sqrt(n_blocks))
 
 
-def _block_sem_band(expected_sem, n_blocks):
-    """3-sigma band of the block-SEM estimator itself: a variance estimate
-    from B blocks carries relative std ~1/sqrt(2(B-1)) (chi-square with
-    B-1 dof), so the measured SEM is compared within expected*(1 +/- 3x).
-    This catches gross miscalibration (the old fixed 7% gate) without
-    punishing the estimator's own fluctuation."""
-    spread = 3.0 / np.sqrt(2 * (n_blocks - 1))
-    return expected_sem * (1.0 - spread), expected_sem * (1.0 + spread)
+def _sem_acceptance_ratio_band(a, b, cov, w, *, warmup, n_samples, n_blocks,
+                               alpha=1e-3, n_rep=4000, mc_seed=7):
+    """Acceptance band for the block-SEM of one trajectory, stated on
+    R = sem_hat^2 / E[sem_hat^2] (the variance dimension — the estimator is
+    a variance ratio, so the interval is not written on the SD).
+
+    ``w`` is the 2x2 weight of the quadratic observable q = z' w z per
+    coordinate (x^2, kinetic m v^2/2, or total energy); R is invariant to
+    the pooling-vs-sum layout of the three coordinates, so the band is
+    computed for the pooled layout.
+
+    Reference distribution: the exact discrete propagator itself.  E[sem^2]
+    comes from its stationary autocovariance; the band edges are empirical
+    alpha/2 and 1-alpha/2 quantiles of R over 4000 fixed-seed replicas of
+    that process in the same warmup/block layout (a few seconds,
+    deterministic).  An iid-block chi^2_{B-1} reference would under-spread:
+    adjacent block means correlate and block means of x^2 are skewed —
+    measured rel. std of R is ~0.37 at the long budget vs chi^2_24's 0.29,
+    and the true 0.9995 upper quantile of R is ~3.2 vs chi^2's 2.23.  The
+    nominal two-sided false-alarm budget is alpha=1e-3 (binomial resolution
+    at 4000 replicas ~5e-4 per tail).  Resolution: a 2x SEM miscalibration
+    gives R=4, outside the band; the check exists to catch gross error-model
+    breakage, while physical resolution lives in the 4x-exact-SEM mean gates.
+    """
+    rng = np.random.default_rng(mc_seed)
+    L = n_samples // n_blocks
+    z = rng.multivariate_normal(np.zeros(2), cov, size=(n_rep, 3))
+    block_sums = np.zeros((n_rep, 3, n_blocks))
+    for i in range(warmup + n_samples):
+        z = z @ a.T + rng.standard_normal((n_rep, 3, 2)) @ b.T
+        if i >= warmup:
+            q = w[0, 0] * z[:, :, 0] ** 2 + w[1, 1] * z[:, :, 1] ** 2
+            block_sums[:, :, (i - warmup) // L] += q
+    # The test pools the three coordinates inside each time block
+    # (reshape(-1) layout): pool first, then take the across-block spread.
+    pooled_means = block_sums.mean(axis=1) / L
+    sem2 = (pooled_means.std(axis=1, ddof=1) / np.sqrt(n_blocks)) ** 2
+    # E[sem^2] from the exact autocovariance of q (single-coordinate
+    # formula, then pooled over the three independent coordinates).
+    lagged = cov.copy()
+    ac = np.empty(n_samples)
+    for lag in range(n_samples):
+        ac[lag] = 2 * np.trace(w @ lagged @ w @ lagged.T)
+        lagged = a @ lagged
+    var_mean = (ac[0] + 2 * np.dot(1 - np.arange(1, n_samples) / n_samples,
+                                   ac[1:])) / n_samples
+    var_block = (ac[0] + 2 * np.dot(1 - np.arange(1, L) / L, ac[1:L])) / L
+    e_sem2 = (var_block - var_mean) / (n_blocks - 1) / 3.0
+    ratio = sem2 / e_sem2
+    lo, hi = np.quantile(ratio, [alpha / 2, 1 - alpha / 2])
+    return float(lo), float(hi), float(e_sem2)
 
 
 def test_short_sampling_chain_matches_oracle_gates(tmp_path):
@@ -242,18 +290,22 @@ def test_short_sampling_chain_matches_oracle_gates(tmp_path):
     exact = oracle["position_squared"]
     assert variance == pytest.approx(exact["mean"], rel=0,
                                      abs=4 * exact["mean"] * exact["exact_rel_sem_3coords"])
-    lo, hi = _block_sem_band(
-        exact["expected_block_rel_sem"] * exact["mean"], SHORT_BLOCKS)
-    assert lo < sem < hi
+    lo_r, hi_r, e_sem2 = _sem_acceptance_ratio_band(
+        a, b, cov, np.diag([1.0, 0.0]), warmup=SHORT_WARMUP,
+        n_samples=SHORT_SAMPLES, n_blocks=SHORT_BLOCKS)
+    assert lo_r <= sem**2 / e_sem2 <= hi_r
 
     kinetic, sem_k = _block_mean_sem(kinetics, SHORT_BLOCKS)
     exact_k = oracle["kinetic"]
     assert kinetic == pytest.approx(3 * exact_k["mean"], rel=0,
                                     abs=4 * 3 * exact_k["mean"]
                                     * exact_k["exact_rel_sem_3coords"])
-    lo, hi = _block_sem_band(
-        exact_k["expected_block_rel_sem"] * 3 * exact_k["mean"], SHORT_BLOCKS)
-    assert lo < sem_k < hi
+    # The kinetic series is the per-step sum over 3 coordinates; the
+    # summed estimator's E[sem^2] is 9x the pooled one used for the band.
+    lo_r, hi_r, e_sem2_k = _sem_acceptance_ratio_band(
+        a, b, cov, np.diag([0.0, H_MASS / 2]), warmup=SHORT_WARMUP,
+        n_samples=SHORT_SAMPLES, n_blocks=SHORT_BLOCKS)
+    assert lo_r <= sem_k**2 / (9 * e_sem2_k) <= hi_r
 
     # Dependent consistency view (mean E = mean K + 1.5 k mean x^2 here):
     # same data, never counted as a third independent estimator.
@@ -306,18 +358,20 @@ def test_long_harmonic_sampling_coarse_sanity(tmp_path):
     exact = oracle["position_squared"]
     assert variance == pytest.approx(exact["mean"], rel=0,
                                      abs=4 * exact["mean"] * exact["exact_rel_sem_3coords"])
-    lo, hi = _block_sem_band(
-        exact["expected_block_rel_sem"] * exact["mean"], LONG_BLOCKS)
-    assert lo < sem < hi
+    lo_r, hi_r, e_sem2 = _sem_acceptance_ratio_band(
+        a, b, cov, np.diag([1.0, 0.0]), warmup=LONG_WARMUP,
+        n_samples=LONG_SAMPLES, n_blocks=LONG_BLOCKS)
+    assert lo_r <= sem**2 / e_sem2 <= hi_r
 
     kinetic, sem_k = _block_mean_sem(kinetics, LONG_BLOCKS)
     exact_k = oracle["kinetic"]
     assert kinetic == pytest.approx(3 * exact_k["mean"], rel=0,
                                     abs=4 * 3 * exact_k["mean"]
                                     * exact_k["exact_rel_sem_3coords"])
-    lo, hi = _block_sem_band(
-        exact_k["expected_block_rel_sem"] * 3 * exact_k["mean"], LONG_BLOCKS)
-    assert lo < sem_k < hi
+    lo_r, hi_r, e_sem2_k = _sem_acceptance_ratio_band(
+        a, b, cov, np.diag([0.0, H_MASS / 2]), warmup=LONG_WARMUP,
+        n_samples=LONG_SAMPLES, n_blocks=LONG_BLOCKS)
+    assert lo_r <= sem_k**2 / (9 * e_sem2_k) <= hi_r
 
     # Dependent consistency view only (see module docstring).
     total = kinetics + 0.5 * (displacements ** 2).sum(axis=1)
@@ -326,9 +380,10 @@ def test_long_harmonic_sampling_coarse_sanity(tmp_path):
     assert e_total == pytest.approx(3 * exact_e["mean"], rel=0,
                                     abs=4 * 3 * exact_e["mean"]
                                     * exact_e["exact_rel_sem_3coords"])
-    lo, hi = _block_sem_band(
-        exact_e["expected_block_rel_sem"] * 3 * exact_e["mean"], LONG_BLOCKS)
-    assert lo < sem_e < hi
+    lo_r, hi_r, e_sem2_e = _sem_acceptance_ratio_band(
+        a, b, cov, np.diag([SPRING_K / 2, H_MASS / 2]), warmup=LONG_WARMUP,
+        n_samples=LONG_SAMPLES, n_blocks=LONG_BLOCKS)
+    assert lo_r <= sem_e**2 / (9 * e_sem2_e) <= hi_r
 
 
 @pytest.mark.slow
