@@ -215,6 +215,7 @@ def _run_adaptive(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                 atoms, surrogate, engine, store, config.run.id,
                 temperature_K=config.dynamics.temperature_K,
                 velocity_seed=config.dynamics.velocity_seed,
+                integrator_spec=_spec_from_dynamics(config),
                 event_log=event_log, run_dir=run_dir,
                 checkpoint_interval_steps=config.checkpoint.interval_steps,
                 handle_sigint=handle_sigint,
@@ -233,7 +234,8 @@ def _run_adaptive(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         _attach_outputs(runner, outputs)
         total = config.dynamics.steps
         if verbose:
-            print(f"pyramid run: {config.run.id} — adaptive NVE, "
+            print(f"pyramid run: {config.run.id} — adaptive "
+                  f"{config.dynamics.ensemble.upper()}, "
                   f"{total} steps x {config.dynamics.timestep_fs} fs")
             print(f"run directory: {run_dir}")
 

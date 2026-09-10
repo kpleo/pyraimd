@@ -315,11 +315,6 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
     _check_task_compatibility(task, reference=reference, surrogate=surrogate,
                               policy=policy,
                               verification_present=verification_table is not None)
-    if task.mode == "adaptive" and dynamics.ensemble != "nve":
-        raise ConfigError(
-            f"task.mode 'adaptive' currently supports ensemble = 'nve' only; "
-            f"got ensemble = {dynamics.ensemble!r} — adaptive NVT is a "
-            "separate milestone, not a config toggle")
     return PyramidConfig(
         schema_version=version, run=run, task=task, structure=structure,
         dynamics=dynamics, reference=reference, surrogate=surrogate,

@@ -20,6 +20,7 @@ tens of steps; zero real DFT budget.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import ClassVar
@@ -1042,3 +1043,59 @@ def test_c_probe_interruption_reuses_verified_probes(tmp_path):
     # 3 executed before the crash (one never committed) + 2 after resume;
     # the 2 reused probes execute nothing and bill nothing.
     assert len(probe_calls) == 5
+
+
+# --- user interface: the released config path ---------------------------------
+
+
+def test_template_harmonic_adaptive_nvt_runs_and_resumes(tmp_path):
+    from pyraimd2.workflows import resume_workflow
+    from pyraimd2.workflows.templates import write_template
+
+    config_path = write_template("harmonic-adaptive-nvt", tmp_path / "demo")
+    config = load_config(config_path)
+    assert config.task.mode == "adaptive"
+    assert config.dynamics.ensemble == "nvt"
+    result = run_workflow(config, verbose=False, handle_sigint=False)
+    assert result.steps_completed == 20
+
+    # the manifest and the RUN_START event record the same stream identity
+    manifest = json.loads(
+        (config.run.directory / "manifest.json").read_text())
+    start = next(e for e in events(config.run.directory)
+                 if e["type"] == "run_start")
+    assert manifest["streams"] == {
+        "scheme": "role-derive-v1",
+        "velocity_seed": derive_stream_seed(7, "velocity"),
+        "thermostat_seed": derive_stream_seed(123, "thermostat"),
+        "check_seed": derive_stream_seed(19, "verification"),
+    }
+    assert manifest["streams"]["thermostat_seed"] == start["streams"][
+        "thermostat_seed"]
+    assert manifest["streams"]["check_seed"] == start["streams"]["check_seed"]
+    assert manifest["dynamics"]["ensemble"] == "nvt"
+    resolved = json.loads(
+        (config.run.directory / "resolved_config.json").read_text())
+    assert resolved["dynamics"]["integrator"] == "langevin"
+    assert resolved["dynamics"]["friction_per_fs"] == 0.01
+
+    # resume continues the same run to the same state as a continuous one
+    resumed = resume_workflow(config.run.directory, 4, verbose=False,
+                              handle_sigint=False)
+    assert resumed.steps_completed == 24
+    control_path = write_template("harmonic-adaptive-nvt",
+                                  tmp_path / "control")
+    control = load_config(control_path)
+    control_text = (tmp_path / "control" / "run.toml").read_text()
+    (tmp_path / "control" / "run.toml").write_text(
+        control_text.replace("steps = 20", "steps = 24"))
+    control = load_config(tmp_path / "control" / "run.toml")
+    run_workflow(control, verbose=False, handle_sigint=False)
+    rows_a = _rows(config.run.directory, "harmonic-adaptive-nvt-demo")
+    rows_b = _rows(control.run.directory, "harmonic-adaptive-nvt-demo")
+    assert len(rows_a) == len(rows_b) == 25
+    for row_a, row_b in zip(rows_a, rows_b):
+        np.testing.assert_array_equal(row_a.toatoms().positions,
+                                      row_b.toatoms().positions)
+        np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
+                                      row_b.toatoms().get_momenta())

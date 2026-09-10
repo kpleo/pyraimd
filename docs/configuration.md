@@ -49,7 +49,8 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   entry-point plugins) with their declared kind and origin.
 - `pyramid init --template harmonic --output DIR [--force]`: write
   `run.toml` + `structure.extxyz`. Existing template files are kept unless
-  `--force`.
+  `--force`. Variants: `harmonic-nvt` (plain NVT) and
+  `harmonic-adaptive-nvt` (adaptive Langevin NVT with a fixed base model).
 - `pyramid validate CONFIG [--probe-backends]`: check everything that can
   be checked without running: TOML and schema, structure readability and
   sanity, path-like backend options (model files, pseudo directories,
@@ -168,9 +169,10 @@ Mode rules:
 
 NVT runs use ASE's Langevin with `fixcm=False` (the deprecated
 `fixcm=True` does not strictly sample the correct NVT distribution;
-FixCom is not a supported constraint). Adaptive mode currently supports
-`ensemble = "nve"` only; `ensemble = "nvt"` with `mode = "adaptive"`
-is rejected at validation time, before any SCF.
+FixCom is not a supported constraint). Adaptive mode supports
+`ensemble = "nvt"` with `integrator = "langevin"` for a fixed base model
+(re-anchoring supported, each segment recorded independently); online
+training is not available for adaptive NVT in this version.
 
 ### [reference] / [surrogate]
 
@@ -296,10 +298,10 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 - Constraints: FixAtoms only — RATTLE/holonomic, energy-carrying and
   moving constraints are rejected explicitly, as is any variable-cell
   (NPT) dynamics.
-- Released 0.4.2 supports NVE only. This development version adds plain
-  fixed-cell NVT (ASE Langevin) in reference and surrogate modes; adaptive
-  mode remains NVE-only, and `ensemble = "nvt"` with `mode = "adaptive"`
-  is rejected at validation time.
+- Released 0.4.2 supports NVE only. This development version adds
+  fixed-cell NVT (ASE Langevin): plain reference/surrogate modes, and
+  adaptive mode with a fixed base model (re-anchoring supported; online
+  training under adaptive NVT remains unavailable).
 - `checkpoint.keep_generations` is fixed at 2 by the runtime.
 - Model updates (online training) use the Python `GuardedUpdater` interface;
   resumable updates require state export and restore. Adaptive runs without

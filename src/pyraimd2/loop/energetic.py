@@ -370,6 +370,7 @@ class EnergeticCalculator(Calculator):
         label_cache: bool = True,
         force_metric: str = "active_dofs_max_atom",
         integrator_spec: IntegratorSpec | dict | None = None,
+        velocity_seed: int | None = None,
         _resume_state: dict | None = None,
     ) -> None:
         super().__init__()
@@ -490,6 +491,9 @@ class EnergeticCalculator(Calculator):
                        # keeps the historical raw-seed check stream.
                        streams=({
                            "scheme": STREAM_SCHEME,
+                           "velocity_seed": (None if velocity_seed is None
+                                             else derive_stream_seed(
+                                                 velocity_seed, "velocity")),
                            "thermostat_seed": self._integrator_spec.thermostat_seed,
                            "check_seed": self._check_seed_effective,
                        } if self._integrator_spec.ensemble == "nvt" else {
@@ -2064,7 +2068,7 @@ class EnergeticRunner:
             check_seed=check_seed, failure_probability=failure_probability, tilt=tilt,
             direction=direction, on_label=on_label, event_log=event_log,
             label_cache=label_cache, force_metric=force_metric,
-            integrator_spec=integrator_spec,
+            integrator_spec=integrator_spec, velocity_seed=velocity_seed,
         )
         self.calc._validate_atoms(atoms)
         if "momenta" not in atoms.arrays:

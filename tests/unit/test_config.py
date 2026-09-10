@@ -205,12 +205,15 @@ def test_nve_rejects_thermostat_fields(tmp_path) -> None:
         load_config(write(tmp_path, text))
 
 
-def test_adaptive_rejects_nvt_before_any_scf(tmp_path) -> None:
+def test_adaptive_accepts_nvt_with_langevin_and_friction(tmp_path) -> None:
     text = HARMONIC_CONFIG.replace(
         'ensemble = "nve"',
         'ensemble = "nvt"\nintegrator = "langevin"\nfriction_per_fs = 0.01')
-    with pytest.raises(ConfigError, match="supports ensemble = 'nve' only"):
-        load_config(write(tmp_path, text))
+    config = load_config(write(tmp_path, text))
+    assert config.task.mode == "adaptive"
+    assert config.dynamics.ensemble == "nvt"
+    assert config.dynamics.integrator == "langevin"
+    assert config.dynamics.friction_per_fs == 0.01
 
 
 def test_run_id_rejects_path_separators(tmp_path) -> None:

@@ -3,8 +3,10 @@
 ``harmonic`` is the offline demo: analytic builtin backends, a small H2O
 molecule, and policy/verification settings that exercise anchoring,
 acceptance, checks, checkpoints and resume in a few seconds without any
-external program.  The numbers are demonstration values, not accuracy
-recommendations for any material.
+external program.  ``harmonic-nvt`` is the plain NVT variant;
+``harmonic-adaptive-nvt`` runs the same toy adaptively under Langevin
+dynamics (fixed base model, re-anchoring supported).  The numbers are
+demonstration values, not accuracy recommendations for any material.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from pathlib import Path
 
 from pyraimd2.workflows.setup import WorkflowError
 
-TEMPLATES = ("harmonic", "harmonic-nvt")
+TEMPLATES = ("harmonic", "harmonic-nvt", "harmonic-adaptive-nvt")
 
 HARMONIC_CONFIG = """\
 # Pyramid configuration — harmonic offline demo (schema_version 1).
@@ -118,8 +120,40 @@ thermostat_seed = 123             # new-run thermostat stream (resume restores i
 velocity_seed = 7"""),
     ("[reference]", "[policy]", "[verification]"))
 
+HARMONIC_ADAPTIVE_NVT_CONFIG = HARMONIC_CONFIG.replace(
+    '# Pyramid configuration — harmonic offline demo (schema_version 1).',
+    '# Pyramid configuration — harmonic offline adaptive-NVT demo\n'
+    '# (schema_version 1): a fixed surrogate model drives Langevin dynamics\n'
+    '# under the energetic force-error policy with anchoring and independent\n'
+    '# reference checks.  The base model is frozen for the whole run\n'
+    '# (online training is not available for adaptive NVT); re-anchoring is\n'
+    '# supported and recorded per segment.'
+).replace(
+    'id = "harmonic-demo"', 'id = "harmonic-adaptive-nvt-demo"'
+).replace(
+    'directory = "runs/harmonic-demo"',
+    'directory = "runs/harmonic-adaptive-nvt-demo"'
+).replace(
+    """[dynamics]
+ensemble = "nve"
+timestep_fs = 0.5
+steps = 20
+temperature_K = 300.0             # used only when the structure has no velocities
+velocity_seed = 7""",
+    """[dynamics]
+ensemble = "nvt"
+integrator = "langevin"
+timestep_fs = 0.5
+steps = 20
+temperature_K = 300.0             # bath target temperature
+friction_per_fs = 0.01            # bath coupling (required for NVT)
+thermostat_seed = 123             # new-run thermostat stream (resume restores it)
+velocity_seed = 7""")
+
 _CONTENT = {"harmonic": (HARMONIC_CONFIG, HARMONIC_STRUCTURE),
-            "harmonic-nvt": (HARMONIC_NVT_CONFIG, HARMONIC_STRUCTURE)}
+            "harmonic-nvt": (HARMONIC_NVT_CONFIG, HARMONIC_STRUCTURE),
+            "harmonic-adaptive-nvt": (HARMONIC_ADAPTIVE_NVT_CONFIG,
+                                      HARMONIC_STRUCTURE)}
 
 
 def write_template(template: str, output_dir: str | Path, *,

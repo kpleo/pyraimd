@@ -444,6 +444,42 @@ def prepare_run_directory(config: PyramidConfig, *, engine: object | None,
             "backend": config.surrogate.name,
             "fingerprint": fingerprint_of(surrogate)}),
     }
+    if config.task.kind == "md":
+        # The MD parameters and the effective random-stream identities are
+        # part of the run record (M3A-4): NVT derives the velocity/bath (and,
+        # in adaptive mode, the check) streams by fixed role
+        # (role-derive-v1); NVE keeps the historical raw seeds.  The same
+        # values appear in the RUN_START event's streams block.
+        from pyraimd2.loop.integrators import STREAM_SCHEME, derive_stream_seed
+
+        dynamics = config.dynamics
+        nvt = dynamics.ensemble == "nvt"
+        manifest["dynamics"] = {
+            "ensemble": dynamics.ensemble,
+            "integrator": dynamics.integrator,
+            "timestep_fs": dynamics.timestep_fs,
+            "temperature_K": dynamics.temperature_K,
+            "friction_per_fs": dynamics.friction_per_fs,
+            "thermostat_seed": dynamics.thermostat_seed,
+            "velocity_seed": dynamics.velocity_seed,
+        }
+        streams = {
+            "scheme": STREAM_SCHEME if nvt else None,
+            "velocity_seed": (derive_stream_seed(dynamics.velocity_seed,
+                                                 "velocity")
+                              if nvt else dynamics.velocity_seed),
+        }
+        if nvt:
+            raw_bath = (dynamics.thermostat_seed
+                        if dynamics.thermostat_seed is not None
+                        else config.run.seed)
+            streams["thermostat_seed"] = derive_stream_seed(raw_bath,
+                                                            "thermostat")
+        if config.task.mode == "adaptive":
+            streams["check_seed"] = (
+                derive_stream_seed(config.verification.seed, "verification")
+                if nvt else config.verification.seed)
+        manifest["streams"] = streams
     _write_json_atomic(run_dir / "manifest.json", manifest)
     return run_dir
 
