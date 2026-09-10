@@ -227,7 +227,7 @@ def test_tampered_legacy_digest_is_refused(tmp_path):
     digest = boundary["state_digest"]
     boundary["state_digest"] = ("0" if digest[0] != "0" else "1") + digest[1:]
     _rewrite_events(run_dir, rewritten)
-    with pytest.raises(Exception, match="legacy boundary digest"):
+    with pytest.raises(Exception, match="no known unmarked format"):
         resume_workflow(run_dir, 1, verbose=False, handle_sigint=False)
 
 
@@ -299,3 +299,146 @@ def test_healed_step_record_carries_the_complete_boundary(tmp_path):
         np.testing.assert_allclose(healed_row.toatoms().get_momenta(),
                                    control_row.toatoms().get_momenta(),
                                    rtol=0, atol=1e-12)
+
+
+# --- S1: the 182cc8d unmarked dual-digest records ------------------------------
+#
+# The 182cc8d plain driver wrote step records with an array state_digest and
+# a JSON boundary_digest that does NOT cover the bath stream, and no format
+# marker; old healed records of that lineage may carry only the array digest.
+# The fixtures below reproduce a real 182cc8d wheel's production bit-for-bit
+# (same template config and seeds) and pin its actual recorded digests as
+# numbers — no private paths, artifacts or packages are included.
+
+
+def _write_182_config(tmp_path, *, ensemble):
+    from pyraimd2.workflows.templates import write_template
+
+    path = write_template("harmonic-nvt", tmp_path)
+    text = path.read_text().replace("steps = 20", "steps = 5")
+    if ensemble == "nve":
+        text = text.replace(
+            'ensemble = "nvt"\nintegrator = "langevin"\n',
+            'ensemble = "nve"\n').replace(
+            'friction_per_fs = 0.01            # bath coupling (required for NVT)\n'
+            'thermostat_seed = 123             # new-run thermostat stream (resume restores it)\n',
+            '')
+    path.write_text(text)
+    return load_config(path)
+
+
+def _as_182cc8d_record(event, store, events, run_id):
+    """Rewrite a current step event into 182cc8d's semantics: array
+    state_digest (unchanged), JSON boundary_digest without the bath stream,
+    no format marker; the NVT thermostat_rng field is kept, as then."""
+    rewritten = {key: value for key, value in event.items()
+                 if key != "digest_format"}
+    evaluation_id = int(event["step_id"]) + 1
+    row = store.committed_row(events, run_id, evaluation_id)
+    commit = next(
+        e for e in events if e.get("type") == "evaluation_committed"
+        and int((e.get("context") or {})["evaluation_id"]) == evaluation_id)
+    boundary = md_module._boundary_from_event(row, event, commit)
+    rewritten["boundary_digest"] = boundary.legacy_digest()
+    return rewritten
+
+
+# The digests the real 182cc8d wheel recorded for these two 5-step runs.
+_182_NVE_DIGESTS = ("9da390babde44b3a5610136b", "0f790128f0b5dcff3c943e15")
+_182_NVT_DIGESTS = ("b1937e74ebd0eb91ab98c16b", "3858508f7212259f77203f35")
+
+
+@pytest.mark.parametrize("ensemble,expected",
+                         [("nve", _182_NVE_DIGESTS), ("nvt", _182_NVT_DIGESTS)])
+def test_182cc8d_dual_format_records_verify_on_resume(tmp_path, ensemble,
+                                                      expected):
+    config = _write_182_config(tmp_path / ensemble, ensemble=ensemble)
+    run_workflow(config, verbose=False, handle_sigint=False)
+    run_dir = config.run.directory
+    events = _read_events(run_dir)
+    store = Store(run_dir / "trajectory.db")
+    rewritten = [_as_182cc8d_record(e, store, events, config.run.id)
+                 if e.get("type") == STEP_COMPLETED else e for e in events]
+    store.close()
+    # the fixture reproduces the real 182cc8d production bit-for-bit
+    boundary = [e for e in rewritten if e.get("type") == STEP_COMPLETED][-1]
+    assert (boundary["state_digest"], boundary["boundary_digest"]) == expected
+    _rewrite_events(run_dir, rewritten)
+
+    result = resume_workflow(run_dir, 1, verbose=False, handle_sigint=False)
+    assert result.steps_completed == 6
+    steps = _step_events(run_dir)
+    # old records verified, never rewritten; the continuation is v2
+    assert all("digest_format" not in e for e in steps[:5])
+    assert steps[5]["digest_format"] == DIGEST_FORMAT
+    # and the continuation is the same trajectory a v2 run produces
+    control = _write_182_config(tmp_path / f"{ensemble}-control",
+                                ensemble=ensemble)
+    text_path = control.source_path
+    text_path.write_text(text_path.read_text().replace(
+        "steps = 5", "steps = 6"))
+    control = load_config(text_path)
+    run_workflow(control, verbose=False, handle_sigint=False)
+    from test_nvt import rows as _nvt_rows
+
+    for row_a, row_b in zip(_nvt_rows(run_dir, config.run.id),
+                            _nvt_rows(control.run.directory, config.run.id)):
+        np.testing.assert_array_equal(row_a.toatoms().positions,
+                                      row_b.toatoms().positions)
+        np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
+                                      row_b.toatoms().get_momenta())
+
+
+def test_182cc8d_dual_format_tamper_is_refused(tmp_path):
+    for field in ("state_digest", "boundary_digest"):
+        config = _write_182_config(tmp_path / f"nvt-{field}", ensemble="nvt")
+        run_workflow(config, verbose=False, handle_sigint=False)
+        run_dir = config.run.directory
+        events = _read_events(run_dir)
+        store = Store(run_dir / "trajectory.db")
+        rewritten = [_as_182cc8d_record(e, store, events, config.run.id)
+                     if e.get("type") == STEP_COMPLETED else e
+                     for e in events]
+        store.close()
+        boundary = [e for e in rewritten
+                    if e.get("type") == STEP_COMPLETED][-1]
+        value = boundary[field]
+        boundary[field] = ("0" if value[0] != "0" else "1") + value[1:]
+        _rewrite_events(run_dir, rewritten)
+        with pytest.raises(Exception, match="does not match the committed row"):
+            resume_workflow(run_dir, 1, verbose=False, handle_sigint=False)
+
+
+def test_array_only_unmarked_record_verifies_and_tamper_refused(tmp_path):
+    # Old healed records may carry only the array digest (plus the NVT
+    # thermostat field): verified by array semantics, not silently skipped.
+    config = _write_182_config(tmp_path / "nvt-heal", ensemble="nvt")
+    run_workflow(config, verbose=False, handle_sigint=False)
+    run_dir = config.run.directory
+    events = _read_events(run_dir)
+    rewritten = []
+    for event in events:
+        if event.get("type") == STEP_COMPLETED:
+            event = {key: value for key, value in event.items()
+                     if key not in ("digest_format", "boundary_digest")}
+        rewritten.append(event)
+    _rewrite_events(run_dir, rewritten)
+    result = resume_workflow(run_dir, 1, verbose=False, handle_sigint=False)
+    assert result.steps_completed == 6
+
+    config = _write_182_config(tmp_path / "nvt-heal-tamper", ensemble="nvt")
+    run_workflow(config, verbose=False, handle_sigint=False)
+    run_dir = config.run.directory
+    events = _read_events(run_dir)
+    rewritten = []
+    for event in events:
+        if event.get("type") == STEP_COMPLETED:
+            event = {key: value for key, value in event.items()
+                     if key not in ("digest_format", "boundary_digest")}
+        rewritten.append(event)
+    boundary = [e for e in rewritten if e.get("type") == STEP_COMPLETED][-1]
+    value = boundary["state_digest"]
+    boundary["state_digest"] = ("0" if value[0] != "0" else "1") + value[1:]
+    _rewrite_events(run_dir, rewritten)
+    with pytest.raises(Exception, match="no known unmarked format"):
+        resume_workflow(run_dir, 1, verbose=False, handle_sigint=False)

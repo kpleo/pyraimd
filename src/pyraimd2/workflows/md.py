@@ -1391,16 +1391,44 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                             f"({boundary_step.get('boundary_digest')} vs "
                             f"{actual})")
                 elif digest_format is None:
-                    # The previous development batch: the single digest is
-                    # the complete-boundary JSON identity without the bath
-                    # stream; rebuild and verify it under that semantics —
-                    # old records are verified, never rewritten.
-                    mismatches = []
-                    actual = boundary.legacy_digest()
-                    if actual != boundary_step["state_digest"]:
-                        mismatches.append(
-                            f"legacy boundary digest "
-                            f"({boundary_step['state_digest']} vs {actual})")
+                    # Unmarked historical records, each verified by the
+                    # semantics it was written with — verified, never
+                    # rewritten:
+                    # - the previous development batch's single JSON digest
+                    #   (state_digest alone);
+                    # - 182cc8d's dual record: array state_digest plus a JSON
+                    #   boundary_digest that does NOT cover the bath stream
+                    #   (the thermostat_rng field still restores the bath per
+                    #   the existing policy, but this format never proved the
+                    #   complete RNG identity);
+                    # - old healed records that may carry only the array
+                    #   digest.
+                    array_digest = state_digest(atoms.positions,
+                                                atoms.get_momenta())
+                    recorded = boundary_step["state_digest"]
+                    if boundary_step.get("boundary_digest") is not None:
+                        mismatches = []
+                        if recorded != array_digest:
+                            mismatches.append(
+                                f"array state digest ({recorded} vs "
+                                f"{array_digest})")
+                        actual = boundary.legacy_digest()
+                        if boundary_step["boundary_digest"] != actual:
+                            mismatches.append(
+                                f"boundary digest "
+                                f"({boundary_step['boundary_digest']} vs "
+                                f"{actual})")
+                    elif recorded == boundary.legacy_digest():
+                        mismatches = []  # single-JSON semantics verified
+                    elif recorded == array_digest:
+                        mismatches = []  # array-only heal record verified
+                    else:
+                        legacy = boundary.legacy_digest()
+                        mismatches = [
+                            (f"state digest matches no known unmarked format "
+                             f"({recorded} vs legacy {legacy} / array "
+                             f"{array_digest})"),
+                        ]
                 else:
                     raise WorkflowError(
                         f"the step-{current - 1} record claims an unknown "
