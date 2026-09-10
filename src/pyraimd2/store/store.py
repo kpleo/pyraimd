@@ -124,9 +124,9 @@ class Store:
         row_id = int(
             self._db.write(atoms, run_id=run_id, step=int(step), route=route, data=data)
         )
-        # Durability is per write: no open transaction may outlive a step
-        # announcement (the event log commits first, the row must follow
-        # immediately, and a crash must never find it uncommitted).
+        # Durability is per write: the row is committed before any step
+        # announcement may refer to it (no open transaction may outlive a
+        # step boundary, and a crash must never find it uncommitted).
         self._db.connection.commit()
         return row_id
 

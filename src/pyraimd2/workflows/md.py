@@ -248,6 +248,9 @@ def _run_adaptive(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         finally:
             _finalize_quietly(outputs)
             runner.close()
+            # The workflow created this store and the runner does not own
+            # caller-passed stores — close our own (S0a).
+            store.close()
     after = _complete_steps(run_dir, config.run.id)
     stopped = _stopped_early(run_dir, config.run.id)
     if verbose:
@@ -719,6 +722,7 @@ class _PlainDriver:
 def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                verbose: bool, handle_sigint: bool) -> WorkflowResult:
     event_log = EventLog(run_dir)
+    driver = None
     try:
         # The reference is created with the run's event log when its factory
         # accepts one (QE density I/O then enters the ledger).
@@ -729,11 +733,14 @@ def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         driver = _PlainDriver(config, atoms, backend, run_dir,
                               event_log=event_log)
         # Outputs construction joins the ownership scope: any setup failure
-        # releases the log this call took before the error continues (R4).
+        # releases the log AND the driver's store before the error
+        # continues (R4/S0a).
         outputs = RunOutputs(run_dir, config.run.id,
                              trajectory_interval_steps=config.output.trajectory_interval_steps,
                              summary_interval_steps=config.output.summary_interval_steps)
     except Exception:
+        if driver is not None:
+            driver.close()
         event_log.close()
         _remove_fresh_event_log(run_dir)
         raise
@@ -1254,6 +1261,7 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
     # driver's own finally — boundary healing/verification, driver or
     # outputs construction — releases it before the error continues (R4).
     store = None
+    driver = None
     try:
         current = _complete_steps(run_dir, config.run.id)
         if current < int(state["nsteps"]):
@@ -1409,6 +1417,8 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                               stopped_early=outcome["stopped"], summary=None)
     except Exception:
         # idempotent: the driver's own finally may already have closed them
+        if driver is not None:
+            driver.close()
         if store is not None:
             store.close()
         event_log.close()
