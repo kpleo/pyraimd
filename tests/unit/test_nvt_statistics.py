@@ -21,9 +21,12 @@ rather than a guessed precision:
    quantiles of R under 4000 fixed-seed replicas of the exact discrete
    process (an iid-block chi^2 reference under-spreads here — adjacent
    block means correlate and block means of x^2 are skewed).  The two
-   timesteps run with different seeds — same-seed kinetic estimates are
-   positively correlated (the oracle measures ~0.24), so a shared seed
-   would understate the joint error.
+   timesteps run with different seeds: same-seed kinetic estimates are
+   positively correlated (the oracle measures ~0.24), and
+   Var(A-B) = Var(A) + Var(B) - 2Cov(A,B) — dropping that positive
+   covariance would overstate the difference's uncertainty, so the
+   comparison uses independent streams whose quadrature error model is
+   exact.
 3. The long 6000-sample run stays as a coarse sanity check, marked ``slow``
    (runs under ``--runslow``; the CI statistical job executes it).  Its
    gates likewise use oracle SEMs at its own budget (about 8.0%, 7.4% and
@@ -239,9 +242,12 @@ def _sem_acceptance_ratio_band(a, b, cov, w, *, warmup, n_samples, n_blocks,
     measured rel. std of R is ~0.37 at the long budget vs chi^2_24's 0.29,
     and the true 0.9995 upper quantile of R is ~3.2 vs chi^2's 2.23.  The
     nominal two-sided false-alarm budget is alpha=1e-3 (binomial resolution
-    at 4000 replicas ~5e-4 per tail).  Resolution: a 2x SEM miscalibration
-    gives R=4, outside the band; the check exists to catch gross error-model
-    breakage, while physical resolution lives in the 4x-exact-SEM mean gates.
+    at 4000 replicas ~5e-4 per tail — empirical replica quantiles are not
+    an exact coverage guarantee).  Resolution: a 2x SEM miscalibration
+    multiplies a realization's R by 4, far beyond the band's bulk, so the
+    check catches gross error-model breakage; it is not a calibrated
+    detection guarantee at that factor.  Physical resolution lives in the
+    4x-exact-SEM mean gates.
     """
     rng = np.random.default_rng(mc_seed)
     L = n_samples // n_blocks
@@ -274,9 +280,12 @@ def _sem_acceptance_ratio_band(a, b, cov, w, *, warmup, n_samples, n_blocks,
 
 def test_short_sampling_chain_matches_oracle_gates(tmp_path):
     """One short run per timestep (independent seeds — same-seed estimates
-    are positively correlated).  Gates: 4x the oracle's exact SEM at this
-    budget, with the measured block SEM inside a band around its exact
-    expectation (~10% low bias included), not a hardcoded precision."""
+    are positively correlated, see the module note).  Gates: 4x the
+    oracle's exact SEM at this budget, with the measured block SEM inside a
+    band around its exact expectation, not a hardcoded precision.  At this
+    short budget the block SEM reads ~18-22% low across the three
+    estimators — the long-budget ~10% note does not transfer; the band's
+    exact E[sem^2] normalization already absorbs that bias."""
     a, b = _linear_update(0.5)
     cov = _stationary_covariance(a, b)
     oracle = _observable_stats(a, cov, SHORT_SAMPLES, SHORT_BLOCKS)

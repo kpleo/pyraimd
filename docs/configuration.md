@@ -88,18 +88,23 @@ any other version is rejected — see *Schema migration*.
   separators.
 - `directory` (path, required): the run directory, resolved relative to the
   configuration file.
-- `seed` (integer, default 0): base seed. `dynamics.velocity_seed` and
-  `verification.seed` default to it; set them explicitly to decouple the
-  streams.
+- `seed` (integer, default 0): base seed. `dynamics.velocity_seed`,
+  `dynamics.thermostat_seed` and `verification.seed` default to it; set
+  them explicitly to decouple the streams. Plain NVT derives its
+  velocity-initialization and bath streams from these seeds by a fixed
+  role convention (`role-derive-v1`), so the two never share a generator
+  even when both fields default to the same value; the effective stream
+  identities are recorded in the run's RUN_START event (`streams` block).
+  The independent-check stream exists only in adaptive mode.
 
 ### [task]
 
 - `kind`: `singlepoint` (one backend evaluation), `relax` (fixed-model
-  optimization with ASE FIRE/BFGS), `md` (NVE dynamics).
+  optimization with ASE FIRE/BFGS), `md` (plain NVE or NVT dynamics).
 - `mode`: `adaptive` (energetic MD: anchored surrogate forces with
   independent reference checks), `reference` (use the reference engine),
   `surrogate` (use the frozen surrogate). The latter two modes apply to
-  singlepoint, relaxation and NVE tasks.
+  singlepoint, relaxation and plain MD tasks, NVE or NVT.
 
 Mode rules:
 
