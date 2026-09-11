@@ -379,3 +379,134 @@ def test_a_record_only_callback_regression_is_in_place(tmp_path):
     assert sum(1 for p in props if p["accepted"]) >= 1
     assert any(p["reason"] == "forecast_accepted" for p in props)
     assert seen
+
+
+# --- M3B-3 B: one candidate rejection and one publish failure ----------------
+
+
+def test_b_candidate_rejection_rolls_back_and_run_continues(tmp_path):
+    # One candidate comes out energy-force inconsistent: the guard rejects
+    # and rolls back to the parent (its state restored — the toy's internal
+    # call counter included, so a once-only break must live outside the
+    # state), the attempt's cost stays billed on the ledger, and the next
+    # firing publishes normally.
+    class BreakFirstCandidate(TrainableHarmonic):
+        def __init__(self):
+            super().__init__()
+            self._broken_once = False
+
+        def finetune(self, labels):
+            report = super().finetune(labels)
+            if not self._broken_once:
+                self._broken_once = True
+                self.bias = 10.0  # force without an energy term
+            return report
+
+    run_dir = tmp_path / "rej"
+    model = BreakFirstCandidate()
+    updater = _a_policy(model)
+    run_dir, model, _engine = _run_nvt(run_dir, updater=updater,
+                                       model=model, steps=12)
+    evs = events(run_dir)
+    rejections = [e for e in evs if e["type"] == "update_rejected"]
+    assert len(rejections) == 1
+    # the uniform bias is the translation zero mode that the guard's
+    # energy-force consistency directions exclude by construction (single
+    # atoms check it directly) — the force-growth criterion catches it here
+    assert rejections[0]["reason"] == "force_growth"
+    updates = [e for e in evs if e["type"] == "model_update"]
+    assert updates  # a later, consistent candidate publishes
+    # the rejected attempt kept the parent generation zero at its commit;
+    # the first published generation is 1 — no phantom advance
+    assert updates[0]["generation"] == 1
+    from pyraimd2.runtime.identity import model_id_for
+
+    assert rejections[0]["model_id"] == model_id_for(model, 0)
+    # the rejection's real costs stay on the ledger (one training callback
+    # task per consumed label, including the rejected attempt's), while the
+    # rejection is not counted as a successful update
+    training_tasks = [t for t in _tasks(run_dir)
+                      if t.get("operation") == "training"]
+    assert len(training_tasks) == updater.n_consumed
+    assert updater.n_rejected == 1
+    assert updater.n_updates == len(updates)
+    # consumption stayed consistent: the rejected attempt's labels are
+    # consumed exactly once (durable label ids), so no resume re-delivers
+    consumed = [e for e in evs if e["type"] == "label_consumed"]
+    assert any(e["label_id"] == rejections[0]["origin_label_id"]
+               for e in consumed)
+    # and the run completed its physics
+    summary = next(e for e in evs if e["type"] == "run_summary")
+    assert summary["n_steps"] == 12
+
+
+def test_b_publish_failure_stops_then_resume_retries_the_update(tmp_path):
+    # The artifact publish fails once (after training succeeded): the
+    # rollback domain undoes the candidate, the run stops without any
+    # half-published model, and the resume re-delivers the uncommitted
+    # label — the retry is billed as a marked recovery task while the
+    # crashed attempt's own task stays on the ledger.
+    crash_dir = tmp_path / "pub"
+    model = TrainableHarmonic()
+    updater = _a_policy(model)
+    runner = None
+    run_dir = crash_dir
+    run_dir.mkdir()
+    from pyraimd2.runtime.models import ModelRegistry
+
+    def fail_first_publish(self, model_id, record):
+        raise OSError("injected publish failure")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(ModelRegistry, "publish", fail_first_publish)
+    try:
+        with pytest.raises(OSError, match="injected publish failure"):
+            runner = EnergeticRunner(
+                _atoms(), model, Reference(k=K_REF),
+                Store(run_dir / "trajectory.db"), "run", run_dir=run_dir,
+                event_log=EventLog(run_dir), checkpoint_interval_steps=4,
+                force_budget=0.5, timestep_fs=0.5, time_cap_fs=100.0,
+                transverse_cap=1.0, check_probability=0.5, check_seed=7,
+                integrator_spec=_spec(), on_label=updater)
+            runner.run(12)
+    finally:
+        monkey.undo()
+    evs = events(run_dir)
+    assert not [e for e in evs if e["type"] == "model_update"]
+    # nothing half-published: no model-id artifact directory exists
+    assert [p for p in (run_dir / "models").iterdir()
+            if p.is_dir() and p.name != "state-arrays"] == []
+    # the parent model state survived the rollback
+    assert model.k == 0.8
+    crashed_training = [t for t in _tasks(run_dir)
+                        if t.get("operation") == "training"]
+    assert len(crashed_training) >= 1  # the attempt's cost stayed billed
+
+    model2 = TrainableHarmonic()
+    updater2 = _a_policy(model2)
+    resumed = EnergeticRunner.resume(
+        run_dir, model2, Reference(k=K_REF), updater=updater2,
+        event_log_force=True, checkpoint_interval_steps=4)
+    resumed.run(13 - resumed.calc.n_evaluations)
+    resumed.close()
+    evs = events(run_dir)
+    updates = [e for e in evs if e["type"] == "model_update"]
+    assert updates  # the retried consumption published
+    recovery_tasks = [t for t in _tasks(run_dir) if t.get("recovery")]
+    assert len(recovery_tasks) >= 1  # the retry is billed and marked
+    assert all(t["status"] == "success" for t in recovery_tasks)
+    # the model lineage is the one the uninterrupted run would have
+    assert updates[0]["generation"] == 1
+
+    # final state equals an uninterrupted control bit-for-bit
+    control_dir = tmp_path / "control"
+    cmodel = TrainableHarmonic()
+    _run_nvt(control_dir, updater=_a_policy(cmodel), model=cmodel, steps=12)
+    rows_a, rows_b = _rows(run_dir), _rows(control_dir)
+    assert len(rows_a) == len(rows_b)
+    for row_a, row_b in zip(rows_a, rows_b):
+        np.testing.assert_array_equal(row_a.toatoms().positions,
+                                      row_b.toatoms().positions)
+        np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
+                                      row_b.toatoms().get_momenta())
+    assert model2.k == cmodel.k
