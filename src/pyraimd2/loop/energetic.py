@@ -1773,7 +1773,92 @@ class EnergeticCalculator(Calculator):
             if violation:
                 self._next_reason = "previous_independent_check_violation"
 
-    def _redeliver_label(self, store: Store, label_id: str) -> None:
+    def _prepared_candidate(self, label_id: str, models_dir: Path) -> dict | None:
+        """The saved-but-uncommitted candidate for this label's transaction
+        (S1): an artifact exists at the next generation's model id, written
+        by a publish that returned before its MODEL_UPDATE commit.
+
+        Validated against the bindings — parent model identity, source
+        label IDs (the updater's restored pending queue plus this label),
+        and the update recipe — before its publication may be completed.
+        A present artifact that fails validation refuses resume as an
+        inconsistent run directory; none ever activates by name alone.
+        """
+        next_generation = self._model_generation + 1
+        expected_id = model_id_for(self.surrogate, next_generation)
+        artifact = _model_artifact(models_dir, expected_id)
+        if artifact is None:
+            return None
+        problems = []
+        if int(artifact.get("generation", -1)) != next_generation:
+            problems.append(
+                f"generation {artifact.get('generation')!r} != "
+                f"{next_generation}")
+        if artifact.get("parent_model_id") != self.model_id:
+            problems.append("parent model identity mismatch")
+        artifact_labels = [str(v) for v in artifact.get("label_ids", [])]
+        state = (self.on_label.state_dict()
+                 if _is_stateful(self.on_label) else {})
+        pending_ids = [str(item["label_id"])
+                       for item in (state or {}).get("pending", [])]
+        if artifact_labels != pending_ids + [label_id]:
+            problems.append(
+                f"label set {artifact_labels} != restored pending queue "
+                f"{pending_ids} + origin {label_id}")
+        policy = getattr(self.on_label, "policy", None)
+        recipe = (policy.recipe()
+                  if policy is not None and callable(getattr(policy, "recipe", None))
+                  else None)
+        if recipe is not None and artifact.get("recipe") is not None \
+                and artifact.get("recipe") != recipe:
+            problems.append("update recipe mismatch")
+        if problems:
+            raise ResumeError(
+                f"the saved candidate artifact for {expected_id!r} does not "
+                "match this run's persisted update facts "
+                f"({'; '.join(problems)}); the run directory is "
+                "inconsistent — refusing to complete or overwrite it")
+        return artifact
+
+    def _complete_prepared_candidate(self, pending: _Pending,
+                                     artifact: dict, violation: bool | None,
+                                     label_direction: np.ndarray | None,
+                                     models_dir: Path) -> None:
+        """Finish the validated saved-candidate transaction without
+        retraining (S1): adopt the artifact's updater state, emit the
+        MODEL_UPDATE commit with exactly the live path's fields (its
+        idempotent key dedups a partial re-write), then the post-update
+        bookkeeping the live path would have done."""
+        new_model_id = str(artifact["model_id"])
+        updater_state = artifact.get("updater_state")
+        if _is_stateful(self.on_label) and updater_state is not None:
+            self.on_label.load_state_dict(resolve_artifact_state(
+                updater_state,
+                Path(models_dir) / new_model_id.replace("/", "_")))
+        self._emit_once(
+            f"model-update:{pending.label_id}:eval-{pending.index}",
+            MODEL_UPDATE,
+            generation=int(artifact["generation"]),
+            model_id=new_model_id,
+            origin_evaluation_id=pending.index,
+            origin_label_id=pending.label_id,
+            origin_violation=bool(violation),
+            label_ids=list(artifact["label_ids"]),
+            # the digest of the stored artifact — the live path's value,
+            # since the registry file is the identical bytes
+            artifact_digest=artifact_digest(artifact),
+            updater_state=updater_state)
+        self._model_generation = int(artifact["generation"])
+        self._anchor = None
+        self._next_reason = "model_update_requires_recalibration"
+        if not violation:
+            self._deferred_origin = _CalibrationOrigin(
+                pending.atoms.copy(), pending.index,
+                copy.deepcopy(pending.label),
+                label_id=pending.label_id, direction=label_direction)
+
+    def _redeliver_label(self, store: Store, label_id: str,
+                         models_dir: Path) -> None:
         """Re-deliver one committed-but-unconsumed label to the restored
         updater after a crash (M3B-2/C window: the evaluation commit landed,
         the consumption/update transaction did not).
@@ -1781,8 +1866,10 @@ class EnergeticCalculator(Calculator):
         The observation is rebuilt from the authoritative commit and its
         bound row — never recomputed; the deferred-calibration direction is
         recomputed from the committed rows exactly as the live path
-        captured it.  The updater's restored state is pre-consumption, so
-        its own label-ID dedup keeps this a single logical consumption.
+        captured it.  A validated saved-but-uncommitted candidate is
+        completed without retraining (S1); anything else goes through the
+        normal callback transaction, whose label-ID dedup keeps this a
+        single logical consumption.
         """
         commit = next(e for e in self._event_log.iter_events()
                       if e.get("type") == EVALUATION_COMMITTED
@@ -1805,10 +1892,15 @@ class EnergeticCalculator(Calculator):
             [], None, [], None, None, bool(commit.get("checked")), None, {},
             label=label, label_id=label_id)
         self._active_evaluation_id = evaluation_id
-        self._consume_label(pending, commit.get("violation"),
-                            self._origin_direction(store, evaluation_id,
-                                                   atoms.positions),
-                            recovery=True)
+        violation = commit.get("violation")
+        direction = self._origin_direction(store, evaluation_id,
+                                           atoms.positions)
+        candidate = self._prepared_candidate(label_id, models_dir)
+        if candidate is not None:
+            self._complete_prepared_candidate(pending, candidate, violation,
+                                              direction, models_dir)
+            return
+        self._consume_label(pending, violation, direction, recovery=True)
 
     def calculate(self, atoms: Atoms | None = None,
                   properties: tuple[str, ...] = ("energy", "forces"),
@@ -2440,7 +2532,7 @@ class EnergeticRunner:
             # attempt keeps its own billed task and the retry is billed as a
             # separate recovery task.
             for label_id in unconsumed:
-                calc._redeliver_label(store, label_id)
+                calc._redeliver_label(store, label_id, run_dir / "models")
         # Boundary atoms: full-step momenta of the last committed evaluation.
         atoms = calc._identity_from_arrays(arrays)
         if calc._projection is not None:

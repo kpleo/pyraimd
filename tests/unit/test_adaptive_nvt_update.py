@@ -813,3 +813,119 @@ def test_c_model_update_committed_step_not(tmp_path):
                       remaining=20 - kill_eval, control_model=cmodel)
     # zero recovery retries: everything up to the crash was committed
     assert not [t for t in _tasks(crash_dir) if t.get("recovery")]
+
+
+# --- S1: saved-but-uncommitted candidate recovery ------------------------------
+
+_S1_CHILD = '''
+import os
+import sys
+from pathlib import Path
+
+from test_adaptive_nvt_update import FileCountingHarmonic, _run_nvt
+from pyraimd2.loop import GuardedUpdater, UpdatePolicy
+from pyraimd2.runtime.events import EventLog
+
+run_dir = Path(os.environ["RUN_DIR"])
+original = EventLog.append_once
+
+
+def patched(self, key, event_type, payload):
+    if event_type == "model_update":
+        os._exit(73)  # after publish returned, before the commit lands
+    return original(self, key, event_type, payload)
+
+
+EventLog.append_once = patched
+model = FileCountingHarmonic(os.environ["FIT_FILE"])
+_run_nvt(run_dir, updater=GuardedUpdater(model, UpdatePolicy(n_label=2,
+                                                             guard_size=1)),
+         model=model, steps=6)
+'''
+
+
+class FileCountingHarmonic(TrainableHarmonic):
+    """finetune calls counted in a shared file — outside the rollbackable
+    state, so an external counter sees every real attempt."""
+
+    def __init__(self, count_file, **kwargs):
+        super().__init__(**kwargs)
+        self.count_file = str(count_file)
+
+    def finetune(self, labels):
+        path = Path(self.count_file)
+        path.write_text(str(int(path.read_text()) + 1)
+                        if path.exists() else "1")
+        return super().finetune(labels)
+
+
+def _s1_updater(model):
+    return GuardedUpdater(model, UpdatePolicy(n_label=2, guard_size=1))
+
+
+def test_s1_saved_candidate_completes_without_retraining(tmp_path):
+    # The P1 window: ModelRegistry.publish returned, MODEL_UPDATE never
+    # committed.  Recovery must validate the saved candidate against the
+    # parent model / label IDs / recipe and finish its publication — never
+    # retrain into the same model id.
+    control_dir = tmp_path / "control"
+    control_model = FileCountingHarmonic(tmp_path / "control.fits")
+    _run_nvt(control_dir, updater=_s1_updater(control_model),
+             model=control_model, steps=6)
+
+    crash_dir = tmp_path / "crash"
+    fit_file = tmp_path / "crash.fits"
+    child = tmp_path / "child.py"
+    child.write_text(textwrap.dedent(_S1_CHILD))
+    env = dict(os.environ, RUN_DIR=str(crash_dir), FIT_FILE=str(fit_file),
+               PYTHONPATH=os.pathsep.join(
+                   [str(Path(__file__).parents[2] / "src"),
+                    str(Path(__file__).parent)]))
+    result = subprocess.run([sys.executable, str(child)],
+                            env=env, capture_output=True, text=True,
+                            check=False)
+    assert result.returncode == 73, result.stderr[-500:]
+    # the candidate artifact exists, uncommitted
+    assert (crash_dir / "models" / "trainable-harmonic#g1"
+            / "state.json").is_file()
+    assert not [e for e in events(crash_dir) if e["type"] == "model_update"]
+    assert int(fit_file.read_text()) == 1  # exactly one real fit so far
+
+    model = FileCountingHarmonic(fit_file)
+    runner = EnergeticRunner.resume(
+        crash_dir, model, Reference(k=K_REF), updater=_s1_updater(model),
+        event_log_force=True, checkpoint_interval_steps=4)
+    # the saved candidate completed without retraining — still one real fit
+    assert int(fit_file.read_text()) == 1
+    runner.run(6 - (runner.calc.n_evaluations - 1))
+    runner.close()
+    # the continuation's second update trains live, exactly as the control:
+    # both runs end at two real fits — no retraining happened anywhere
+    assert int(fit_file.read_text()) == 2
+    assert int((tmp_path / "control.fits").read_text()) == 2
+    updates = [e for e in events(crash_dir) if e["type"] == "model_update"]
+    assert [e["generation"] for e in updates] == [1, 2]
+    assert runner.calc._model_generation == 2
+
+    rows_a, rows_b = _rows(crash_dir), _rows(control_dir)
+    assert len(rows_a) == len(rows_b)
+    for row_a, row_b in zip(rows_a, rows_b):
+        np.testing.assert_array_equal(row_a.toatoms().positions,
+                                      row_b.toatoms().positions)
+        np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
+                                      row_b.toatoms().get_momenta())
+    assert _model_chain(crash_dir) == _model_chain(control_dir)
+    assert model.k == control_model.k
+    # a second resume replays the committed updates: zero training
+    model2 = FileCountingHarmonic(fit_file)
+    runner2 = EnergeticRunner.resume(
+        crash_dir, model2, Reference(k=K_REF), updater=_s1_updater(model2),
+        event_log_force=True, checkpoint_interval_steps=4)
+    runner2.close()
+    assert int(fit_file.read_text()) == 2
+
+    # exactly one logical consumption per label across the whole log
+    ids = [str(e.get("label_id") or e.get("origin_label_id"))
+           for e in events(crash_dir)
+           if e["type"] in ("label_consumed", "model_update")]
+    assert len(ids) == len(set(ids))
