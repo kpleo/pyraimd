@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -80,16 +81,33 @@ class LeastSquaresHarmonic:
         items = list(labels)
         if not items:
             raise ValueError("finetune needs at least one (atoms, label) pair")
-        self.finetune_calls += 1
+        started = time.perf_counter()
+
+        def force_mse() -> float:
+            # Per-component force mean squared error over the TRAINING
+            # labels, in eV^2/angstrom^2 — a training-set measure of the
+            # fit, never an independent test error.
+            errors = []
+            for atoms, result in items:
+                delta = -self.k * atoms.positions - result.forces
+                errors.append(float((delta**2).mean()))
+            return float(np.mean(errors))
+
+        initial = force_mse()
         numerator = denominator = 0.0
         for atoms, result in items:
             x = atoms.positions
             numerator -= float((result.forces * x).sum())
             denominator += float((x**2).sum())
         self.k = numerator / denominator
-        return TrainReport(n_labels=len(items), n_epochs=1, initial_loss=1.0,
-                           final_loss=0.1, member_losses=(0.1,),
-                           wall_time_s=0.0)
+        self.finetune_calls += 1
+        final = force_mse()
+        # The measured wall time of the fit itself; the GuardedUpdater's
+        # outer task record bills the whole attempt (fit + guard) instead.
+        return TrainReport(n_labels=len(items), n_epochs=1,
+                           initial_loss=initial, final_loss=final,
+                           member_losses=(final,),
+                           wall_time_s=time.perf_counter() - started)
 
     def state_dict(self) -> dict:
         return {"k": self.k, "finetune_calls": self.finetune_calls}
@@ -101,16 +119,17 @@ class LeastSquaresHarmonic:
 
 def build(output: Path, *, resume: bool, force_unlock: bool,
           checkpoint_interval: int):
-    """Assemble runner pieces from public imports; returns the runner."""
-    store = None
+    """Assemble runner pieces from public imports; returns ``(runner,
+    store)`` — the store of a fresh run is caller-owned and must be closed
+    by the caller (a resumed runner owns and closes its own)."""
     if resume:
         model = LeastSquaresHarmonic()
         updater = GuardedUpdater(model, UpdatePolicy(n_label=2,
                                                      guard_size=1))
-        return EnergeticRunner.resume(
+        return (EnergeticRunner.resume(
             output, model, QuarticReference(), updater=updater,
             event_log_force=force_unlock,
-            checkpoint_interval_steps=checkpoint_interval)
+            checkpoint_interval_steps=checkpoint_interval), None)
     output.mkdir(parents=True, exist_ok=True)
     if (output / "trajectory.db").exists():
         raise FileExistsError(
@@ -128,13 +147,13 @@ def build(output: Path, *, resume: bool, force_unlock: bool,
                           friction_per_fs=0.01,
                           thermostat_seed=derive_stream_seed(123,
                                                              "thermostat"))
-    return EnergeticRunner(
+    return (EnergeticRunner(
         atoms, model, QuarticReference(), store, "guarded-nvt",
         run_dir=output, event_log=EventLog(output),
         checkpoint_interval_steps=checkpoint_interval,
         force_budget=0.5, timestep_fs=0.5, time_cap_fs=100.0,
         transverse_cap=1.0, check_probability=0.5, check_seed=7,
-        integrator_spec=spec, on_label=updater)
+        integrator_spec=spec, on_label=updater), store)
 
 
 def report(output: Path) -> dict:
@@ -190,11 +209,15 @@ def main() -> None:
     parser.add_argument("--checkpoint-interval", type=int, default=4)
     args = parser.parse_args()
 
-    runner = build(args.output, resume=args.resume,
-                   force_unlock=args.force_unlock,
-                   checkpoint_interval=args.checkpoint_interval)
-    summary = runner.run(args.extra_steps if args.resume else args.steps)
-    runner.close()
+    runner, store = build(args.output, resume=args.resume,
+                          force_unlock=args.force_unlock,
+                          checkpoint_interval=args.checkpoint_interval)
+    try:
+        summary = runner.run(args.extra_steps if args.resume else args.steps)
+    finally:
+        runner.close()  # the event log and (for a resume) the owned store
+        if store is not None:
+            store.close()  # a fresh run's store is this example's own
     result = report(args.output)
     result["steps_this_call"] = summary.n_steps
     result["accepted_fraction"] = summary.accepted_fraction
