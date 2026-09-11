@@ -253,6 +253,56 @@ def test_si_recipe_sigint_on_the_final_nvt_step_stops_before_nve(tmp_path):
                      ("run", "si-nve")]
 
 
+def test_prepare_only_writes_configs_without_any_computation(tmp_path,
+                                                             capsys):
+    # --prepare-only writes the structure and stage TOMLs and stops: no
+    # run directory, no events, no manifest — the user edits first, then
+    # validates and runs; the first real invocation is never a
+    # designed-to-fail config generator.
+    spec = importlib.util.spec_from_file_location(
+        "si_run_recipe", EXAMPLE / "run_recipe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    out = tmp_path / "fresh"
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(sys, "argv",
+                   ["run_recipe.py", "--output", str(out), "--prepare-only"])
+    try:
+        module.main()
+    finally:
+        monkey.undo()
+    assert (out / "structure.extxyz").is_file()
+    for name in ("relax.toml", "nvt.toml", "nve.toml"):
+        assert (out / name).is_file()
+    assert not (out / "relax").exists()
+    assert not (out / "nvt").exists()
+    assert not (out / "workflow.json").exists()
+    text = capsys.readouterr().out
+    assert "no computation" in text
+    assert "pyramid validate" in text
+    # with the user inputs placed beside the copied TOMLs (README step 2),
+    # the prescribed no-computation validate passes with the structure
+    # section deferred
+    (out / "qe_pseudos").mkdir()
+    (out / "qe_pseudos" / "Si.pbe-n-kjpaw_psl.1.0.0.UPF").write_text(
+        "dummy upf\n")
+    (out / "mace-mpa-0-medium.model").write_bytes(b"dummy model")
+    from pyraimd2.config import load_config
+    from pyraimd2.workflows import validate_setup
+
+    report = validate_setup(load_config(out / "nvt.toml"))
+    assert "deferred" in report["structure"]
+    # the ordinary invocation then runs the chain
+    monkey.setattr(sys, "argv", ["run_recipe.py", "--output", str(out)])
+    try:
+        module.main()
+    finally:
+        monkey.undo()
+    manifest = json.loads((out / "workflow.json").read_text())
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+
+
 def test_si_recipe_keeps_user_configs_visibly(tmp_path, capsys):
     # run_recipe.py never silently overwrites an edited output config: it
     # keeps it, says so, and the controller then refuses the change.

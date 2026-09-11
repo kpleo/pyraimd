@@ -1,7 +1,8 @@
 """Run the serial relax -> adaptive NVT -> NVE recipe on 8-atom diamond Si.
 
 Usage:
-  python run_recipe.py --output results/si-recipe      # new or continue
+  python run_recipe.py --output results/si-recipe --prepare-only   # setup only
+  python run_recipe.py --output results/si-recipe                  # new or continue
 
 The controller and the completed-state reader live in the package
 (`pyraimd2.workflows.stages`); this script only assembles stages — no
@@ -45,6 +46,10 @@ def main() -> None:
                         help="reclaim the writer lock of a crashed MD stage "
                              "deliberately (only after confirming no live "
                              "writer exists)")
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="only write structure.extxyz and the stage "
+                             "TOMLs into --output and say what to edit — "
+                             "no computation, no inference, no downloads")
     args = parser.parse_args()
     out = args.output
     out.mkdir(parents=True, exist_ok=True)
@@ -61,6 +66,21 @@ def main() -> None:
             # the recipe controller reconciles or refuses on differences.
             print(f"  keeping existing {name} (differs from the shipped "
                   "template; edits stay visible)")
+    if args.prepare_only:
+        print(f"prepared {out} (no computation, no inference, no downloads):")
+        print("  structure.extxyz, relax.toml, nvt.toml, nve.toml")
+        print("next, place your inputs beside those TOMLs — relative paths "
+              "resolve against the output directory, not the recipe/ "
+              "template directory:")
+        print("  [surrogate] model            e.g. ./mace-mpa-0-medium.model")
+        print("  [reference] pseudo_dir       e.g. ./qe_pseudos/ holding the "
+              "files named under [reference.pseudos]")
+        print("  [reference] pw_cmd           your pw.x launch command")
+        print(f"then validate (no computation):  pyramid validate "
+              f"{out / 'nvt.toml'}")
+        print(f"then run / continue:           python {Path(__file__).name} "
+              f"--output {out}")
+        return
     manifest = run_serial_recipe(
         out, [RecipeStage("relax", out / "relax.toml"),
               RecipeStage("nvt", out / "nvt.toml", momenta="initialize"),
@@ -70,12 +90,20 @@ def main() -> None:
         result = stage["result"] or {}
         costs = result.get("reference_by_purpose") or {}
         steps = result.get("complete_steps", result.get("optimizer_steps"))
+        unresolved = result.get("reference_unresolved") or 0
         print(f"{stage['name']:>5}: {stage['status']} — run "
               f"{stage['run_id']}, steps {steps}, "
               f"physical time {result.get('physical_time_fs', 0.0)} fs, "
               f"reference executions {result.get('reference_executions')} "
               f"({costs}), inference {result.get('inference_executions')}, "
-              f"source {((stage.get('source') or {}).get('source_run_id'))}")
+              f"source {((stage.get('source') or {}).get('source_run_id'))}"
+              + (f", UNRESOLVED attempts {unresolved} (cost record "
+                 "incomplete)" if unresolved else ""))
+    if manifest.get("stopped_early"):
+        stop = manifest.get("stop") or {}
+        print(f"stopped: stage {stop.get('stage')!r} at "
+              f"{stop.get('complete_steps')} complete steps — re-run the "
+              "same command to continue")
     print(f"manifest: {out / 'workflow.json'}")
 
 
