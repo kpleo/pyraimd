@@ -52,6 +52,20 @@ UPDATE_REJECTED = "update_rejected"
 PHYSICAL_ATTEMPT = "physical_attempt"
 PHYSICAL_IO = "physical_io"
 
+# Minimal durable launch receipts (C2): a backend whose launch crosses a
+# process boundary writes ``attempt_receipt`` events carrying the attempt's
+# stable identity (``request_id`` + ``attempt`` + ``directory``) and a
+# ``phase`` — ``prepared`` (staging/input written, before any launch),
+# ``started`` (written only from the actual process-creation fact), or
+# ``not_launched`` (the engine knows the process never started, e.g. a
+# missing executable).  The terminal ``attempt`` event closes the same
+# identity.  Receipts are execution evidence, not executions: the ledger
+# never bills them, but a receipt without its terminal record marks one
+# UNRESOLVED attempt (launched when ``started`` exists, unknown
+# otherwise) — reported, never guessed.
+ATTEMPT_RECEIPT = "attempt_receipt"
+PHYSICAL_ATTEMPT_RECEIPT = "physical_attempt_receipt"
+
 # Terminal statuses of a launched attempt (shared convention).  Every
 # launched attempt ends in exactly one of them — never left "running".
 # Only "success" means the launch completed successfully; the other three

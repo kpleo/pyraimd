@@ -31,16 +31,26 @@ Attempt event fields: ``record`` ("physical_attempt"), ``operation``,
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 from pyraimd2.runtime.events import (
     ATTEMPT,
     ATTEMPT_FAILED_STATUSES,
+    ATTEMPT_RECEIPT,
     PHYSICAL_ATTEMPT,
+    PHYSICAL_ATTEMPT_RECEIPT,
     PHYSICAL_IO,
     TASK,
 )
 
 REFERENCE_PURPOSES = ("anchor", "refusal", "probe", "verification", "diagnostic")
+
+
+def _attempt_identity(event: dict) -> tuple[str, int]:
+    """The stable attempt identity shared by launch receipts and the
+    terminal attempt event (C2): the parent logical request plus the
+    attempt number within it."""
+    return (str(event.get("request_id")), int(event.get("attempt") or 0))
 
 
 def summarize_tasks(events: Iterable[dict]) -> dict:
@@ -53,14 +63,31 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
     records attempts) counts as a logical request only — a precheck failure
     is not an execution.  ``total_elapsed_s`` sums leaf events only:
     attempts, plus tasks that are neither spans nor nested physical I/O.
+
+    Launch receipts (C2) are deduplicated against terminal attempt events
+    by the shared attempt identity: a receipt identity with no terminal
+    record and no ``not_launched`` phase is ONE unresolved attempt
+    (``launched`` True when a ``started`` receipt survives, None when only
+    ``prepared`` does) — listed under ``unresolved_attempts`` with its
+    evidence and counted in ``reference['unresolved_attempts']``, never
+    billed as an execution and never guessed a success.
+    ``cost_record_complete`` is False when any unresolved attempt exists,
+    None (unknown) for logs whose attempts predate the receipt protocol.
     """
     events = list(events)
     attempts_by_parent: dict[str, list[dict]] = {}
+    terminal_identities: set[tuple[str, int]] = set()
+    receipts: dict[tuple[str, int], dict[str, dict]] = {}
     for event in events:
         if event.get("type") == ATTEMPT and \
                 event.get("record", PHYSICAL_ATTEMPT) == PHYSICAL_ATTEMPT:
             attempts_by_parent.setdefault(
                 str(event.get("request_id")), []).append(event)
+            terminal_identities.add(_attempt_identity(event))
+        elif event.get("type") == ATTEMPT_RECEIPT and \
+                event.get("record") == PHYSICAL_ATTEMPT_RECEIPT:
+            receipts.setdefault(_attempt_identity(event), {})[
+                str(event.get("phase"))] = event
     # New-semantics logs are recognized by the explicit RUN_START marker,
     # never by whether an attempt happened to be recorded (B3): a fresh log
     # whose first request failed before any launch has zero attempts and is
@@ -79,6 +106,7 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
         "successful_executions": 0,
         "failed_attempts": 0,
         "cache_hits": 0,
+        "unresolved_attempts": 0,
     }
     counts = {"inference": 0, "training": 0, "io": 0}
     total_elapsed = 0.0
@@ -144,10 +172,87 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
                     child.get("status") == "success")
                 reference["failed_attempts"] += int(
                     child.get("status") in ATTEMPT_FAILED_STATUSES)
+    # Launch receipts without their terminal record (C2): each identity is
+    # ONE unresolved attempt — a confirmed start (``started`` receipt) or a
+    # prepare whose launch state is unknowable — deduplicated against the
+    # terminal event of the same identity, so begin/end never double count.
+    # ``not_launched`` receipts resolve to zero launches: neither an
+    # execution nor unresolved.
+    unresolved: list[dict] = []
+    for identity, phases in sorted(receipts.items()):
+        if identity in terminal_identities or "not_launched" in phases:
+            continue
+        evidence = phases.get("started") or phases.get("prepared") or {}
+        started = "started" in phases
+        unresolved.append({
+            "request_id": identity[0],
+            "attempt": identity[1],
+            "directory": evidence.get("directory"),
+            "launched": True if started else None,
+            "evidence": ("process creation confirmed by the started "
+                         "receipt; no terminal record exists"
+                         if started else
+                         "staging/input prepared but no start confirmation "
+                         "survived; whether the process launched is "
+                         "unknowable from the record"),
+        })
+    reference["unresolved_attempts"] = len(unresolved)
     return {
         "total_elapsed_s": total_elapsed,
         "by": sorted(by.values(),
                      key=lambda b: (b["operation"], str(b["purpose"]))),
         "reference": reference,
         "counts": counts,
+        # Confirmed executions/successes live in ``reference``; unresolved
+        # attempts are listed here with their evidence.  The ledger's
+        # completeness: False when unresolved attempts exist; None
+        # ("unknown") when attempt events predate the launch-receipt
+        # protocol, because such a log alone cannot prove no launch went
+        # unrecorded — the run-directory reconciliation in
+        # :func:`inspect_run` (or an external audit) decides then.
+        "unresolved_attempts": unresolved,
+        "cost_record_complete": (False if unresolved
+                                 else None if (attempts_by_parent
+                                               and not receipts)
+                                 else True),
     }
+
+
+def orphan_attempt_directories(run_dir: str | Path,
+                               events: Iterable[dict]) -> list[dict]:
+    """Attempt staging directories under ``<run_dir>/calculations`` that no
+    ledger record of any kind accounts for (C2) — legacy or pre-receipt
+    orphans, e.g. the historical crash window between output-file creation
+    and process launch.  Each is one unresolved attempt whose launch state
+    is unknowable from the filesystem: an empty ``pw.out`` beside a
+    ``pw.in`` can sit before OR after a launch, and directory counts or
+    mtimes alone never prove a start.  Read-only: nothing is created,
+    rewritten or deleted."""
+    known: set[str] = set()
+    for event in events:
+        if event.get("type") in (ATTEMPT, ATTEMPT_RECEIPT):
+            directory = event.get("directory")
+            if directory:
+                known.add(str(directory))
+    orphans: list[dict] = []
+    calculations = Path(run_dir) / "calculations"
+    if not calculations.is_dir():
+        return orphans
+    for attempt_dir in sorted(calculations.glob("*/attempt-*")):
+        if not attempt_dir.is_dir():
+            continue
+        if str(attempt_dir) in known or str(attempt_dir.resolve()) in known:
+            continue
+        pw_out = attempt_dir / "pw.out"
+        orphans.append({
+            "request_id": None,
+            "attempt": None,
+            "directory": str(attempt_dir),
+            "launched": None,
+            "evidence": ("no ledger record names this staging directory "
+                         "(a pre-receipt-protocol orphan); whether the "
+                         "process launched is unknowable from the record"),
+            "pw_out_bytes": (pw_out.stat().st_size
+                             if pw_out.is_file() else None),
+        })
+    return orphans

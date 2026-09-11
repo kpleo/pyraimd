@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 from ase import units
 
-from pyraimd2.runtime.costs import summarize_tasks
+from pyraimd2.runtime.costs import orphan_attempt_directories, summarize_tasks
 from pyraimd2.runtime.events import (
     EVALUATION_COMMITTED,
     MODEL_UPDATE,
@@ -123,6 +123,22 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
             run_id = run_ids.pop()
 
     cost = summarize_tasks(events)
+    # Reconcile the staging directories against the ledger (C2): an attempt
+    # directory no event accounts for is one more unresolved attempt (a
+    # pre-receipt-protocol orphan), and a fully reconciled legacy log is
+    # complete after all.  Read-only.
+    orphans = orphan_attempt_directories(run_dir, events)
+    if orphans:
+        cost = {**cost,
+                "unresolved_attempts": cost["unresolved_attempts"] + orphans,
+                "cost_record_complete": False,
+                "reference": {**cost["reference"],
+                              "unresolved_attempts":
+                                  cost["reference"]["unresolved_attempts"]
+                                  + len(orphans)}}
+    elif cost["cost_record_complete"] is None and \
+            (run_dir / "calculations").is_dir():
+        cost = {**cost, "cost_record_complete": True}
     committed = [e for e in events if e.get("type") == EVALUATION_COMMITTED]
     run_summaries = [e for e in events if e.get("type") == RUN_SUMMARY]
     run_end = next((e for e in reversed(events) if e.get("type") == RUN_END), None)
@@ -278,6 +294,8 @@ def format_inspection(info: dict) -> str:
          f"{reference['failed_attempts']} failed)"),
         (f"  reference (logical)   : {reference['logical_requests']} requests, "
          f"{reference['cache_hits']} cache hits"),
+        (f"  unresolved attempts   : {reference['unresolved_attempts']} "
+         f"(cost record complete: {info['cost']['cost_record_complete']})"),
         (f"  independent checks    : {checks['independent_checks']} "
          f"(accepted {checks['accepted_count']}, "
          f"detected {checks['detected_count']}, bound {checks['bound']})"),

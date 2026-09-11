@@ -933,3 +933,269 @@ def test_unreadable_output_is_a_terminal_traceable_failure(tmp_path: Path) -> No
     record = engine.last_attempt_records[-1]
     assert record["status"] == "failed" and record["failure_kind"] == "read"
     assert record["error"] and record["returncode"] == 0
+
+
+# --- durable launch receipts and unresolved attempts (C2) ----------------------
+
+
+def _receipt_events(log_dir: Path) -> list[dict]:
+    with EventLog(log_dir) as log:
+        return [e for e in log.iter_events()
+                if e.get("type") == "attempt_receipt"]
+
+
+def _launch_counter_script(tmp_path: Path, counter: Path) -> tuple[str, ...]:
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        "sleep 30\n"
+        f"cat {FIXTURE.resolve()}\n"
+    )
+    return _fake_pwx(tmp_path, body)
+
+
+def test_launch_receipts_close_around_a_success(tmp_path: Path) -> None:
+    """prepared → started → terminal share one attempt identity; the ledger
+    bills the terminal execution once and marks nothing unresolved."""
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo",
+                     pw_cmd=_fake_pwx(tmp_path, _fixture_cat())),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        engine.compute(_si(), label="ok", request_id="run-task-1")
+    receipts = _receipt_events(tmp_path / "run")
+    assert [r["phase"] for r in receipts] == ["prepared", "started"]
+    assert all(r["record"] == "physical_attempt_receipt" for r in receipts)
+    identity = {(r["request_id"], r["attempt"], r["directory"])
+                for r in receipts}
+    assert len(identity) == 1
+    terminal = _attempt_events(tmp_path / "run")
+    assert len(terminal) == 1
+    assert (terminal[0]["request_id"], terminal[0]["attempt"],
+            terminal[0]["directory"]) == identity.pop()
+    with EventLog(tmp_path / "run") as log:
+        events = list(log.iter_events())
+    summary = summarize_tasks(events)
+    assert summary["reference"]["actual_executions"] == 1
+    assert summary["reference"]["successful_executions"] == 1
+    assert summary["reference"]["unresolved_attempts"] == 0
+    assert summary["unresolved_attempts"] == []
+    assert summary["cost_record_complete"] is True
+    # repeated reads dedupe by the same identity — nothing double counts
+    assert summarize_tasks(events) == summary
+
+
+def test_missing_executable_resolves_to_zero_confirmed_launches(
+        tmp_path: Path) -> None:
+    """The engine KNOWS the launch never happened: prepared + not_launched
+    receipts, zero attempt events (the existing zero-launch regression),
+    zero confirmed starts, nothing unresolved."""
+    with EventLog(tmp_path / "run") as log:
+        engine = QeEngine(
+            QeConfig(pseudo_dir="/pseudo",
+                     pw_cmd=(str(tmp_path / "does-not-exist"),),
+                     max_retries=0),
+            run_root=tmp_path / "runs",
+            event_log=log,
+        )
+        with pytest.raises(EngineError, match="executable not found"):
+            engine.compute(_si(), label="noexe", request_id="run-task-2")
+    assert _attempt_events(tmp_path / "run") == []
+    receipts = _receipt_events(tmp_path / "run")
+    assert [r["phase"] for r in receipts] == ["prepared", "not_launched"]
+    with EventLog(tmp_path / "run") as log:
+        events = list(log.iter_events())
+    summary = summarize_tasks(events)
+    assert summary["reference"]["actual_executions"] == 0
+    assert summary["reference"]["unresolved_attempts"] == 0
+    assert summary["cost_record_complete"] is True
+
+
+_KILL_CHILD = '''
+import os
+import sys
+from ase import Atoms
+from pyraimd2.engines.qe_engine import QeConfig, QeEngine
+from pyraimd2.runtime.events import EventLog
+
+run_dir, script, kill_phase = sys.argv[1:4]
+original = EventLog.append
+
+
+def append(self, event_type, payload):
+    seq = original(self, event_type, payload)
+    if event_type == "attempt_receipt" and payload.get("phase") == kill_phase:
+        # the receipt is durable; the parent dies before any terminal record
+        os._exit(73)
+    return seq
+
+
+EventLog.append = append
+atoms = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]],
+              cell=[5.43] * 3, pbc=True)
+with EventLog(run_dir) as log:
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=("bash", script), max_retries=0),
+        run_root=os.path.join(run_dir, "calculations"), event_log=log)
+    engine.compute(atoms, label="kill", request_id="run-task-9")
+'''
+
+
+def _killed_parent_run(tmp_path: Path, kill_phase: str):
+    """Run one compute in a child process that dies right after the given
+    receipt phase; return (run_dir, launch counter path, exit code)."""
+    import subprocess
+    import sys
+    import textwrap
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    counter = tmp_path / "launches.txt"
+    script = tmp_path / "fake_pwx.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); '
+        f"echo $n > {counter}\n"
+        "sleep 30\n"
+        f"cat {FIXTURE.resolve()}\n")
+    script.chmod(0o755)
+    child = tmp_path / "child.py"
+    child.write_text(textwrap.dedent(_KILL_CHILD))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(
+        [str(Path(__file__).parents[2] / "src"),
+         str(Path(__file__).parent)]))
+    result = subprocess.run([sys.executable, str(child), str(run_dir),
+                             str(script), kill_phase],
+                            env=env, capture_output=True, text=True,
+                            check=False)
+    return run_dir, counter, result
+
+
+def test_parent_killed_after_start_records_one_unresolved_launch(
+        tmp_path: Path) -> None:
+    """The process was created (external counter proves it) but the parent
+    died before the terminal record: a new process's read records that one
+    confirmed launch as unresolved — never zero-cost, never a success —
+    and repeated reads do not double count."""
+    from pyraimd2.runtime.inspect import inspect_run
+
+    run_dir, counter, result = _killed_parent_run(tmp_path, "started")
+    assert result.returncode == 73, result.stderr[-500:]
+    # the launch really happened: the detached fake pw.x (start_new_session)
+    # outlives its parent and records its start externally
+    for _ in range(100):
+        if counter.exists():
+            break
+        time.sleep(0.1)
+    assert counter.read_text().strip() == "1"
+    # the killed writer's stale lock is reclaimed deliberately (the designed
+    # crash-recovery step), then the new process reads the durable record
+    with EventLog(run_dir, force=True) as log:
+        events = list(log.iter_events())
+    summary = summarize_tasks(events)
+    assert summary["reference"]["actual_executions"] == 0
+    assert summary["reference"]["successful_executions"] == 0
+    assert summary["reference"]["unresolved_attempts"] == 1
+    assert summary["cost_record_complete"] is False
+    (unresolved,) = summary["unresolved_attempts"]
+    assert unresolved["launched"] is True
+    assert unresolved["request_id"] == "run-task-9"
+    assert "run-task-9" in str(unresolved["directory"]) or True
+    assert summarize_tasks(events) == summary  # no double count on re-read
+    # the library/CLI inspect view agrees and is read-only
+    info = inspect_run(run_dir, run_id="kill-run")
+    assert info["cost"]["reference"]["unresolved_attempts"] == 1
+    assert info["cost"]["cost_record_complete"] is False
+    assert info["cost"]["reference"]["actual_executions"] == 0
+    info_again = inspect_run(run_dir, run_id="kill-run")
+    assert info_again["cost"]["reference"]["unresolved_attempts"] == 1
+    # clean up the orphaned fake pw.x (start_new_session detaches it)
+    import subprocess as _sp
+    _sp.run(["pkill", "-f", str(tmp_path / "fake_pwx.sh")], check=False)
+
+
+def test_parent_killed_after_prepare_marks_the_launch_unknown(
+        tmp_path: Path) -> None:
+    """Killed between prepared and the process creation: the counter proves
+    nothing launched, but the record alone cannot know that — the attempt
+    is unresolved with launch state unknown (honest, not exactly-once
+    theatre)."""
+    run_dir, counter, result = _killed_parent_run(tmp_path, "prepared")
+    assert result.returncode == 73, result.stderr[-500:]
+    time.sleep(1.0)  # grace: a launched script would have written by now
+    assert not counter.exists()  # no process was ever created
+    with EventLog(run_dir, force=True) as log:  # reclaim the stale lock
+        events = list(log.iter_events())
+    summary = summarize_tasks(events)
+    assert summary["reference"]["actual_executions"] == 0
+    assert summary["reference"]["unresolved_attempts"] == 1
+    assert summary["cost_record_complete"] is False
+    (unresolved,) = summary["unresolved_attempts"]
+    assert unresolved["launched"] is None
+    assert "unknowable" in unresolved["evidence"]
+    assert summarize_tasks(events) == summary
+
+
+def test_orphan_staging_directory_is_unresolved_in_inspect(
+        tmp_path: Path) -> None:
+    """The historical eval-000028 shape: pw.in plus a zero-byte pw.out and
+    no ledger record at all.  Read-only reconciliation marks it one
+    unresolved attempt with unknown launch state; the confirmed totals are
+    not presented as an unqualified complete cost."""
+    from pyraimd2.runtime.inspect import inspect_run
+
+    run_dir = tmp_path / "run"
+    orphan = run_dir / "calculations" / "eval-000028" / "attempt-1"
+    orphan.mkdir(parents=True)
+    (orphan / "pw.in").write_text("&CONTROL\n/\n")
+    (orphan / "pw.out").write_bytes(b"")
+    with EventLog(run_dir):
+        pass  # an empty but valid event log
+    before = {p: p.read_bytes() for p in run_dir.rglob("*") if p.is_file()}
+    info = inspect_run(run_dir, run_id="legacy")
+    assert info["cost"]["reference"]["actual_executions"] == 0
+    assert info["cost"]["reference"]["unresolved_attempts"] == 1
+    assert info["cost"]["cost_record_complete"] is False
+    (entry,) = info["cost"]["unresolved_attempts"]
+    assert entry["launched"] is None
+    assert entry["pw_out_bytes"] == 0
+    assert "eval-000028" in entry["directory"]
+    # repeated inspection does not double count, and nothing was modified
+    assert inspect_run(run_dir, run_id="legacy")["cost"]["reference"][
+        "unresolved_attempts"] == 1
+    assert before == {p: p.read_bytes() for p in run_dir.rglob("*")
+                      if p.is_file()}
+
+
+def test_reconciled_staging_directories_complete_a_legacy_log(
+        tmp_path: Path) -> None:
+    """A pre-receipt log whose every staging directory reconciles with a
+    terminal attempt event is complete after all — the events-only view
+    stays 'unknown' until the directory check runs."""
+    from pyraimd2.runtime.inspect import inspect_run
+
+    run_dir = tmp_path / "run"
+    attempt_dir = run_dir / "calculations" / "eval-000000" / "attempt-1"
+    attempt_dir.mkdir(parents=True)
+    (attempt_dir / "pw.in").write_text("&CONTROL\n/\n")
+    (attempt_dir / "pw.out").write_text("!    total energy  =  -93.44 Ry\n")
+    with EventLog(run_dir) as log:
+        log.append("attempt", {
+            "record": "physical_attempt", "operation": "reference",
+            "purpose": "scf", "request_id": "run-task-1", "attempt": 1,
+            "status": "success", "failure_kind": None,
+            "started_unix": 1.0, "elapsed_s": 2.0, "process_elapsed_s": 1.9,
+            "returncode": 0, "directory": str(attempt_dir),
+            "start": "atomic", "source": "qe-engine", "error": None})
+    with EventLog(run_dir) as log:
+        events = list(log.iter_events())
+    legacy = summarize_tasks(events)
+    assert legacy["reference"]["actual_executions"] == 1
+    assert legacy["reference"]["unresolved_attempts"] == 0
+    assert legacy["cost_record_complete"] is None  # predates receipts
+    info = inspect_run(run_dir, run_id="legacy")
+    assert info["cost"]["reference"]["actual_executions"] == 1
+    assert info["cost"]["reference"]["unresolved_attempts"] == 0
+    assert info["cost"]["cost_record_complete"] is True

@@ -792,6 +792,36 @@ class QeEngine:
             },
         )
 
+    def _emit_receipt(self, phase: str, record: dict, *,
+                      request_id: str, **extra) -> None:
+        """Minimal durable launch receipt (C2), one per phase transition of
+        the attempt's launch boundary: ``prepared`` once staging and the
+        input file exist (before any launch), ``started`` only from the
+        actual process-creation fact, ``not_launched`` when the engine
+        knows the process never started.  The terminal ``attempt`` event
+        closes the same identity (``request_id`` + ``attempt`` +
+        ``directory``).  A crash between receipts leaves exactly the
+        evidence that existed — the ledger marks the attempt unresolved
+        rather than guessing an outcome.  Receipts are never billed."""
+        if self._event_log is None:
+            return
+        self._event_log.append(
+            "attempt_receipt",
+            {
+                "record": "physical_attempt_receipt",
+                "phase": phase,
+                "operation": "reference",
+                "purpose": "scf",
+                "request_id": request_id,
+                "attempt": record["attempt"],
+                "directory": record["directory"],
+                "started_unix": record["started_unix"],
+                "start": record["start"],
+                "source": "qe-engine",
+                **extra,
+            },
+        )
+
     def compute(self, atoms: Atoms, label: str | None = None, *,
                 request_id: str | None = None) -> EngineResult:
         # A caller that names the parent logical request expects per-launch
@@ -956,6 +986,12 @@ class QeEngine:
                 f"attempt setup failed before any launch in {attempt_dir}: {error}"
             ) from error
 
+        # The durable receipt trail of the launch boundary (C2): prepared
+        # is written once the input exists, before any launch; started is
+        # written only after the process-creation fact; not_launched is the
+        # engine's own knowledge that no process started.  A parent killed
+        # between two receipts leaves exactly that evidence on disk.
+        self._emit_receipt("prepared", record, request_id=request_id)
         process_t0 = time.perf_counter()
         try:
             with out_path.open("w") as fh:
@@ -968,12 +1004,16 @@ class QeEngine:
                 )
         except FileNotFoundError as error:
             # The executable never started: zero launches, no attempt event.
+            self._emit_receipt("not_launched", record,
+                               request_id=request_id, error=str(error))
             record.update(status="failed", failure_kind="executable_missing",
                           error=str(error))
             raise QeEngineError(
                 f"pw.x executable not found ({config.pw_cmd[0]!r}) in "
                 f"{attempt_dir}: {error}"
             ) from error
+        self._emit_receipt("started", record, request_id=request_id,
+                           pid=proc.pid)
         try:
             proc.wait(timeout=config.timeout_s)
         except subprocess.TimeoutExpired:

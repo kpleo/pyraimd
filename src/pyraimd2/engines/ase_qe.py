@@ -267,6 +267,34 @@ class AseQeEngine(AseEngine):
             },
         )
 
+    def _emit_receipt(self, phase: str, record: dict, *,
+                      request_id: str, **extra) -> None:
+        """The same durable launch-receipt protocol as the handwritten QE
+        path (C2), around ASE's ``execute`` boundary: ``prepared`` once the
+        input files exist; ``not_launched`` when ASE reports the executable
+        missing.  Process creation happens inside ``execute`` and is not
+        observable from here, so this adapter never writes ``started`` — a
+        crash inside ``execute`` leaves a prepared-only receipt, which the
+        ledger honestly reports as launch-unknown."""
+        if self._event_log is None:
+            return
+        self._event_log.append(
+            "attempt_receipt",
+            {
+                "record": "physical_attempt_receipt",
+                "phase": phase,
+                "operation": "reference",
+                "purpose": "scf",
+                "request_id": request_id,
+                "attempt": record["attempt"],
+                "directory": record["directory"],
+                "started_unix": record["started_unix"],
+                "start": record["start"],
+                "source": "qe-engine",
+                **extra,
+            },
+        )
+
     def compute(self, atoms: Atoms, label: str | None = None, *,
                 request_id: str | None = None) -> EngineResult:
         # Same sink rule as the handwritten path: a caller naming the parent
@@ -385,11 +413,15 @@ class AseQeEngine(AseEngine):
                 f"espresso input could not be written in {directory}: {error}"
             ) from error
 
+        # Durable prepared receipt before ASE's execute boundary (C2).
+        self._emit_receipt("prepared", record, request_id=request_id)
         process_t0 = time.perf_counter()
         try:
             self.calculator.template.execute(directory, self.calculator.profile)
         except FileNotFoundError as error:
             # The executable never started: zero launches, no attempt event.
+            self._emit_receipt("not_launched", record,
+                               request_id=request_id, error=str(error))
             record.update(status="failed", failure_kind="executable_missing",
                           error=str(error))
             raise QeEngineError(
