@@ -219,6 +219,14 @@ class _CalibrationOrigin:
     index: int
     label: EngineResult
     label_id: str | None = None
+    # NVT: the realized displacement of the step whose evaluation produced
+    # this label (x_k − x_{k-1}), captured before the commit advanced the
+    # last-committed positions — the deferred calibration's direction must
+    # never degenerate to zero against the just-committed configuration
+    # (M3B-1).  None for the initial evaluation (no step formed it; the
+    # calibration then uses the displacement to the configuration being
+    # evaluated, already realized by then) and for NVE (unused there).
+    direction: np.ndarray | None = None
 
 
 def _response_from_dict(record: dict) -> DirectionalResponse:
@@ -636,6 +644,10 @@ class EnergeticCalculator(Calculator):
                 "positions_A": origin.atoms.positions.tolist(),
                 "momenta": origin.atoms.get_momenta().tolist(),
                 "label_forces_eV_A": origin.label.forces.tolist(),
+                # the deferred calibration's persisted direction (M3B-1)
+                "direction": (None if origin.direction is None
+                              else np.asarray(origin.direction,
+                                              dtype=float).tolist()),
             },
             "constraint": (None if self._projection is None
                            else self._projection.as_dict()),
@@ -730,8 +742,12 @@ class EnergeticCalculator(Calculator):
             label = EngineResult(float(origin["label_energy_eV"]),
                                  np.array(origin["label_forces_eV_A"], dtype=float),
                                  None, float(origin["label_wall_time_s"]))
-            self._deferred_origin = _CalibrationOrigin(atoms, int(origin["index"]),
-                                                       label, label_id=origin["label_id"])
+            direction = origin.get("direction")  # absent in pre-M3B records
+            self._deferred_origin = _CalibrationOrigin(
+                atoms, int(origin["index"]),
+                label, label_id=origin["label_id"],
+                direction=(None if direction is None
+                           else np.array(direction, dtype=float)))
         if state["driving_energy_eV"] is not None:
             # Reusable driving force of the boundary evaluation: the resumed
             # integrator's first half-kick reads this from the ASE cache.
@@ -823,6 +839,19 @@ class EnergeticCalculator(Calculator):
         if self._anchor is not None:
             self._segment = max(self._segment, self._anchor.segment)
 
+    def _origin_direction(self, store: Store, evaluation_id: int,
+                          positions: np.ndarray) -> np.ndarray | None:
+        """The deferred origin's realized direction on replay (M3B-1):
+        recomputed from the committed rows — x_k minus the previous
+        committed boundary — identical to the value the live path captured.
+        """
+        if self._integrator_spec.ensemble != "nvt" or evaluation_id < 1:
+            return None
+        previous = store.committed_row(self._event_log, self.run_id,
+                                       evaluation_id - 1)
+        return (np.asarray(positions, dtype=float)
+                - previous.toatoms().positions)
+
     def _replay_label_event(self, event: dict, store: Store, updater: object,
                             models_dir: Path) -> None:
         """Apply a label-consumption or model-update event to the updater and
@@ -855,9 +884,12 @@ class EnergeticCalculator(Calculator):
                                      None, 0.0)
                 self._anchor = None
                 self._next_reason = "model_update_requires_recalibration"
+                positions = row.toatoms().positions
                 self._deferred_origin = _CalibrationOrigin(
                     row.toatoms(), int(event["evaluation_id"]), label,
-                    label_id=event["label_id"])
+                    label_id=event["label_id"],
+                    direction=self._origin_direction(
+                        store, int(event["evaluation_id"]), positions))
             return
         artifact = _model_artifact(models_dir, event["model_id"])
         if artifact is None or artifact.get("updater_state") is None:
@@ -903,9 +935,12 @@ class EnergeticCalculator(Calculator):
         label = EngineResult(float(payload["energy"]),
                              np.asarray(payload["forces"], dtype=float), None, 0.0)
         self._next_reason = "model_update_requires_recalibration"
+        origin_positions = row.toatoms().positions
         self._deferred_origin = _CalibrationOrigin(
             row.toatoms(), origin_eval, label,
-            label_id=event["origin_label_id"])
+            label_id=event["origin_label_id"],
+            direction=self._origin_direction(store, origin_eval,
+                                             origin_positions))
 
     def _rebuild_pending(self, proposal: dict, atoms: Atoms) -> _Pending:
         """Rebuild the frozen pending decision of an uncommitted evaluation."""
@@ -1118,7 +1153,8 @@ class EnergeticCalculator(Calculator):
         self._label_cache.put(atoms, label, label_id)
         return label, label_id
 
-    def _directions(self, atoms: Atoms) -> np.ndarray | None:
+    def _directions(self, atoms: Atoms, *,
+                    override: np.ndarray | None = None) -> np.ndarray | None:
         """Probe direction(s) for calibration.
 
         NVE keeps the historical default (``atoms.velocities``).  For NVT
@@ -1129,9 +1165,13 @@ class EnergeticCalculator(Calculator):
         this configuration — random increment included, transverse
         component and all.  Unavailable (no committed boundary yet) or
         exactly zero displacements defer calibration to the existing safe
-        fallback (reference route, reason recorded).
+        fallback (reference route, reason recorded).  ``override`` is the
+        persisted realized direction of a deferred calibration's origin
+        (M3B-1); it goes through the same normalization and projection.
         """
-        if self.direction is not None:
+        if override is not None:
+            raw = override
+        elif self.direction is not None:
             raw = self.direction(atoms.copy())
         elif self._integrator_spec.ensemble == "nvt":
             if self._last_committed_positions is None:
@@ -1159,8 +1199,12 @@ class EnergeticCalculator(Calculator):
             return self._projection.project_directions(directions)
         return directions
 
-    def _calibrate(self, pending: _Pending) -> _Anchor | None:
-        directions = self._directions(pending.atoms)
+    def _calibrate(self, pending: _Pending, *,
+                   direction_override: np.ndarray | None = None) -> _Anchor | None:
+        directions = (self._directions(pending.atoms)
+                      if direction_override is None else
+                      self._directions(pending.atoms,
+                                       override=direction_override))
         if directions is None:
             return None
         correction = pending.label.forces - pending.prediction.forces
@@ -1266,6 +1310,16 @@ class EnergeticCalculator(Calculator):
         origin = self._deferred_origin
         if origin is None:
             return
+        # The deferred calibration's direction (M3B-1): the origin's
+        # persisted realized displacement — never the zero difference
+        # against the just-committed configuration.  An NVT origin without
+        # one (the initial label formed no step) uses the displacement to
+        # the configuration now being evaluated — already realized by the
+        # time this runs, never a forecast and never a fresh bath draw.
+        # NVE keeps its historical velocity default (no override).
+        direction = origin.direction
+        if direction is None and self._integrator_spec.ensemble == "nvt":
+            direction = self.atoms.positions - origin.atoms.positions
         # Recalibration tasks belong to the origin evaluation's identity.
         self._active_evaluation_id = origin.index
         prediction = self._predict(origin.atoms, purpose="calibration")
@@ -1279,7 +1333,7 @@ class EnergeticCalculator(Calculator):
                            "model_update_calibration", [], None, [], None, None,
                            False, None, self.reference_calls.copy(), label=origin.label,
                            context=context, model_generation=self._model_generation)
-        anchor = self._calibrate(pending)
+        anchor = self._calibrate(pending, direction_override=direction)
         self._anchor = anchor
         self._deferred_record = {
             "origin_evaluation_index": origin.index,
@@ -1394,6 +1448,15 @@ class EnergeticCalculator(Calculator):
 
     def _finish(self, pending: _Pending) -> None:
         self._active_evaluation_id = pending.index
+        # The realized displacement of the step this evaluation closes
+        # (NVT deferred-calibration direction, M3B-1): captured before the
+        # commit below advances the last-committed positions to this
+        # configuration — after that, the difference would be exactly zero.
+        label_direction = None
+        if (self._integrator_spec.ensemble == "nvt"
+                and self._last_committed_positions is not None):
+            label_direction = (pending.atoms.positions
+                               - self._last_committed_positions)
         if (not pending.accepted or pending.checked) and pending.label is None:
             counter_purpose = "check" if pending.checked else "anchor"
             event_purpose = ("verification" if pending.checked else
@@ -1681,9 +1744,10 @@ class EnergeticCalculator(Calculator):
                 if violation:
                     self._next_reason = "previous_independent_check_violation"
             elif not violation:
-                self._deferred_origin = _CalibrationOrigin(pending.atoms.copy(), pending.index,
-                                                          copy.deepcopy(pending.label),
-                                                          label_id=pending.label_id)
+                self._deferred_origin = _CalibrationOrigin(
+                    pending.atoms.copy(), pending.index,
+                    copy.deepcopy(pending.label),
+                    label_id=pending.label_id, direction=label_direction)
             if violation:
                 self._next_reason = "previous_independent_check_violation"
 
