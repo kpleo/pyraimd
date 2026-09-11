@@ -170,9 +170,12 @@ Mode rules:
 NVT runs use ASE's Langevin with `fixcm=False` (the deprecated
 `fixcm=True` does not strictly sample the correct NVT distribution;
 FixCom is not a supported constraint). Adaptive mode supports
-`ensemble = "nvt"` with `integrator = "langevin"` for a fixed base model
-(re-anchoring supported, each segment recorded independently); online
-training is not available for adaptive NVT in this version.
+`ensemble = "nvt"` with `integrator = "langevin"`: the configured (TOML)
+workflow always uses a fixed base model — no configuration key installs an
+update callback.  Guarded online updates exist only in the Python
+interface (`GuardedUpdater` + `UpdatePolicy` via
+`EnergeticRunner(on_label=...)`), in both ensembles; resuming a consuming
+run requires a stateful updater.
 
 ### [reference] / [surrogate]
 
@@ -300,8 +303,10 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
   (NPT) dynamics.
 - Released 0.4.2 supports NVE only. This development version adds
   fixed-cell NVT (ASE Langevin): plain reference/surrogate modes, and
-  adaptive mode with a fixed base model (re-anchoring supported; online
-  training under adaptive NVT remains unavailable).
+  adaptive mode in both ensembles — fixed base model via TOML/CLI, or
+  guarded online updates via the Python `GuardedUpdater` interface
+  (re-anchoring supported; the update transaction publishes or rolls back
+  atomically, and resume never retrains a committed update).
 - `checkpoint.keep_generations` is fixed at 2 by the runtime.
 - Model updates (online training) use the Python `GuardedUpdater` interface;
   resumable updates require state export and restore. Adaptive runs without

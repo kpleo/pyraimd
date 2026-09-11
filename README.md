@@ -148,9 +148,13 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   Adaptive mode applies only to MD.
 - **Dynamics.** The released version (0.4.2) supports fixed-cell NVE and
   `FixAtoms`. This development version adds fixed-cell NVT (ASE Langevin):
-  plain reference/surrogate modes, and adaptive MD with a fixed base model
-  (re-anchoring supported; online training is not available under NVT).
-  Variable-cell dynamics and other constraint types are unsupported.
+  plain reference/surrogate modes, and adaptive MD in both ensembles — with
+  a fixed base model via TOML/CLI, or with guarded online updates through
+  the Python `GuardedUpdater` interface (`EnergeticRunner(on_label=...)`;
+  re-anchoring supported, each segment recorded independently). Online
+  updates are not expressible in configuration files: no TOML key installs
+  an update callback. Variable-cell dynamics and other constraint types
+  are unsupported.
   The default force budget measures the free coordinates
   (`active_dofs_max_atom`); `all_atoms_max_atom` is an explicit alternative.
   Checkpoints retain two generations.

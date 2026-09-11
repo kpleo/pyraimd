@@ -16,8 +16,15 @@
   drawn once per step and recorded for exact resume, and the independent
   check stream is role-derived (`role-derive-v1`) so it never shares a
   generator with the bath or velocity streams. Re-anchoring is supported
-  and recorded per segment; online training under adaptive NVT remains
-  unavailable. New template: `harmonic-adaptive-nvt`.
+  and recorded per segment. New template: `harmonic-adaptive-nvt`.
+- Guarded online updates under adaptive NVT through the Python
+  `GuardedUpdater` interface (NVE and NVT): the label-consumption/update
+  transaction keeps its atomic publish-or-rollback contract across process
+  crashes — a committed evaluation whose consumption never persisted is
+  re-delivered to the restored updater exactly once, and committed
+  training is never re-executed.  New runnable example:
+  `examples/guarded_nvt.py` (fresh run, stop, new-process resume,
+  purpose-split cost report).
 
 ### Fixed
 
