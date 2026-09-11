@@ -75,7 +75,6 @@ pip install examples/backends/pyraimd2_lj   # the example backend plugin
 cd examples/periodic_lj
 python run_recipe.py --output results/lj-recipe   # relax + NVT + NVE
 python run_recipe.py --output results/lj-recipe   # continue/resume, idempotent
-pyramid validate results/lj-recipe/nve.toml   # config checks, no compute
 pyramid inspect results/lj-recipe/nvt
 pyramid export results/lj-recipe/nve --force-source driving
 ```

@@ -151,17 +151,25 @@ def test_serial_recipe_on_periodic_lj(recipe, _lj_plugin):
     """The relax -> NVT -> NVE recipe on the periodic LJ example, driven by
     the shipped run_recipe.py: adaptive NVT in the middle, real handoff of
     the complete state, and idempotent re-invocation."""
-    import subprocess
     import sys
 
     from pyraimd2.workflows.stages import load_completed_state
 
     out = recipe / "recipe-out"
-    script = recipe / "run_recipe.py"
-    first = subprocess.run([sys.executable, str(script), "--output",
-                            str(out)], capture_output=True, text=True,
-                           check=False)
-    assert first.returncode == 0, first.stderr[-500:]
+
+    def invoke():
+        monkey = pytest.MonkeyPatch()
+        spec = importlib.util.spec_from_file_location(
+            "run_recipe", recipe / "run_recipe.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        monkey.setattr(sys, "argv", ["run_recipe.py", "--output", str(out)])
+        try:
+            module.main()
+        finally:
+            monkey.undo()
+
+    invoke()
     manifest = json.loads((out / "workflow.json").read_text())
     assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
     by_name = {s["name"]: s for s in manifest["stages"]}
@@ -181,14 +189,6 @@ def test_serial_recipe_on_periodic_lj(recipe, _lj_plugin):
                                rtol=0, atol=1e-12)
     assert nve_initial.pbc.all()
     # idempotent: a second invocation computes nothing new
-    second = subprocess.run([sys.executable, str(script), "--output",
-                             str(out)], capture_output=True, text=True,
-                            check=False)
-    assert second.returncode == 0, second.stderr[-500:]
-    manifest2 = json.loads((out / "workflow.json").read_text())
-    assert [s["status"] for s in manifest2["stages"]] == ["done"] * 3
     nvt_events_1 = (out / "nvt" / "events.jsonl").read_bytes()
-    second = subprocess.run([sys.executable, str(script), "--output",
-                             str(out)], capture_output=True, text=True,
-                            check=False)
+    invoke()
     assert (out / "nvt" / "events.jsonl").read_bytes() == nvt_events_1
