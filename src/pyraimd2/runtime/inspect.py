@@ -186,7 +186,8 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
                     metadata = row.data.get("metadata") or {}
                     constraint = metadata.get("constraint") or {}
                     frame = store.complete_step_frame(
-                        row, Store.row_timestep_fs(row) or 0.0)
+                        row, Store.row_timestep_fs(row) or 0.0,
+                        commit=_event)
                     trajectory["last_temperature_K"] = _temperature_K(
                         frame, n_fixed=int(constraint.get("n_fixed", 0)))
 

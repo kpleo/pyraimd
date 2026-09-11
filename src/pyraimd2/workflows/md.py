@@ -824,6 +824,68 @@ def _plain_backend(config: PyramidConfig, run_dir: Path, *,
                                            run_dir=run_dir))
 
 
+def _check_boundary_record(row: object, boundary_step: dict,
+                           commit: dict | None, spec: IntegratorSpec) -> None:
+    """Verify a step-boundary record against the authoritative committed
+    row, by the semantics of the format that wrote it (S0b/S1) — shared by
+    the plain resume path and the completed-state reader (M4-1).
+
+    boundary-v2 binds the complete reconstructed state (bath stream
+    included); unmarked records verify as: the previous batch's single JSON
+    digest; 182cc8d's dual record (array state digest + JSON boundary
+    digest WITHOUT the bath stream — that format never proved the complete
+    RNG identity); or an old healed record carrying only the array digest.
+    """
+    atoms = row.toatoms()
+    boundary = _boundary_from_event(row, boundary_step, commit)
+    digest_format = boundary_step.get("digest_format")
+    if digest_format == DIGEST_FORMAT:
+        mismatches = []
+        actual = state_digest(atoms.positions, atoms.get_momenta())
+        if actual != boundary_step["state_digest"]:
+            mismatches.append(
+                f"state digest ({boundary_step['state_digest']} "
+                f"vs {actual})")
+        actual = boundary.digest()
+        if actual != boundary_step.get("boundary_digest"):
+            mismatches.append(
+                f"boundary digest ({boundary_step.get('boundary_digest')} "
+                f"vs {actual})")
+    elif digest_format is None:
+        array_digest = state_digest(atoms.positions, atoms.get_momenta())
+        recorded = boundary_step["state_digest"]
+        if boundary_step.get("boundary_digest") is not None:
+            mismatches = []
+            if recorded != array_digest:
+                mismatches.append(
+                    f"array state digest ({recorded} vs {array_digest})")
+            actual = boundary.legacy_digest()
+            if boundary_step["boundary_digest"] != actual:
+                mismatches.append(
+                    f"boundary digest ({boundary_step['boundary_digest']} "
+                    f"vs {actual})")
+        elif recorded == boundary.legacy_digest():
+            mismatches = []  # single-JSON semantics verified
+        elif recorded == array_digest:
+            mismatches = []  # array-only heal record verified
+        else:
+            legacy = boundary.legacy_digest()
+            mismatches = [
+                (f"state digest matches no known unmarked format "
+                 f"({recorded} vs legacy {legacy} / array {array_digest})"),
+            ]
+    else:
+        raise WorkflowError(
+            f"the step-{boundary_step.get('step_id')} record claims an "
+            f"unknown digest format {digest_format!r}; the run directory "
+            "is inconsistent")
+    if mismatches:
+        raise WorkflowError(
+            f"the step-{boundary_step.get('step_id')} boundary does not "
+            f"match the committed row ({'; '.join(mismatches)}); the run "
+            "directory is inconsistent")
+
+
 def _run_singlepoint(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                      verbose: bool) -> WorkflowResult:
     """One backend evaluation of the structure (reference or fixed surrogate)."""
@@ -1159,9 +1221,14 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
             f"run directory not found: {run_dir}; pass the directory written "
             "by `pyramid run` (it contains resolved_config.json)")
     if isinstance(extra_steps, bool) or not isinstance(extra_steps, int) \
-            or extra_steps < 1:
+            or extra_steps < 0:
         raise WorkflowError(
-            f"resume --steps must be a positive integer, got {extra_steps!r}")
+            f"resume --steps must be a nonnegative integer, got "
+            f"{extra_steps!r}")
+    # extra_steps == 0 is the heal-only library form (the CLI keeps positive
+    # steps): a plain run binds a committed tail evaluation as its step
+    # record without adding dynamics; an adaptive run re-verifies its
+    # boundary.  Both flow through the normal paths with zero new steps.
     config = load_resolved_config(run_dir)
     if config.task.kind != "md":
         raise WorkflowError(
@@ -1372,73 +1439,7 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                      if e.get("type") == EVALUATION_COMMITTED
                      and int((e.get("context") or {})
                              ["evaluation_id"]) == current), None)
-                boundary = _boundary_from_event(row, boundary_step, commit)
-                digest_format = boundary_step.get("digest_format")
-                if digest_format == DIGEST_FORMAT:
-                    # boundary-v2: the array digest binds the row's
-                    # positions/momenta; the boundary digest binds the
-                    # complete reconstructed state, bath stream included.
-                    mismatches = []
-                    actual = state_digest(atoms.positions, atoms.get_momenta())
-                    if actual != boundary_step["state_digest"]:
-                        mismatches.append(
-                            f"state digest ({boundary_step['state_digest']} "
-                            f"vs {actual})")
-                    actual = boundary.digest()
-                    if actual != boundary_step.get("boundary_digest"):
-                        mismatches.append(
-                            f"boundary digest "
-                            f"({boundary_step.get('boundary_digest')} vs "
-                            f"{actual})")
-                elif digest_format is None:
-                    # Unmarked historical records, each verified by the
-                    # semantics it was written with — verified, never
-                    # rewritten:
-                    # - the previous development batch's single JSON digest
-                    #   (state_digest alone);
-                    # - 182cc8d's dual record: array state_digest plus a JSON
-                    #   boundary_digest that does NOT cover the bath stream
-                    #   (the thermostat_rng field still restores the bath per
-                    #   the existing policy, but this format never proved the
-                    #   complete RNG identity);
-                    # - old healed records that may carry only the array
-                    #   digest.
-                    array_digest = state_digest(atoms.positions,
-                                                atoms.get_momenta())
-                    recorded = boundary_step["state_digest"]
-                    if boundary_step.get("boundary_digest") is not None:
-                        mismatches = []
-                        if recorded != array_digest:
-                            mismatches.append(
-                                f"array state digest ({recorded} vs "
-                                f"{array_digest})")
-                        actual = boundary.legacy_digest()
-                        if boundary_step["boundary_digest"] != actual:
-                            mismatches.append(
-                                f"boundary digest "
-                                f"({boundary_step['boundary_digest']} vs "
-                                f"{actual})")
-                    elif recorded == boundary.legacy_digest():
-                        mismatches = []  # single-JSON semantics verified
-                    elif recorded == array_digest:
-                        mismatches = []  # array-only heal record verified
-                    else:
-                        legacy = boundary.legacy_digest()
-                        mismatches = [
-                            (f"state digest matches no known unmarked format "
-                             f"({recorded} vs legacy {legacy} / array "
-                             f"{array_digest})"),
-                        ]
-                else:
-                    raise WorkflowError(
-                        f"the step-{current - 1} record claims an unknown "
-                        f"digest format {digest_format!r}; the run directory "
-                        "is inconsistent")
-                if mismatches:
-                    raise WorkflowError(
-                        f"the step-{current - 1} boundary does not match the "
-                        f"committed row ({'; '.join(mismatches)}); the run "
-                        "directory is inconsistent")
+                _check_boundary_record(row, boundary_step, commit, spec)
             # A boundary with no step summary at all is a 0.4.x record: the
             # committed-row binding above (row id + row digest) is the only
             # verification that format carries.
