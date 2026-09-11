@@ -301,7 +301,7 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 - Constraints: FixAtoms only — RATTLE/holonomic, energy-carrying and
   moving constraints are rejected explicitly, as is any variable-cell
   (NPT) dynamics.
-- Released 0.4.2 supports NVE only. This development version adds
+- Released 0.4.2 supports NVE only. Version 0.5.0 adds
   fixed-cell NVT (ASE Langevin): plain reference/surrogate modes, and
   adaptive mode in both ensembles — fixed base model via TOML/CLI, or
   guarded online updates via the Python `GuardedUpdater` interface

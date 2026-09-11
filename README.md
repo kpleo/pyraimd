@@ -168,21 +168,32 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   surrogate-only and adaptive modes, with checkpoints, resume and export.
   Adaptive mode applies only to MD.
 - **Dynamics.** The released version (0.4.2) supports fixed-cell NVE and
-  `FixAtoms`. This development version adds fixed-cell NVT (ASE Langevin):
-  plain reference/surrogate modes, and adaptive MD in both ensembles — with
-  a fixed base model via TOML/CLI, or with guarded online updates through
-  the Python `GuardedUpdater` interface (`EnergeticRunner(on_label=...)`;
-  re-anchoring supported, each segment recorded independently). Online
-  updates are not expressible in configuration files: no TOML key installs
-  an update callback. Variable-cell dynamics and other constraint types
-  are unsupported.
+  `FixAtoms`. Version 0.5.0 adds fixed-cell NVT (ASE Langevin,
+  `fixcm=False`): plain reference/surrogate modes, and adaptive MD in both
+  ensembles — with a fixed base model via TOML/CLI, or with guarded online
+  updates through the Python `GuardedUpdater` interface
+  (`EnergeticRunner(on_label=...)`; re-anchoring supported, each segment
+  recorded independently). Online updates are not expressible in
+  configuration files: no TOML key installs an update callback.
+  Variable-cell dynamics and other constraint types are unsupported.
   The default force budget measures the free coordinates
   (`active_dofs_max_atom`); `all_atoms_max_atom` is an explicit alternative.
   Checkpoints retain two generations.
+- **Serial recipes.** `relax → NVT → NVE` chains run through
+  `run_serial_recipe` with per-stage run identities and deduped
+  stop/continue (`examples/periodic_lj` offline; `examples/si_bulk_qe_mace`
+  for QE + MACE). Stage handoff carries the authoritative completed state:
+  positions, cell/PBC, masses, `FixAtoms`, initial charges/magmoms, and
+  complete momenta — initialized once at the first MD stage, preserved
+  afterwards, never rethermalized.
 - **Backends.** QE, molecular closed-shell PySCF, MACE and analytic harmonic
   backends are provided. Generic ASE adapters, the ASE-native QE path and
   backend plugins provide extension interfaces; compatibility declarations
   alone do not establish a backend's numerical accuracy for a material.
+  Training capability is per backend: the analytic harmonic example
+  (`examples/guarded_nvt.py`) demonstrates guarded online updates on a toy
+  model; MACE is used as a fixed model in the examples (its online
+  fine-tuning interface is not an accepted feature of this release).
 - **Energy consistency.** Each side's forces must be the negative gradient
   of its reported scalar for anchored energies and endpoint work to be meaningful.
   A smeared QE `free_energy` reference can be paired with a MACE `energy`

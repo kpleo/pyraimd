@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (release candidate)
 
 ### Added
 
@@ -25,6 +25,16 @@
   training is never re-executed.  New runnable example:
   `examples/guarded_nvt.py` (fresh run, stop, new-process resume,
   purpose-split cost report).
+- The serial `relax → NVT → NVE` recipe: `load_completed_state(run_dir)`
+  reads the authoritative completed boundary (MD: the last true
+  STEP_COMPLETED record, verified against its committed row by the
+  record's own digest format; relax: the converged terminal state), and
+  `run_serial_recipe` drives the stages with per-stage run identities, a
+  short `workflow.json` manifest, durable stage identity persisted before
+  the first computation, finished stages adopted without recomputation,
+  and crashed MD stages resumed to their configured totals.  Examples:
+  `examples/periodic_lj` (offline plugin) and `examples/si_bulk_qe_mace`
+  (QE reference + frozen MACE surrogate).
 
 ### Fixed
 
@@ -37,12 +47,19 @@
   staging/process/validation span instead of being frozen out.
 - Plain MD resume verifies each persisted step-summary format by its own
   semantics (0.4.x records carry none; the previous development batch's
-  complete-boundary JSON digest; the current array digest plus boundary
+  complete-boundary JSON digest; 182cc8d's unmarked dual digest whose
+  boundary digest never covered the bath stream; the current array digest
+  plus boundary
   digest covering the thermostat stream) instead of rejecting older
   records as corrupt, and crash-healed step records now carry the same
   boundary digest as normal commits.
 - Stores opened by the MD workflows are closed on every controlled
   failure path (setup, resume, adaptive), not left to garbage collection.
+- A saved-but-uncommitted model candidate is completed on resume (after
+  validating the parent model, source label IDs and recipe bindings)
+  instead of retraining into an immutable-artifact conflict; explicit
+  user direction callbacks keep precedence over the deferred
+  calibration's persisted displacement.
 
 ### Changed
 
