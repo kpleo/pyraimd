@@ -367,10 +367,12 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
     identity) is persisted atomically before its first backend computation
     (R1); on re-invocation the controller reconciles against the run's own
     resolved config and parsed events — finished stages are adopted without
-    recomputation (R2), resumable ones continue through the ordinary resume
-    protocol with the exact step conversion, and changed
-    settings/policies/sources refuse before any new computation with a
-    new-output-directory instruction.  Source runs are read-only.
+    recomputation only while their bound source boundary, materialized
+    input and completion facts still match the authoritative records (R1),
+    resumable ones continue through the ordinary resume protocol with the
+    exact step conversion, and changed settings/policies/sources refuse
+    before any new computation with a new-output-directory instruction.
+    Source runs are read-only.
     ``force_unlock`` is the caller's deliberate assertion that an
     interrupted stage's writer lock is stale — never taken unconditionally.
     ``handle_sigint`` (default on) stops an MD stage at the next
@@ -406,12 +408,24 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
         #    the existing run directory
         record = _reconcile_stage_identity(
             manifest, stage, config, stage_dir, previous)
-        record["status"] = "running" if record["status"] == "pending" \
-            else record["status"]
-        _write_json_atomic(manifest_path, manifest)
 
         if record["status"] == "done":
-            previous = load_completed_state(stage_dir)
+            # Adoption is a verification, not a shortcut (R1): the run's own
+            # authoritative completed state must exist, and a done MD stage
+            # must still agree with the parent boundary it was bound to, its
+            # materialized input and its persisted completion facts.  An
+            # upstream run extended outside the recipe (or any other source
+            # drift) refuses here — the old results stay valid history for
+            # their own boundary, never a silently accepted current chain.
+            state = load_completed_state(stage_dir)
+            if config.task.kind == "md":
+                if previous is None:
+                    raise WorkflowError(
+                        f"stage {stage.name!r}: an MD stage needs a "
+                        "previous stage's completed state")
+                _verify_done_md_stage(record, stage, stage_dir, previous,
+                                      state)
+            previous = state
             continue
         if record["status"] == "failed":
             raise WorkflowError(
@@ -419,7 +433,22 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
                 "restart from a clean recipe root — the recipe does not "
                 "silently rerun it")
 
-        # 2. authoritative run state from parsed events (R2), then dispatch
+        # 2. prepare and bind the stage's physical input BEFORE the stage
+        #    identity is persisted and before any backend computation: a
+        #    hard exit anywhere later still leaves the bound source and the
+        #    input-state identity on disk (R1).  Preparation itself touches
+        #    no backend and reads source runs only.
+        if config.task.kind == "md":
+            if previous is None:
+                raise WorkflowError(
+                    f"stage {stage.name!r}: an MD stage needs a previous "
+                    "stage's completed state")
+            _prepare_md_stage(record, stage, config, stage_dir, previous)
+        record["status"] = "running" if record["status"] == "pending" \
+            else record["status"]
+        _write_json_atomic(manifest_path, manifest)
+
+        # 3. authoritative run state from parsed events (R2), then dispatch
         started = time.perf_counter()
         try:
             state = _advance_stage(record, stage, config, stage_dir,
@@ -515,13 +544,14 @@ def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
                    stage_dir: Path, previous: CompletedState | None, *,
                    verbose: bool, force_unlock: bool,
                    handle_sigint: bool) -> CompletedState:
-    """Dispatch one non-done stage by its parsed run state (R2)."""
+    """Dispatch one non-done stage by its parsed run state (R2).  The MD
+    input preparation and source binding already happened in the main loop,
+    before the stage identity was persisted."""
     if config.task.kind == "md":
         if previous is None:
             raise WorkflowError(
                 f"stage {stage.name!r}: an MD stage needs a previous "
                 "stage's completed state")
-        _prepare_md_stage(record, stage, config, stage_dir, previous)
         facts = _run_facts(stage_dir)
         target = int(config.dynamics.steps)
         if facts["complete_steps"] >= target:
@@ -611,12 +641,12 @@ def _run_facts(stage_dir: Path) -> dict:
     return facts
 
 
-def _prepare_md_stage(record: dict, stage: RecipeStage,
-                      config: PyramidConfig, stage_dir: Path,
-                      previous: CompletedState) -> None:
-    """Materialize or verify the stage's initial state, and bind the source
-    identity once (R1).  A started stage's existing ``initial.traj`` must
-    still match the parent boundary it was bound to."""
+def _handoff_atoms(stage: RecipeStage, previous: CompletedState) -> Atoms:
+    """The physical input state the stage must start from: the parent
+    stage's completed boundary under this stage's momenta policy (validated).
+    "initialize" means: hand the structure over WITHOUT momenta and let the
+    stage's own driver thermalize once at its configured temperature and
+    velocity seed."""
     momenta_policy = stage.momenta
     has_momenta = "momenta" in previous.atoms.arrays
     if momenta_policy == "preserve" and not has_momenta:
@@ -628,13 +658,20 @@ def _prepare_md_stage(record: dict, stage: RecipeStage,
             f"stage {stage.name!r}: momenta = 'initialize' but the source "
             "already has momenta — refusing to overwrite them; use "
             "'preserve'")
-    # "initialize" means: hand the structure over WITHOUT momenta and let
-    # the stage's own driver thermalize once at its configured temperature
-    # and velocity seed — recorded here, and in the run's RUN_START streams.
     atoms = previous.atoms
     if momenta_policy == "initialize" and "momenta" in atoms.arrays:
         atoms = atoms.copy()
         del atoms.arrays["momenta"]
+    return atoms
+
+
+def _prepare_md_stage(record: dict, stage: RecipeStage,
+                      config: PyramidConfig, stage_dir: Path,
+                      previous: CompletedState) -> None:
+    """Materialize or verify the stage's initial state, and bind the source
+    identity once (R1).  A started stage's existing ``initial.traj`` must
+    still match the parent boundary it was bound to."""
+    atoms = _handoff_atoms(stage, previous)
     expected = _state_file_digest(atoms)
     initial = _materialize_initial(stage_dir, atoms)
     actual = _read_initial_digest(initial)
@@ -654,19 +691,67 @@ def _prepare_md_stage(record: dict, stage: RecipeStage,
     if record["source"] is None:
         record["source"] = dict(previous.provenance)
         record["source"]["state_digest"] = expected
-        if momenta_policy == "initialize":
+        if stage.momenta == "initialize":
             record["source"]["momenta_initialization"] = {
                 "policy": "initialize",
                 "temperature_K": config.dynamics.temperature_K,
                 "velocity_seed": config.dynamics.velocity_seed,
             }
-        elif momenta_policy == "preserve":
+        elif stage.momenta == "preserve":
             record["source"]["momenta_initialization"] = {
                 "policy": "preserve"}
     elif record["source"].get("state_digest") != expected:
         raise WorkflowError(
             f"stage {stage.name!r}: the bound source state changed after "
             "the stage started — use a new recipe root")
+
+
+def _verify_done_md_stage(record: dict, stage: RecipeStage, stage_dir: Path,
+                          previous: CompletedState,
+                          state: CompletedState) -> None:
+    """A done MD stage is adopted only when everything it was bound to still
+    agrees with the authoritative records (R1): the parent boundary its
+    source record names, the materialized input it ran from, and its own
+    persisted completion facts.  A mismatch means the chain's history moved
+    outside the recipe — e.g. the upstream run was extended through the
+    public resume API: the old outputs stay valid results for their own
+    boundary, but the recipe refuses to present them as the current chain.
+    Verification only; nothing is recomputed or rewritten."""
+    expected = _state_file_digest(_handoff_atoms(stage, previous))
+    source = record["source"]
+    if source is None:
+        raise WorkflowError(
+            f"stage {stage.name!r} is done but carries no bound source "
+            "record; the recipe cannot verify what it ran from — use a new "
+            "recipe root (the existing results are preserved)")
+    if source.get("state_digest") != expected:
+        raise WorkflowError(
+            f"stage {stage.name!r}: the parent stage's completed boundary "
+            "changed after this stage finished (the bound source digest no "
+            "longer matches) — the completed chain is not the current "
+            "chain; use a new recipe root (the existing results are "
+            "preserved)")
+    initial = stage_dir / "initial.traj"
+    if not initial.is_file():
+        raise WorkflowError(
+            f"stage {stage.name!r} is done but its materialized "
+            "initial.traj is missing; the bound input state cannot be "
+            "verified — use a new recipe root (the existing results are "
+            "preserved)")
+    if _read_initial_digest(initial) != expected:
+        raise WorkflowError(
+            f"stage {stage.name!r}: initial.traj no longer matches the "
+            "bound parent boundary (the file or the source state changed) "
+            "— use a new recipe root")
+    persisted = (record["result"] or {}).get("complete_steps")
+    actual = int(state.provenance["boundary_step_id"]) + 1
+    if persisted is not None and persisted != actual:
+        raise WorkflowError(
+            f"stage {stage.name!r} finished with {persisted} complete "
+            f"steps, but its run now records {actual}; the run moved "
+            "outside the recipe (e.g. an extra resume through the public "
+            "API) — use a new recipe root (the existing results are "
+            "preserved)")
 
 
 def _finalize_stage_record(record: dict, stage_dir: Path,

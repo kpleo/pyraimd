@@ -524,10 +524,26 @@ def _r1_crashed_root(tmp_path):
     return crash_root
 
 
+def _assert_source_durable_at_hard_exit(crash_root):
+    """The on-disk manifest at the hard exit already binds the interrupted
+    stage's source — with the state digest of the actual parent boundary
+    (the source identity is persisted before any backend computation)."""
+    from pyraimd2.workflows.stages import _state_file_digest
+
+    manifest = json.loads((crash_root / "workflow.json").read_text())
+    nvt = next(s for s in manifest["stages"] if s["name"] == "nvt")
+    assert nvt["source"] is not None
+    assert nvt["source"]["source_run_id"] == "h2-relax"
+    relax_state = load_completed_state(crash_root / "relax")
+    assert nvt["source"]["state_digest"] == _state_file_digest(
+        relax_state.atoms)
+
+
 def test_r1_changed_config_after_interrupted_start_refused(tmp_path):
     # The reviewer's window: committed tail at step 5, hard exit, manifest
     # record present — bias edit refuses through the bound config digest.
     crash_root = _r1_crashed_root(tmp_path)
+    _assert_source_durable_at_hard_exit(crash_root)
     nvt_config = crash_root / "nvt" / "run.toml"
     original = nvt_config.read_text()
     edited = original.replace("bias = 0.05", "bias = 0.2")
@@ -613,6 +629,53 @@ def test_r1_initial_traj_tamper_refused_then_recovers(tmp_path):
     assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
 
 
+def test_r1_done_chain_refuses_an_upstream_moved_outside_the_recipe(tmp_path):
+    # The reviewer's source-change trigger, public APIs only: after the full
+    # chain completes, one ordinary extra resume of the upstream NVT moves
+    # the parent boundary.  The recipe must refuse the stale done chain
+    # before any new computation, preserving every existing result.
+    from pyraimd2.workflows import resume_workflow
+    from pyraimd2.workflows.stages import _state_file_digest
+
+    root = tmp_path / "recipe"
+    stages = write_recipe(root)
+    manifest = run_serial_recipe(root, stages, verbose=False)
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    bound = manifest["stages"][2]["source"]["state_digest"]
+    before = load_completed_state(root / "nvt")
+    assert _state_file_digest(before.atoms) == bound
+    nve_events = (root / "nve" / "events.jsonl").read_bytes()
+
+    extended = resume_workflow(root / "nvt", 1, verbose=False,
+                               handle_sigint=False)
+    assert extended.steps_completed == 7
+    after = load_completed_state(root / "nvt")
+    assert _state_file_digest(after.atoms) != bound
+
+    import pyraimd2.workflows.stages as stages_module
+
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("the recipe dispatched a backend computation")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(stages_module, "run_workflow", forbidden)
+    monkey.setattr(stages_module, "resume_workflow", forbidden)
+    try:
+        with pytest.raises(WorkflowError, match="moved outside the recipe"):
+            run_serial_recipe(root, _stages_for(root), verbose=False)
+    finally:
+        monkey.undo()
+    assert calls == []
+    # every existing result is preserved; the stale chain is not presented
+    # as current, and nothing was silently recomputed or relabelled
+    on_disk = json.loads((root / "workflow.json").read_text())
+    assert [s["status"] for s in on_disk["stages"]] == ["done"] * 3
+    assert (root / "nve" / "events.jsonl").read_bytes() == nve_events
+
+
 # --- R2: finished / resumable / not-started by run facts ------------------------
 
 
@@ -652,6 +715,7 @@ def test_r2_finished_stage_adopted_without_recompute(tmp_path):
                             env=env, capture_output=True, text=True,
                             check=False)
     assert result.returncode == 73, result.stderr[-500:]
+    _assert_source_durable_at_hard_exit(crash_root)
     nvt_events = (crash_root / "nvt" / "events.jsonl").read_bytes()
     nvt_db = (crash_root / "nvt" / "trajectory.db").read_bytes()
 
