@@ -371,17 +371,21 @@ def _make_integrator(spec: IntegratorSpec, atoms: Atoms,
 
 
 def _boundary_from_event(row: object, step_event: dict,
-                         commit: dict | None) -> CommittedStepState:
+                         commit: dict | None,
+                         *, frame: object | None = None) -> CommittedStepState:
     """Rebuild the boundary state a persisted step event claims to bind.
 
-    Reconstruction sources the authoritative committed row for the arrays,
-    the row's route for the driving source, and the evaluation commit for
-    the model identity; the step event itself contributes the step number,
-    physical time, integrator block and thermostat stream.  The digest of
-    this state is what both the normal step commit and the crash-healing
-    commit write, and what resume verifies (S0b).
+    Reconstruction sources the authoritative committed row for the arrays —
+    or ``frame``, the store's complete-step view of that row, when the row
+    is a mid-step record (adaptive rows carry mid-step momenta; the plain
+    driver's rows are already complete) — the row's route for the driving
+    source, and the evaluation commit for the model identity; the step
+    event itself contributes the step number, physical time, integrator
+    block and thermostat stream.  The digest of this state is what both the
+    normal step commit and the crash-healing commit write, and what resume
+    verifies (S0b).
     """
-    atoms = row.toatoms()
+    atoms = row.toatoms() if frame is None else frame
     context = (commit or {}).get("context") or {}
     route = row.key_value_pairs.get("route")
     return CommittedStepState(
@@ -825,19 +829,22 @@ def _plain_backend(config: PyramidConfig, run_dir: Path, *,
 
 
 def _check_boundary_record(row: object, boundary_step: dict,
-                           commit: dict | None, spec: IntegratorSpec) -> None:
+                           commit: dict | None, spec: IntegratorSpec,
+                           *, frame: object | None = None) -> None:
     """Verify a step-boundary record against the authoritative committed
     row, by the semantics of the format that wrote it (S0b/S1) — shared by
     the plain resume path and the completed-state reader (M4-1).
 
-    boundary-v2 binds the complete reconstructed state (bath stream
+    ``frame`` is the store's complete-step view of the row when the row is
+    a mid-step record (adaptive NVT); plain rows are complete and pass no
+    frame.  boundary-v2 binds the complete reconstructed state (bath stream
     included); unmarked records verify as: the previous batch's single JSON
     digest; 182cc8d's dual record (array state digest + JSON boundary
     digest WITHOUT the bath stream — that format never proved the complete
     RNG identity); or an old healed record carrying only the array digest.
     """
-    atoms = row.toatoms()
-    boundary = _boundary_from_event(row, boundary_step, commit)
+    atoms = row.toatoms() if frame is None else frame
+    boundary = _boundary_from_event(row, boundary_step, commit, frame=frame)
     digest_format = boundary_step.get("digest_format")
     if digest_format == DIGEST_FORMAT:
         mismatches = []

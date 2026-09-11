@@ -1,0 +1,55 @@
+# Serial recipe stage 2: adaptive Langevin NVT from the relaxed cell.
+# The controller materializes nvt/initial.traj from stage 1's completed
+# state and thermalizes momenta once (velocity_seed below, recorded in the
+# workflow manifest and the run's RUN_START streams block).
+schema_version = 1
+
+[run]
+id = "lj-nvt"
+directory = "nvt"
+seed = 42
+
+[task]
+kind = "md"
+mode = "adaptive"
+
+[structure]
+file = "nvt/initial.traj"
+
+[dynamics]
+ensemble = "nvt"
+integrator = "langevin"
+timestep_fs = 2.0
+steps = 12
+temperature_K = 40.0
+friction_per_fs = 0.01
+thermostat_seed = 123
+velocity_seed = 7
+
+[reference]
+backend = "lj_reference"
+
+[surrogate]
+backend = "lj_surrogate"
+softening = 0.95
+
+[policy]
+name = "energetic"
+force_budget_eV_A = 0.2
+probe_steps_A = [0.02, 0.04]
+numerical_floor_eV_A = 0.001
+time_cap_fs = 24.0            # loose on purpose: CI mechanics demo
+transverse_cap = 0.5          # loose on purpose: CI mechanics demo, not a materials setting
+
+[verification]
+probability = 0.5
+failure_probability = 0.05
+tilt = 0.6931471805599453
+seed = 19
+
+[checkpoint]
+interval_steps = 4
+
+[output]
+trajectory_interval_steps = 1
+summary_interval_steps = 4

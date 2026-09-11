@@ -1,0 +1,32 @@
+# Serial recipe stage 1: fixed-surrogate FIRE relaxation of the fcc LJ cell.
+schema_version = 1
+
+[run]
+id = "lj-relax"
+directory = "relax"
+seed = 42
+
+[task]
+kind = "relax"
+mode = "surrogate"
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+ensemble = "nve"      # unused by relax; required by the schema
+timestep_fs = 2.0
+steps = 1
+temperature_K = 40.0
+
+[surrogate]
+backend = "lj_surrogate"
+softening = 0.95
+
+[relax]
+optimizer = "fire"
+fmax_eV_A = 0.05
+steps = 100
+
+[output]
+summary_interval_steps = 25

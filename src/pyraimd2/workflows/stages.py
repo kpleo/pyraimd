@@ -106,11 +106,11 @@ def _md_completed_state(run_dir: Path, config: PyramidConfig,
              and int((e.get("context") or {})["evaluation_id"])
              == step_id + 1), None)
         row = store.committed_row(events, config.run.id, step_id + 1)
-        if step_event.get("state_digest"):
-            _check_boundary_record(row, step_event, commit,
-                                   _spec_from_dynamics(config))
         frame = store.complete_step_frame(
             row, Store.row_timestep_fs(row) or 0.0, commit=commit)
+        if step_event.get("state_digest"):
+            _check_boundary_record(row, step_event, commit,
+                                   _spec_from_dynamics(config), frame=frame)
     metadata = row.data.get("metadata") or {}
     constraint = metadata.get("constraint") or {}
     atoms = _clean_atoms(frame, constraint.get("indices") or [])
