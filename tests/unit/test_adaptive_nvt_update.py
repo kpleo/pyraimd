@@ -929,3 +929,53 @@ def test_s1_saved_candidate_completes_without_retraining(tmp_path):
            for e in events(crash_dir)
            if e["type"] in ("label_consumed", "model_update")]
     assert len(ids) == len(set(ids))
+
+
+# --- S2: explicit user directions keep precedence -------------------------------
+
+
+def test_s2_explicit_directions_win_over_the_deferred_displacement(tmp_path):
+    # Two explicit directions plus a callback that never changes the model:
+    # the callable must be invoked and both directions calibrated — the
+    # persisted realized displacement serves only the default NVT source.
+    direction_calls = []
+
+    def two_directions(atoms):
+        directions = np.zeros((2, len(atoms), 3))
+        directions[0, :, 0] = 1.0  # uniform x
+        directions[1, :, 1] = 1.0  # uniform y
+        direction_calls.append(directions)
+        return directions
+
+    run_dir = tmp_path / "s2"
+    run_dir.mkdir()
+    model = TrainableHarmonic()
+    runner = EnergeticRunner(
+        _atoms(), model, Reference(k=K_REF),
+        Store(run_dir / "trajectory.db"), "run", run_dir=run_dir,
+        event_log=EventLog(run_dir), checkpoint_interval_steps=4,
+        force_budget=0.5, timestep_fs=0.5, time_cap_fs=100.0,
+        transverse_cap=1.0, check_probability=0.0, check_seed=7,
+        integrator_spec=_spec(), on_label=lambda observation: False,
+        direction=two_directions)
+    runner.run(2)
+    runner.close()
+    assert direction_calls, "the explicit direction callable was never called"
+    # the deferred calibration produced one response per requested direction
+    anchor_records = []
+    for row in _rows(run_dir):
+        metadata = row.data.get("metadata") or {}
+        for record in (metadata.get("new_anchor"),
+                       (metadata.get("calibration_after_previous_label")
+                        or {}).get("anchor")):
+            if record is not None:
+                anchor_records.append(record)
+    assert anchor_records
+    assert any(len(record["calibration"]["responses"]) == 2
+               for record in anchor_records)
+    directions_used = [tuple(np.asarray(r["direction"]).reshape(-1).round(12))
+                       for record in anchor_records
+                       for r in record["calibration"]["responses"]]
+    half = round(1.0 / np.sqrt(2), 12)  # normalized over the (N, 3) vector
+    assert (half, 0.0, 0.0, half, 0.0, 0.0) in directions_used  # uniform x
+    assert (0.0, half, 0.0, 0.0, half, 0.0) in directions_used  # uniform y

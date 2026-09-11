@@ -1322,10 +1322,14 @@ class EnergeticCalculator(Calculator):
         # one (the initial label formed no step) uses the displacement to
         # the configuration now being evaluated — already realized by the
         # time this runs, never a forecast and never a fresh bath draw.
-        # NVE keeps its historical velocity default (no override).
-        direction = origin.direction
-        if direction is None and self._integrator_spec.ensemble == "nvt":
-            direction = self.atoms.positions - origin.atoms.positions
+        # NVE keeps its historical velocity default.  An explicit user
+        # ``direction`` keeps precedence over every default (S2): the
+        # persisted displacement serves only the default NVT source.
+        direction = None
+        if self.direction is None:
+            direction = origin.direction
+            if direction is None and self._integrator_spec.ensemble == "nvt":
+                direction = self.atoms.positions - origin.atoms.positions
         # Recalibration tasks belong to the origin evaluation's identity.
         self._active_evaluation_id = origin.index
         prediction = self._predict(origin.atoms, purpose="calibration")
