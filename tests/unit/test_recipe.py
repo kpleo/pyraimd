@@ -439,3 +439,123 @@ def test_b_sentinel_proves_preparation_computes_nothing(tmp_path):
     failed = [e for e in nvt_events if e["type"] == "task"
               and e.get("status") == "failed"]
     assert failed and "touched a live backend" in (failed[0]["error"] or "")
+
+
+# --- R3: the completed-state reader --------------------------------------------
+
+
+def test_r3_recovered_run_reads_by_default(tmp_path):
+    # A run whose last outcome is failed refuses by default; after a real
+    # resume completes it, the default reader accepts it again (R3).
+    root = tmp_path / "recipe"
+    stages = write_recipe(root)
+    run_serial_recipe(root, stages[:1], verbose=False)  # relax only
+
+    import pyraimd2.workflows.md as md_module
+    from pyraimd2.backends.harmonic import HarmonicSurrogate
+
+    class FlakyBackend:
+        def __init__(self):
+            self.inner = HarmonicSurrogate(k=1.0, r0=0.9, bias=0.05)
+            self.failing = True
+
+        name = "harmonic-surrogate"
+
+        @property
+        def fingerprint(self):
+            return self.inner.fingerprint
+
+        @property
+        def capabilities(self):
+            return self.inner.capabilities
+
+        def predict(self, atoms):
+            if self.failing and self._calls >= 5:
+                raise RuntimeError("injected backend failure")
+            self._calls += 1
+            return self.inner.predict(atoms)
+
+        _calls = 0
+
+    backend = FlakyBackend()
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(md_module, "_plain_backend",
+                   lambda config, run_dir, **kwargs: backend)
+    try:
+        with pytest.raises(RuntimeError, match="injected backend failure"):
+            run_serial_recipe(root, stages[:2], verbose=False)
+    finally:
+        monkey.undo()
+    # latest outcome is the injected failure: the default reader refuses
+    with pytest.raises(WorkflowError, match="ended failed"):
+        load_completed_state(root / "nvt")
+    # A real resume completes the run; the default reader accepts it again.
+    backend.failing = False
+    monkey.setattr(md_module, "_plain_backend",
+                   lambda config, run_dir, **kwargs: backend)
+    try:
+        from pyraimd2.workflows import resume_workflow
+
+        result = resume_workflow(root / "nvt", 2, verbose=False,
+                                 handle_sigint=False, force_unlock=True)
+        assert result.steps_completed == 6
+    finally:
+        monkey.undo()
+    state = load_completed_state(root / "nvt")
+    assert state.provenance["boundary_step_id"] == 5
+    assert state.provenance["finished"] is True
+
+
+def test_r3_v2_missing_required_fields_refused(tmp_path):
+    root = tmp_path / "recipe"
+    run_serial_recipe(root, write_recipe(root), verbose=False)
+    events_path = root / "nvt" / "events.jsonl"
+    events_list = [json.loads(line)
+                   for line in events_path.read_text().splitlines()]
+    last_step = next(e for e in reversed(events_list)
+                     if e["type"] == "step_completed")
+    last_step.pop("state_digest")
+    last_step["physical_time_fs"] = 999.0
+    events_path.write_text("".join(json.dumps(e) + "\n"
+                                   for e in events_list))
+    with pytest.raises(WorkflowError, match="missing required fields"):
+        load_completed_state(root / "nvt")
+
+    events_list = [json.loads(line)
+                   for line in events_path.read_text().splitlines()]
+    last_step = next(e for e in reversed(events_list)
+                     if e["type"] == "step_completed")
+    last_step.pop("thermostat_rng", None)
+    events_path.write_text("".join(json.dumps(e) + "\n"
+                                   for e in events_list))
+    with pytest.raises(WorkflowError, match="missing required fields"):
+        load_completed_state(root / "nvt")
+
+
+def test_r3_provenance_model_id_is_the_boundary_commit(tmp_path):
+    from test_adaptive_nvt_update import _a_policy, _run_nvt
+    from test_guarded_update import TrainableHarmonic
+
+    run_dir = tmp_path / "upd"
+    model = TrainableHarmonic()
+    _run_nvt(run_dir, updater=_a_policy(model), model=model, steps=12)
+    from pyraimd2.runtime.identity import model_id_for
+
+    updates = [e for e in events(run_dir) if e["type"] == "model_update"]
+    assert updates
+    state = load_completed_state(run_dir, require_finished=False)
+    # the boundary commit froze its driving model before its own update
+    # fired — the provenance must name exactly that commit's identity
+    # (the value the boundary digest and the step record bind), not the
+    # RUN_START initial one
+    boundary_commit = next(
+        e for e in reversed(events(run_dir))
+        if e["type"] == "evaluation_committed")
+    boundary_id = (boundary_commit.get("context") or {})["model_id"]
+    assert state.provenance["model_id"] == boundary_id
+    assert state.provenance["initial_model_id"] == model_id_for(model, 0)
+    assert state.provenance["model_id"] != state.provenance[
+        "initial_model_id"]
+    last_step = next(e for e in reversed(events(run_dir))
+                     if e["type"] == "step_completed")
+    assert state.provenance["model_id"] == last_step["model_id"]

@@ -26,7 +26,7 @@ import numpy as np
 from ase import Atoms
 
 from pyraimd2.config import PyramidConfig, load_config, load_resolved_config
-from pyraimd2.loop.integrators import state_digest
+from pyraimd2.loop.integrators import IntegratorSpec, state_digest
 from pyraimd2.runtime.events import RUN_END, RUN_SUMMARY, STEP_COMPLETED
 from pyraimd2.runtime.inspect import inspect_run
 from pyraimd2.store import Store
@@ -68,7 +68,38 @@ def _clean_atoms(frame: Atoms, constraint_indices) -> Atoms:
     return atoms
 
 
-def _md_completed_state(run_dir: Path, config: PyramidConfig,
+@dataclass(frozen=True)
+class _RunIdentity:
+    """The minimal run identity the MD reader needs, from a workflow
+    resolved config or from a runner-level RUN_START record."""
+
+    run_id: str
+    mode: str
+    ensemble: str
+    integrator: str
+    spec: IntegratorSpec
+    target_steps: int | None  # None: the configured total is unprovable
+
+
+def _identity_from_start(start: dict) -> _RunIdentity:
+    """Reconstruct the run identity from a runner-level RUN_START (no
+    resolved_config.json was written): the integrator block is authoritative
+    either way; the configured total stays unprovable (None)."""
+    workflow = start.get("workflow") or {}
+    driver = workflow.get("driver")
+    if driver is not None:
+        spec = IntegratorSpec(**dict(workflow["integrator"]))
+        mode = str(workflow.get("mode"))
+    else:
+        policy = start.get("policy") or {}
+        spec = IntegratorSpec(**dict(policy["integrator"]))
+        mode = "adaptive"
+    return _RunIdentity(run_id=str(start["run_id"]), mode=mode,
+                        ensemble=spec.ensemble, integrator=spec.algorithm,
+                        spec=spec, target_steps=None)
+
+
+def _md_completed_state(run_dir: Path, ident: _RunIdentity,
                         events: list[dict], *,
                         require_finished: bool) -> CompletedState:
     """The last true STEP_COMPLETED boundary of an MD run (plain or
@@ -76,14 +107,32 @@ def _md_completed_state(run_dir: Path, config: PyramidConfig,
     format semantics."""
     steps = sorted(int(e["step_id"]) for e in events
                    if e.get("type") == STEP_COMPLETED)
-    target = int(config.dynamics.steps)
-    finished = len(steps) >= target
+    target = ident.target_steps
+    finished = target is not None and len(steps) >= target
     if require_finished:
-        failed = next((e for e in reversed(events) if e.get("type") == RUN_END
-                       and e.get("status") == "failed"), None)
-        if failed is not None:
+        if target is None:
             raise WorkflowError(
-                f"{run_dir} ended failed ({failed.get('reason', '')[:120]}); "
+                f"{run_dir} does not record the configured total steps (a "
+                "runner-level run without resolved_config.json); pass "
+                "require_finished=False to use the last complete boundary "
+                "deliberately")
+        # The LATEST terminal outcome decides (R3): a failed RUN_END after
+        # the last successful RUN_SUMMARY is an unresolved failure; an
+        # earlier failure followed by a successful resume is recovered
+        # history, not a permanent block.
+        last_failed = -1
+        last_summary = -1
+        for event in events:
+            if event.get("type") == RUN_END and event.get("status") == "failed":
+                last_failed = max(last_failed, int(event.get("seq", 0)))
+            elif event.get("type") == RUN_SUMMARY:
+                last_summary = max(last_summary, int(event.get("seq", 0)))
+        if last_failed > last_summary:
+            reason = next(e for e in reversed(events)
+                          if e.get("type") == RUN_END
+                          and e.get("status") == "failed")
+            raise WorkflowError(
+                f"{run_dir} ended failed ({reason.get('reason', '')[:120]}); "
                 "fix or fork the run instead of chaining from it")
         if not finished:
             raise WorkflowError(
@@ -105,23 +154,22 @@ def _md_completed_state(run_dir: Path, config: PyramidConfig,
              == "evaluation_committed"
              and int((e.get("context") or {})["evaluation_id"])
              == step_id + 1), None)
-        row = store.committed_row(events, config.run.id, step_id + 1)
+        row = store.committed_row(events, ident.run_id, step_id + 1)
         frame = store.complete_step_frame(
             row, Store.row_timestep_fs(row) or 0.0, commit=commit)
-        if step_event.get("state_digest"):
-            _check_boundary_record(row, step_event, commit,
-                                   _spec_from_dynamics(config), frame=frame)
+        _check_boundary_record(row, step_event, commit, ident.spec,
+                               frame=frame)
     metadata = row.data.get("metadata") or {}
     constraint = metadata.get("constraint") or {}
     atoms = _clean_atoms(frame, constraint.get("indices") or [])
     start = next((e for e in events if e.get("type") == "run_start"), None)
     provenance = {
-        "source_run_id": config.run.id,
+        "source_run_id": ident.run_id,
         "source_run_dir": str(run_dir),
         "task_kind": "md",
-        "mode": config.task.mode,
-        "ensemble": config.dynamics.ensemble,
-        "integrator": config.dynamics.integrator,
+        "mode": ident.mode,
+        "ensemble": ident.ensemble,
+        "integrator": ident.integrator,
         "boundary_step_id": step_id,
         "evaluation_id": step_id + 1,
         "physical_time_fs": float(step_event["physical_time_fs"]),
@@ -131,7 +179,12 @@ def _md_completed_state(run_dir: Path, config: PyramidConfig,
         or step_event.get("state_digest"),
         "momenta_source": frame.info.get("momenta_source"),
         "reference_id": (start or {}).get("reference_id"),
-        "model_id": (start or {}).get("model_id"),
+        # the verified boundary commit's driving model identity (R3) — the
+        # RUN_START value is the initial model and stays named separately
+        "model_id": ((commit.get("context") or {}).get("model_id")
+                     if commit is not None
+                     else (start or {}).get("model_id")),
+        "initial_model_id": (start or {}).get("model_id"),
     }
     return CompletedState(atoms, provenance)
 
@@ -199,14 +252,39 @@ def load_completed_state(run_dir: str | Path, *,
     re-evaluates its initial driving force under its own billing.
     """
     run_dir = Path(run_dir)
+    events_path = run_dir / "events.jsonl"
+    if not (run_dir / "resolved_config.json").is_file():
+        # A runner-level run directory (no resolved_config): the identity
+        # comes from RUN_START; the configured total stays unprovable.
+        if not events_path.is_file():
+            raise WorkflowError(
+                f"{run_dir} is not a run directory (no resolved_config.json "
+                "and no events.jsonl)")
+        events = [json.loads(line)
+                  for line in events_path.read_text().splitlines()]
+        start = next((e for e in events if e.get("type") == "run_start"),
+                     None)
+        if start is None:
+            raise WorkflowError(
+                f"{run_dir} has no RUN_START record; cannot determine the "
+                "run identity")
+        return _md_completed_state(run_dir, _identity_from_start(start),
+                                   events,
+                                   require_finished=require_finished)
     config = load_resolved_config(run_dir)
     events = [json.loads(line)
-              for line in (run_dir / "events.jsonl").read_text().splitlines()]
+              for line in events_path.read_text().splitlines()]
     if config.task.kind == "relax":
         return _relax_completed_state(run_dir, config, events,
                                       require_converged=require_finished)
     if config.task.kind == "md":
-        return _md_completed_state(run_dir, config, events,
+        ident = _RunIdentity(
+            run_id=config.run.id, mode=config.task.mode,
+            ensemble=config.dynamics.ensemble,
+            integrator=config.dynamics.integrator,
+            spec=_spec_from_dynamics(config),
+            target_steps=int(config.dynamics.steps))
+        return _md_completed_state(run_dir, ident, events,
                                    require_finished=require_finished)
     raise WorkflowError(
         f"load_completed_state supports relax and md runs, got "

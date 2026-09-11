@@ -837,15 +837,33 @@ def _check_boundary_record(row: object, boundary_step: dict,
 
     ``frame`` is the store's complete-step view of the row when the row is
     a mid-step record (adaptive NVT); plain rows are complete and pass no
-    frame.  boundary-v2 binds the complete reconstructed state (bath stream
-    included); unmarked records verify as: the previous batch's single JSON
-    digest; 182cc8d's dual record (array state digest + JSON boundary
-    digest WITHOUT the bath stream — that format never proved the complete
-    RNG identity); or an old healed record carrying only the array digest.
+    frame.  A ``boundary-v2`` record must carry its full field set — a
+    missing required field is a broken record, never a skipped check (R3).
+    Unmarked records verify by their recognizable semantics: the previous
+    batch's single JSON digest; 182cc8d's dual record (array state digest +
+    JSON boundary digest WITHOUT the bath stream — that format never proved
+    the complete RNG identity); an old healed record carrying only the
+    array digest; or a 0.4.x record with no step summary at all (then the
+    commit's row binding is the only check it carries).
     """
     atoms = row.toatoms() if frame is None else frame
-    boundary = _boundary_from_event(row, boundary_step, commit, frame=frame)
     digest_format = boundary_step.get("digest_format")
+    if digest_format == DIGEST_FORMAT:
+        missing = [field for field in ("state_digest", "boundary_digest",
+                                       "integrator", "physical_time_fs")
+                   if boundary_step.get(field) is None]
+        if spec.algorithm == "langevin" \
+                and boundary_step.get("thermostat_rng") is None:
+            missing.append("thermostat_rng")
+        if missing:
+            raise WorkflowError(
+                f"the step-{boundary_step.get('step_id')} record declares "
+                f"format {DIGEST_FORMAT!r} but is missing required fields "
+                f"{missing}; the run directory is inconsistent")
+    elif digest_format is None and not boundary_step.get("state_digest") \
+            and boundary_step.get("boundary_digest") is None:
+        return  # 0.4.x: no step summary — the row binding above stands
+    boundary = _boundary_from_event(row, boundary_step, commit, frame=frame)
     if digest_format == DIGEST_FORMAT:
         mismatches = []
         actual = state_digest(atoms.positions, atoms.get_momenta())
@@ -860,8 +878,11 @@ def _check_boundary_record(row: object, boundary_step: dict,
                 f"vs {actual})")
     elif digest_format is None:
         array_digest = state_digest(atoms.positions, atoms.get_momenta())
-        recorded = boundary_step["state_digest"]
-        if boundary_step.get("boundary_digest") is not None:
+        recorded = boundary_step.get("state_digest")
+        if recorded is None:
+            mismatches = [("an unmarked record with a boundary digest but "
+                           "no state digest")]
+        elif boundary_step.get("boundary_digest") is not None:
             mismatches = []
             if recorded != array_digest:
                 mismatches.append(
@@ -1440,7 +1461,7 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             boundary_step = next((e for e in reversed(events)
                                   if e.get("type") == STEP_COMPLETED
                                   and int(e["step_id"]) == current - 1), None)
-            if boundary_step is not None and boundary_step.get("state_digest"):
+            if boundary_step is not None:
                 commit = next(
                     (e for e in reversed(events)
                      if e.get("type") == EVALUATION_COMMITTED
