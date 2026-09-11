@@ -17,9 +17,11 @@ real DFT budget.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
-from test_adaptive_nvt import _atoms, _rows, _spec
+from test_adaptive_nvt import _atoms, _complete_boundaries, _rows, _spec
 from test_guarded_update import Reference, TrainableHarmonic
 from test_nvt import events
 
@@ -58,6 +60,22 @@ def _run_nvt(run_dir, *, updater=None, steps=8, check_probability=0.5,
 
 def _proposals(run_dir):
     return [e for e in events(run_dir) if e["type"] == "evaluation_proposed"]
+
+
+def _segment_anchors(run_dir):
+    """Anchor records keyed by segment id, from both row-metadata channels
+    (in-line calibrations land in ``new_anchor``; deferred ones land in
+    ``calibration_after_previous_label``)."""
+    out = {}
+    for row in _rows(run_dir):
+        metadata = row.data.get("metadata") or {}
+        for record in (metadata.get("new_anchor"),
+                       (metadata.get("calibration_after_previous_label")
+                        or {}).get("anchor")):
+            if record is not None:
+                out[int(record["segment_id"])] = record
+    return out
+
 
 
 def _tasks(run_dir, operation=None):
@@ -165,3 +183,199 @@ def test_deferred_origin_resume_matches_continuous_nvt(tmp_path):
                                       row_b.toatoms().get_momenta())
     assert [(p["accepted"], p["reason"]) for p in _proposals(crash_dir)] == \
            [(p["accepted"], p["reason"]) for p in _proposals(control_dir)]
+
+
+# --- M3B-3 A: normal update with physical accounting ---------------------------
+
+from pyraimd2.loop.integrators import derive_stream_seed
+
+
+def _a_policy(model):
+    return GuardedUpdater(model, UpdatePolicy(n_label=2, guard_size=1))
+
+
+def _bath_state_after(steps, n_atoms=2):
+    """The bath stream state after `steps` Langevin steps' draws (two
+    standard_normal((N,3)) per step, xi then eta) from the role-derived
+    seed — nothing else may consume it."""
+    from pyraimd2.loop.integrators import derive_stream_seed as derive
+
+    rng = np.random.default_rng(derive(123, "thermostat"))
+    for _ in range(steps):
+        rng.standard_normal((n_atoms, 3))
+        rng.standard_normal((n_atoms, 3))
+    return rng.bit_generator.state
+
+
+def test_a_normal_update_physical_accounting(tmp_path):
+    run_dir = tmp_path / "a"
+    model = TrainableHarmonic()
+    updater = _a_policy(model)
+    run_dir, model, engine = _run_nvt(run_dir, updater=updater, model=model,
+                                      steps=12)
+    evs = events(run_dir)
+    updates = [e for e in evs if e["type"] == "model_update"]
+    assert updates, "expected at least one published update"
+    first_update = updates[0]
+    k_update = int(first_update["origin_evaluation_id"])
+
+    # generations, label consumption and external counters agree
+    assert [e["generation"] for e in updates] == list(
+        range(1, len(updates) + 1))
+    consumed_ids = {str(e.get("label_id") or e.get("origin_label_id"))
+                    for e in evs
+                    if e["type"] in ("label_consumed", "model_update")}
+    assert updater.n_consumed == len(consumed_ids)
+    reference_tasks = [t for t in _tasks(run_dir, "reference")
+                       if t["status"] == "success"]
+    assert engine.attempts == len(reference_tasks)
+    training_tasks = [t for t in _tasks(run_dir)
+                      if t.get("operation") == "training"]
+    # the callback is billed once per consumed label; the actual fit runs
+    # only when the policy fires — callback count, training attempts and
+    # publishes are distinct numbers (M3B-2 accounting)
+    assert len(training_tasks) == len(consumed_ids)
+    assert model.finetune_calls == len(updates)
+    assert updater.n_updates == len(updates) and updater.n_rejected == 0
+    assert all(t["status"] == "success" for t in training_tasks)
+    assert not [t for t in training_tasks if t.get("recovery")]
+
+    # the update step drives with the OLD frozen model; the new model starts
+    # at the next, not-yet-frozen evaluation
+    commits = {int((e.get("context") or {})["evaluation_id"]): e
+               for e in evs if e["type"] == "evaluation_committed"}
+    proposals = {int((e.get("context") or {})["evaluation_id"]): e
+                 for e in evs if e["type"] == "evaluation_proposed"}
+    old_id = commits[k_update]["model_id"]
+    assert first_update["model_id"] != old_id
+    artifact = json.loads(
+        (run_dir / "models"
+         / first_update["model_id"].replace("/", "_")
+         / "state.json").read_text())
+    assert artifact["parent_model_id"] == old_id
+    assert proposals[k_update + 1]["context"]["model_id"] == \
+        first_update["model_id"]
+    step_event = next(e for e in evs if e["type"] == "step_completed"
+                      and e["step_id"] == k_update - 1)
+    assert step_event["model_id"] == old_id  # the step's driving identity
+
+    # a new segment under the new generation follows the update
+    segments = {(e.get("segment_id"), e["model_id"])
+                for e in commits.values() if e.get("segment_id") is not None}
+    assert any(seg_model == first_update["model_id"] for _, seg_model in
+               segments), "expected a new segment under the new model"
+
+    # training consumed no bath and no check draws: both streams match a
+    # fresh generator after exactly the expected number of consumptions
+    last_step = [e for e in evs if e["type"] == "step_completed"][-1]
+    assert last_step["thermostat_rng"] == _bath_state_after(12)
+    from pyraimd2.runtime.checkpoint import CheckpointManager
+
+    checkpoint = CheckpointManager(run_dir).read_latest_valid()
+    n_accepted = sum(1 for p in proposals.values() if p["accepted"])
+    check_rng = np.random.default_rng(derive_stream_seed(7, "verification"))
+    for _ in range(n_accepted):
+        check_rng.random()
+    assert checkpoint.state["check_rng"] == check_rng.bit_generator.state
+
+    # old-segment records keep the OLD model's analytic values after the
+    # publish; the new segments compute with their generations' models —
+    # nothing is rewritten retroactively
+    from pyraimd2.energetics.work import residual_work
+    from pyraimd2.runtime.identity import model_id_for
+
+    k_by_model = {model_id_for(model, 0): 0.8}
+    for update in updates:
+        artifact = json.loads(
+            (run_dir / "models" / update["model_id"].replace("/", "_")
+             / "state.json").read_text())
+        k_by_model[update["model_id"]] = float(
+            artifact["updater_state"]["surrogate"]["k"])
+    assert len(set(k_by_model.values())) > 1  # the model really changed
+    for row in _rows(run_dir):
+        surrogate = row.data.get("surrogate") or {}
+        energy = float(surrogate["energy"])
+        x2 = float((row.toatoms().positions**2).sum())
+        row_model = (row.data.get("metadata") or {}).get("context", {}).get(
+            "model_id")
+        assert energy == pytest.approx(0.5 * k_by_model[row_model] * x2,
+                                       rel=1e-12)
+
+    # the guard evidence: model error on a fixed, never-trained configuration
+    # set improves after the update (guard-style regression, not a
+    # generalization claim)
+    from ase import Atoms as _Atoms
+
+    reference = Reference(k=K_REF)
+    guard = [_Atoms("H", positions=[[0.13, 0.07, -0.05]]),
+             _Atoms("H", positions=[[-0.21, 0.11, 0.03]]),
+             _Atoms("H", positions=[[0.34, -0.18, 0.09]])]
+
+    def max_force_error(k):
+        worst = 0.0
+        for atoms in guard:
+            true = reference.compute(atoms).forces
+            worst = max(worst, float(np.abs(-k * atoms.positions
+                                              - true).max()))
+        return worst
+
+    assert max_force_error(model.k) < max_force_error(0.8) / 4
+
+    # residual-work closure on labeled boundaries, each with its segment's
+    # correction and the model of record of that segment's generation, and
+    # the ΔH_ref = W_R + ΔH_anchor identity on the same boundaries
+    observed = [e for e in commits.values() if e.get("observed") is not None]
+    assert observed
+    rows = _rows(run_dir)
+    boundaries = _complete_boundaries(run_dir)
+    masses = rows[0].toatoms().get_masses()[:, None]
+    anchors = _segment_anchors(run_dir)
+    for commit in observed:
+        index = int(commit["context"]["evaluation_id"])
+        segment = int(commit["segment_id"])
+        anchor = anchors[segment]
+        k_seg = k_by_model[model_id_for(model, int(anchor["model_generation"]))]
+        anchor_index = int(anchor["evaluation_index"])
+        anchor_positions = np.array(anchor["positions_A"], dtype=float)
+        correction = np.array(anchor["correction_eV_A"], dtype=float)
+        positions = rows[index].toatoms().positions
+        endpoint = residual_work(
+            anchor_positions, positions,
+            0.5 * k_seg * float((anchor_positions**2).sum()),
+            0.5 * k_seg * float((positions**2).sum()),
+            float(anchor["reference_energy_eV"]),
+            float(rows[index].data["engine"]["energy"]),
+            correction)
+        assert endpoint == pytest.approx(
+            commit["observed"]["endpoint_work_eV"], rel=0, abs=1e-12)
+
+        def kinetic(boundary, _boundaries=boundaries, _masses=masses):
+            return float(
+                (0.5 * _boundaries[boundary][1]**2 / _masses).sum())
+
+        def anchor_energy(pos, _k=k_seg, _c=correction, _a=anchor_positions):
+            return (0.5 * _k * float((pos**2).sum())
+                    - float((_c * (pos - _a)).sum()))
+
+        delta_h_anchor = (kinetic(index) + anchor_energy(positions)
+                          - kinetic(anchor_index)
+                          - anchor_energy(anchor_positions))
+        delta_h_ref = (kinetic(index)
+                       + float(rows[index].data["engine"]["energy"])
+                       - kinetic(anchor_index)
+                       - float(anchor["reference_energy_eV"]))
+        assert delta_h_ref == pytest.approx(endpoint + delta_h_anchor,
+                                            rel=0, abs=1e-12)
+
+
+def test_a_record_only_callback_regression_is_in_place(tmp_path):
+    # The M3B-1 counterexample stays pinned here as acceptance A's first
+    # gate: on_label=lambda observation: False still anchors and admits.
+    seen = []
+    run_dir, _, _ = _run_nvt(
+        tmp_path / "gate", updater=lambda observation: seen.append(
+            observation.label_id) or False)
+    props = _proposals(run_dir)
+    assert sum(1 for p in props if p["accepted"]) >= 1
+    assert any(p["reason"] == "forecast_accepted" for p in props)
+    assert seen
