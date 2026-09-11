@@ -1,0 +1,37 @@
+# Serial recipe stage 1: fixed-MACE FIRE relaxation of the 8-atom diamond
+# Si cell.  The MACE checkpoint path is a user-provided local file — the
+# relative form below resolves against this TOML's directory; point
+# `[surrogate] model` at your own copy (see README).
+schema_version = 1
+
+[run]
+id = "si-relax"
+directory = "relax"
+seed = 42
+
+[task]
+kind = "relax"
+mode = "surrogate"
+
+[structure]
+file = "structure.extxyz"
+
+[dynamics]
+ensemble = "nve"      # unused by relax; required by the schema
+timestep_fs = 1.0
+steps = 1
+temperature_K = 300.0
+
+[surrogate]
+backend = "mace"
+model = "./mace-mpa-0-medium.model"   # user-provided MACE-MPA-0 medium file
+device = "cpu"
+default_dtype = "float64"
+
+[relax]
+optimizer = "fire"
+fmax_eV_A = 0.05
+steps = 100
+
+[output]
+summary_interval_steps = 25

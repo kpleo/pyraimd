@@ -1,0 +1,37 @@
+# Serial recipe stage 3: fixed-MACE NVE continuing the NVT boundary.  The
+# complete momenta carry over (no rethermalization); NVE has no bath
+# settings by construction.  This stage propagates the frozen surrogate
+# potential only — it is not all-reference AIMD.
+schema_version = 1
+
+[run]
+id = "si-nve"
+directory = "nve"
+seed = 42
+
+[task]
+kind = "md"
+mode = "surrogate"
+
+[structure]
+file = "nve/initial.traj"
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 1.0
+steps = 12
+temperature_K = 300.0
+velocity_seed = 7
+
+[surrogate]
+backend = "mace"
+model = "./mace-mpa-0-medium.model"
+device = "cpu"
+default_dtype = "float64"
+
+[checkpoint]
+interval_steps = 4
+
+[output]
+trajectory_interval_steps = 1
+summary_interval_steps = 4

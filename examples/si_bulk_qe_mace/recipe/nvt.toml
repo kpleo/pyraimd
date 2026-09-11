@@ -1,0 +1,74 @@
+# Serial recipe stage 2: adaptive Langevin NVT — QE reference against the
+# frozen MACE surrogate, from the relaxed cell.  The controller materializes
+# nvt/initial.traj from stage 1's completed state and thermalizes momenta
+# exactly once (velocity_seed below; recorded in the workflow manifest and
+# the run's RUN_START streams block).
+#
+# Dependency locations are user-provided, never prefilled here:
+# - `[reference] pw_cmd`: your pw.x launch command (serial or an MPI
+#   launcher matching the allocation).
+# - `[reference] pseudo_dir`: the directory holding the PAW pseudopotentials
+#   named under `[reference.pseudos]`.
+# - `[surrogate] model`: your local MACE-MPA-0 medium checkpoint.
+schema_version = 1
+
+[run]
+id = "si-nvt"
+directory = "nvt"
+seed = 42
+
+[task]
+kind = "md"
+mode = "adaptive"
+
+[structure]
+file = "nvt/initial.traj"
+
+[dynamics]
+ensemble = "nvt"
+integrator = "langevin"
+timestep_fs = 1.0
+steps = 12
+temperature_K = 300.0
+friction_per_fs = 0.01
+thermostat_seed = 123
+velocity_seed = 7
+
+[reference]
+backend = "qe"
+pseudo_dir = "./qe_pseudos"     # user-provided PAW directory (see README)
+pw_cmd = ["pw.x"]               # set your launch command, e.g. ["mpirun", "-np", "N", "pw.x"]
+ecutwfc = 50.0
+ecutrho = 400.0
+kpts = [4, 4, 4]
+conv_thr = 1e-8
+
+[reference.pseudos]
+Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF"
+
+[surrogate]
+backend = "mace"
+model = "./mace-mpa-0-medium.model"
+device = "cpu"
+default_dtype = "float64"
+
+[policy]
+name = "energetic"
+force_budget_eV_A = 0.10
+probe_steps_A = [0.02, 0.04]
+numerical_floor_eV_A = 0.001
+time_cap_fs = 2.0
+transverse_cap = 0.1
+
+[verification]
+probability = 1.0               # every accepted force is paired-checked
+failure_probability = 0.05
+tilt = 0.6931471805599453
+seed = 19
+
+[checkpoint]
+interval_steps = 4
+
+[output]
+trajectory_interval_steps = 1
+summary_interval_steps = 4
