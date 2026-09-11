@@ -23,7 +23,24 @@ command line.
   (`singlepoint`, `relax` or `md` in any supported mode).
 - `resume_workflow(run_dir, extra_steps, *, force_unlock=False, verbose=True, ...)`
   — continue a run for *additional* steps from its persisted state; adaptive
-  and plain reference/surrogate runs are both resumable.
+  and plain reference/surrogate runs are both resumable.  `extra_steps = 0`
+  (library only) binds a committed tail evaluation as its step record or
+  re-verifies the boundary without adding dynamics.
+- `load_completed_state(run_dir, *, require_finished=True) -> CompletedState`
+  (`pyraimd2.workflows.stages`) — the authoritative completed boundary of an
+  MD or relax run plus its provenance (parent run id, step/evaluation id,
+  physical time, record digest, model/potential identity).  MD selects the
+  last true STEP_COMPLETED boundary, verified against the committed row by
+  the record's own digest format; relax requires convergence by default.  No
+  live backend is touched, and the returned Atoms carries physical arrays
+  only (no calculator or cached results).
+- `run_serial_recipe(root, stages, *, verbose=True) -> dict`
+  (`pyraimd2.workflows.stages`) — the serial `relax → NVT → NVE` controller:
+  one `RecipeStage(name, config_path, momenta=...)` per stage (momenta
+  `initialize` exactly once, `preserve` afterwards), per-stage run
+  identities and ledgers under `root/<name>`, a short `workflow.json`
+  manifest with status/provenance/costs, finished stages never recomputed,
+  and crashed MD stages resumed to their configured totals.
 - `validate_setup(config, *, probe=False) -> dict` — everything checkable
   without running: schema, structure, paths, backend construction, capability
   contract. `probe=True` additionally evaluates the structure once per backend.

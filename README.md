@@ -62,6 +62,28 @@ verification numbers are demonstration values, not accuracy recommendations for
 any material. The full field reference is in
 [docs/configuration.md](docs/configuration.md).
 
+### A serial relax → NVT → NVE workflow, offline
+
+`examples/periodic_lj/` runs a 32-atom fcc Lennard-Jones cell through the three
+stages with only NumPy + ASE plus the example plugin. The NVT stage is adaptive
+(fixed model) and the NVE stage continues with the NVT boundary's complete
+momenta — never rethermalized:
+
+```sh
+pip install .                       # the core package
+pip install examples/backends/pyraimd2_lj   # the example backend plugin
+cd examples/periodic_lj
+python run_recipe.py --output results/lj-recipe   # relax + NVT + NVE
+python run_recipe.py --output results/lj-recipe   # continue/resume, idempotent
+pyramid validate results/lj-recipe/nve.toml   # config checks, no compute
+pyramid inspect results/lj-recipe/nvt
+pyramid export results/lj-recipe/nve --force-source driving
+```
+
+For guarded online model updates under NVT (Python interface),
+`examples/guarded_nvt.py` runs offline on analytic potentials, with stop and
+new-process resume.
+
 ### Periodic materials (Quantum ESPRESSO + MACE)
 
 `examples/qe_mace_skeleton/` shows the configuration shape for a real-material
@@ -206,8 +228,10 @@ these quantities, their units and the conditions for interpreting them.
 - [Changelog](CHANGELOG.md)
 - [Supplementary Materials: force-error data and code](reproducibility/force_error/README.md)
 - `examples/` — the demos above, plus direct Python-API scripts:
-  `energetic_loop.py` runs offline on analytic backends, the others need the
-  optional extras they name.
+  `energetic_loop.py` runs offline on analytic backends, `guarded_nvt.py`
+  demonstrates guarded online updates under NVT (fresh run, stop, resume),
+  and `periodic_lj/run_recipe.py` drives the serial relax → NVT → NVE
+  recipe; the others need the optional extras they name.
 - [Slurm example](examples/slurm/README.md) — a generic submission template
   to adapt to your compute environment.
 - `src/pyraimd2/` — framework implementation; `tests/` — numerical, interface

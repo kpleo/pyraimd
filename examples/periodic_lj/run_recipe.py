@@ -19,7 +19,6 @@ not a claim of physical thermal equilibrium.
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import subprocess
 import sys
