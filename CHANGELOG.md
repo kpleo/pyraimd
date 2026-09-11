@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (release candidate)
+## 0.5.0
 
 ### Added
 
@@ -38,6 +38,38 @@
 
 ### Fixed
 
+- A stage's source identity (the parent boundary digest and the
+  materialized input structure) is persisted before the stage's first
+  computation — a hard exit mid-stage no longer leaves `source: null` in
+  the manifest — and a finished stage is adopted only while its bound
+  source, materialized input and completion facts still match the
+  authoritative records: an upstream run extended outside the recipe
+  refuses with the existing results preserved, instead of presenting the
+  stale chain as current.
+- A stop request received on a stage's final step now ends the recipe
+  invocation before the next stage starts (the finished stage is still
+  persisted done first), with a concise stopped / steps-completed /
+  how-to-continue record instead of a misleading failure traceback; the
+  next explicit invocation continues, and the stop check is
+  invocation-scoped so a stale stopped RUN_END cannot poison a completed
+  resume. The plain MD driver now records a stop received on its final
+  step, matching the adaptive runner.
+- Stage wall-time completeness is judged by invocation pairing
+  (RUN_START / RESUMED against RUN_SUMMARY) with the reason recorded: a
+  hard-killed invocation leaves its unrecorded time marked unknown rather
+  than letting the recorded resume leg pose as the complete total.
+- QE process launches write durable `attempt_receipt` phases (prepared /
+  started from the actual process-creation fact / not_launched) under a
+  stable attempt identity. The ledger, `inspect` and the recipe manifest
+  distinguish confirmed executions, confirmed successes and unresolved
+  attempts — including staging directories no event accounts for — and
+  report whether the cost record is complete, so an empty `pw.out` is no
+  longer read as a completed SCF nor silently dropped from the total.
+- The Si recipe guide documents the exact prepare → edit → validate → run
+  ordering with a `--prepare-only` mode (no computation, inference or
+  downloads), the precise deferred-validate scope, and how to probe a
+  materialized stage input through a standalone probe config with a new
+  run id/directory.
 - An abandoned event log (a constructor or a failed resume dropping the
   writer without closing it) no longer leaks an OS handle: garbage
   collection releases the handle while the lock file stays as crash
