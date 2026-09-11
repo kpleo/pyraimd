@@ -544,16 +544,22 @@ class EnergeticCalculator(Calculator):
     def _emit_task(self, *, task_id: str, attempt: int, operation: str,
                    purpose: str | None, status: str, started_unix: float,
                    elapsed_s: float, label_id: str | None = None,
-                   cache_hit: bool = False, error: str | None = None) -> None:
+                   cache_hit: bool = False, error: str | None = None,
+                   recovery: bool = False) -> None:
         # Task events are the cost-ledger leaves; cpu/gpu/queue stay null
-        # when unknown rather than invented.
-        self._emit(TASK, task_id=task_id, attempt=attempt, operation=operation,
-                   purpose=purpose, status=status,
-                   evaluation_id=self._active_evaluation_id,
-                   started_unix=started_unix, elapsed_s=elapsed_s,
-                   cpu_cores=None, gpu=None, queue_s=None,
-                   source="energetic", label_id=label_id,
-                   cache_hit=cache_hit, error=error)
+        # when unknown rather than invented.  ``recovery`` marks a resume
+        # re-delivery's retried consumption/training — billed separately
+        # from the crashed attempt, which keeps its own record (M3B-2).
+        payload = {"task_id": task_id, "attempt": attempt, "operation": operation,
+                   "purpose": purpose, "status": status,
+                   "evaluation_id": self._active_evaluation_id,
+                   "started_unix": started_unix, "elapsed_s": elapsed_s,
+                   "cpu_cores": None, "gpu": None, "queue_s": None,
+                   "source": "energetic", "label_id": label_id,
+                   "cache_hit": cache_hit, "error": error}
+        if recovery:
+            payload["recovery"] = True
+        self._emit(TASK, **payload)
 
     @property
     def n_reference(self) -> int:
@@ -1627,6 +1633,21 @@ class EnergeticCalculator(Calculator):
         self._pending = None
         self._deferred_record = None
         self._evaluation_calls_before = None
+        self._consume_label(pending, violation, label_direction)
+
+    def _consume_label(self, pending: _Pending, violation: bool | None,
+                       label_direction: np.ndarray | None,
+                       *, recovery: bool = False) -> None:
+        """The label-callback transaction of one committed evaluation
+        (timing step 4): consume → maybe train → guard → persist → commit,
+        or roll back to the parent.
+
+        ``recovery=True`` is the resume-window re-delivery (M3B-2/C): the
+        committed label is fed to the restored updater once, with the same
+        idempotent event keys; an uncommitted pre-crash training attempt
+        keeps its billed task, and the retry is billed as its own marked
+        task — never silently free, never double-committed.
+        """
         if pending.label is not None and self.on_label is not None:
             candidate = self._anchor
             self._anchor = None
@@ -1644,7 +1665,8 @@ class EnergeticCalculator(Calculator):
                                 operation="training", purpose="model_update",
                                 status="failed", started_unix=training_started,
                                 elapsed_s=time.perf_counter() - training_start,
-                                label_id=pending.label_id, error=repr(error))
+                                label_id=pending.label_id, error=repr(error),
+                                recovery=recovery)
                 self.results = {}
                 self._callback_failed = True
                 raise
@@ -1659,7 +1681,7 @@ class EnergeticCalculator(Calculator):
                                 operation="training", purpose="model_update",
                                 status="success", started_unix=training_started,
                                 elapsed_s=time.perf_counter() - training_start,
-                                label_id=pending.label_id)
+                                label_id=pending.label_id, recovery=recovery)
                 updater_state = (self.on_label.state_dict()
                                  if _is_stateful(self.on_label) else None)
                 pop_rejection = getattr(self.on_label, "pop_rejection", None)
@@ -1750,6 +1772,43 @@ class EnergeticCalculator(Calculator):
                     label_id=pending.label_id, direction=label_direction)
             if violation:
                 self._next_reason = "previous_independent_check_violation"
+
+    def _redeliver_label(self, store: Store, label_id: str) -> None:
+        """Re-deliver one committed-but-unconsumed label to the restored
+        updater after a crash (M3B-2/C window: the evaluation commit landed,
+        the consumption/update transaction did not).
+
+        The observation is rebuilt from the authoritative commit and its
+        bound row — never recomputed; the deferred-calibration direction is
+        recomputed from the committed rows exactly as the live path
+        captured it.  The updater's restored state is pre-consumption, so
+        its own label-ID dedup keeps this a single logical consumption.
+        """
+        commit = next(e for e in self._event_log.iter_events()
+                      if e.get("type") == EVALUATION_COMMITTED
+                      and str(e.get("label_id")) == label_id)
+        evaluation_id = int((commit.get("context") or {})["evaluation_id"])
+        row = store.committed_row(self._event_log, self.run_id, evaluation_id)
+        atoms = row.toatoms()
+        surrogate_payload = row.data.get("surrogate") or {}
+        engine_payload = row.data.get("engine") or {}
+        prediction = SurrogatePrediction(
+            float(surrogate_payload["energy"]),
+            np.asarray(surrogate_payload["forces"], dtype=float), None,
+            np.full(len(atoms), np.nan))
+        label = EngineResult(float(engine_payload["energy"]),
+                             np.asarray(engine_payload["forces"], dtype=float),
+                             None, float(engine_payload.get("wall_time_s", 0.0)))
+        pending = _Pending(
+            atoms, evaluation_id, prediction, None,
+            commit.get("route") == "ml", str(commit.get("reason")),
+            [], None, [], None, None, bool(commit.get("checked")), None, {},
+            label=label, label_id=label_id)
+        self._active_evaluation_id = evaluation_id
+        self._consume_label(pending, commit.get("violation"),
+                            self._origin_direction(store, evaluation_id,
+                                                   atoms.positions),
+                            recovery=True)
 
     def calculate(self, atoms: Atoms | None = None,
                   properties: tuple[str, ...] = ("energy", "forces"),
@@ -1873,12 +1932,15 @@ def _check_resume_safety(events: list[dict], updater: object) -> None:
 
 
 def _replay_window(calc: EnergeticCalculator, store: Store, events: list[dict], *,
-                   cursor: int, updater: object, models_dir: Path) -> dict | None:
+                   cursor: int, updater: object, models_dir: Path) -> tuple[dict | None, list[str]]:
     """Replay committed events after a checkpoint cursor in original order.
 
-    Returns the last uncommitted proposal event (the frozen decision to
-    resume with the same check draw), or None. Replayed commits apply their
-    recorded values only — no re-sampling, no re-training, no re-consuming.
+    Returns ``(tail_proposal, unconsumed)``: the last uncommitted proposal
+    event (the frozen decision to resume with the same check draw), and the
+    committed-label IDs whose consumption state was never persisted — the
+    caller decides from those persisted facts whether each consumption must
+    be re-delivered (M3B-2/C).  Replayed commits apply their recorded
+    values only — no re-sampling, no re-training, no re-consuming.
     ``events`` is the full log; the consumed-label set is built from the
     whole history, because a label first consumed before the checkpoint and
     only *reused* in the window must not be flagged as never consumed (F07).
@@ -1930,11 +1992,7 @@ def _replay_window(calc: EnergeticCalculator, store: Store, events: list[dict], 
     # A label first consumed anywhere in the history (including before the
     # checkpoint) and only reused in the window is not a consumption loss.
     unconsumed -= consumed_anywhere
-    if unconsumed:
-        raise ResumeError(
-            f"labels {sorted(unconsumed)} were committed but their consumption "
-            "state was never persisted; automatic resume stops here as pending")
-    return tail_proposal
+    return tail_proposal, sorted(unconsumed)
 
 
 class _EnergeticVerlet(VelocityVerlet):
@@ -2345,8 +2403,25 @@ class EnergeticRunner:
             # (tensor-artifact-v1), digest-verified.
             updater.load_state_dict(load_state_arrays(
                 state["updater_state"], dict_array_source(arrays)))
-        tail = _replay_window(calc, store, events, cursor=cursor,
-                              updater=updater, models_dir=run_dir / "models")
+        tail, unconsumed = _replay_window(calc, store, events, cursor=cursor,
+                                          updater=updater,
+                                          models_dir=run_dir / "models")
+        if unconsumed:
+            if not _is_stateful(updater):
+                raise ResumeError(
+                    f"labels {unconsumed} were committed but their consumption "
+                    "state was never persisted, and no stateful updater is "
+                    "available to re-deliver them; automatic resume stops "
+                    "here as pending")
+            # The persisted facts decide (M3B-2/C): these labels' evaluations
+            # committed but their consumption/update transaction never did,
+            # so each is re-delivered once to the restored updater before any
+            # new dynamics.  Committed training is never re-executed (an
+            # identical artifact re-publish is a registry no-op); an
+            # uncommitted pre-crash attempt keeps its own billed task and the
+            # retry is billed as a separate recovery task.
+            for label_id in unconsumed:
+                calc._redeliver_label(store, label_id)
         # Rebuild the numeric label cache from durable records: rows carrying
         # an engine payload and a durable label ID fully determine (geometry,
         # reference identity, energy kind) -> label ID. Without this, a cold

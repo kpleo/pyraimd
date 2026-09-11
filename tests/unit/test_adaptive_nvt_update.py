@@ -32,11 +32,13 @@ K_REF = 1.2  # the Reference toy's spring constant (trainable target)
 
 def _run_nvt(run_dir, *, updater=None, steps=8, check_probability=0.5,
              checkpoint_interval=4, positions=None, momenta=None,
-             temperature=None):
+             temperature=None, model=None):
     """NVT adaptive run with the trainable harmonic model against the
-    analytic reference (k=1.2) — the GuardedUpdater path."""
+    analytic reference (k=1.2) — the GuardedUpdater path.  When an updater
+    is given, pass the model it wraps so the runner and the updater share
+    one object."""
     run_dir.mkdir(parents=True)
-    model = TrainableHarmonic()
+    model = TrainableHarmonic() if model is None else model
     engine = Reference(k=K_REF)
     runner = EnergeticRunner(
         _atoms() if positions is None else _atoms(positions, momenta),
