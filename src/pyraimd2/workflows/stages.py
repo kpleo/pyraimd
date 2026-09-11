@@ -816,35 +816,64 @@ def _finalize_stage_record(record: dict, stage_dir: Path,
     """Mark a stage done with its result and honest wall time (R1/R2):
     measured controller time accumulates across invocations; when durable
     RUN_SUMMARY timings cover more, they win; an invocation whose time is
-    unrecoverable is marked, never fabricated."""
+    unrecoverable is marked with its reason, never fabricated."""
     record["status"] = "done"
     record["result"] = _stage_result(stage_dir, config, state)
-    durable, complete = _durable_wall_time(stage_dir)
+    durable, complete, reason = _durable_wall_time(stage_dir)
     record["wall_time_s"] = max(record["wall_time_s"], durable)
     record["wall_time_complete"] = complete
+    record["wall_time_incomplete_reason"] = reason
 
 
-def _durable_wall_time(stage_dir: Path) -> tuple[float, bool]:
-    """(sum of persisted RUN_SUMMARY wall times, fully measured?) — a
-    crashed invocation leaves no summary for its tail, and the missing
-    portion is marked rather than guessed."""
+def _durable_wall_time(stage_dir: Path) -> tuple[float, bool, str | None]:
+    """(recorded wall time, fully measured?, reason when not) — judged by
+    invocation pairing, never by the presence or absence of a failed
+    RUN_END.
+
+    Every run/resume invocation opens with RUN_START or RESUMED and closes
+    with its own RUN_SUMMARY (a failed invocation's RUN_END has no
+    summary: its wall time was never recorded).  An invocation still open
+    when the next one starts — or at the end of the log — was killed
+    before it could persist its timing; that portion is reported unknown
+    with its reason, never estimated into the total.  The returned total
+    is always exactly the recorded part: each closed invocation's own
+    RUN_SUMMARY interval, summed once.
+    """
     events_path = stage_dir / "events.jsonl"
     if not events_path.is_file():
-        return 0.0, True
+        return 0.0, True, None
     total = 0.0
-    has_summary = False
-    crashed = False
+    open_invocation: str | None = None
+    incomplete: list[str] = []
     for line in events_path.read_text().splitlines():
         if not line.strip():
             continue
         event = json.loads(line)
-        if event.get("type") == "run_summary":
-            has_summary = True
+        event_type = event.get("type")
+        if event_type in ("run_start", "resumed"):
+            if open_invocation is not None:
+                incomplete.append(
+                    f"the invocation opened by {open_invocation} left no "
+                    "terminal record (the process was killed before it "
+                    "could persist its timing); that portion of the wall "
+                    "time is unknown")
+            open_invocation = event_type
+        elif event_type == "run_summary":
             total += float(event.get("wall_time_s") or 0.0)
-        elif event.get("type") == "run_end" \
-                and event.get("status") == "failed":
-            crashed = True
-    return total, has_summary and not crashed
+            open_invocation = None
+        elif event_type == "run_end" and event.get("status") == "failed":
+            if open_invocation is not None:
+                incomplete.append(
+                    "an invocation ended failed without a run summary; "
+                    "its wall time is not recorded")
+                open_invocation = None
+    if open_invocation is not None:
+        incomplete.append(
+            f"the invocation opened by {open_invocation} left no terminal "
+            "record (the process was killed before it could persist its "
+            "timing); that portion of the wall time is unknown")
+    reason = "; ".join(dict.fromkeys(incomplete)) or None
+    return total, not incomplete, reason
 
 
 def _stage_result(stage_dir: Path, config: PyramidConfig,

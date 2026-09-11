@@ -676,6 +676,94 @@ def test_r1_done_chain_refuses_an_upstream_moved_outside_the_recipe(tmp_path):
     assert (root / "nve" / "events.jsonl").read_bytes() == nve_events
 
 
+# --- C1: wall-time completeness by invocation pairing ---------------------------
+
+
+def _write_events(run_dir, events_list):
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "events.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in events_list))
+
+
+def test_c1_durable_wall_time_pairs_invocations(tmp_path):
+    from pyraimd2.workflows.stages import _durable_wall_time
+
+    # a normal continuous run: one invocation, closed by its summary
+    run = tmp_path / "continuous"
+    _write_events(run, [{"type": "run_start"}, {"type": "task"},
+                        {"type": "run_summary", "wall_time_s": 10.0}])
+    assert _durable_wall_time(run) == (10.0, True, None)
+
+    # a normal stop and a normal resume: both invocations closed, each
+    # summary's own interval summed exactly once
+    stop_resume = tmp_path / "stop_resume"
+    _write_events(stop_resume, [
+        {"type": "run_start"}, {"type": "run_end", "status": "stopped"},
+        {"type": "run_summary", "wall_time_s": 4.0},
+        {"type": "resumed"}, {"type": "run_summary", "wall_time_s": 6.0}])
+    assert _durable_wall_time(stop_resume) == (10.0, True, None)
+
+    # SIGKILL after 7 steps, then resumed: the killed invocation left no
+    # terminal record — its time is unknown, never estimated; the recorded
+    # part is the resume leg alone
+    killed = tmp_path / "killed"
+    _write_events(killed, [{"type": "run_start"}, {"type": "task"},
+                           {"type": "resumed"},
+                           {"type": "run_summary", "wall_time_s": 397.7}])
+    total, complete, reason = _durable_wall_time(killed)
+    assert total == 397.7
+    assert complete is False
+    assert "killed" in reason and "unknown" in reason
+
+    # a failed invocation has a terminal RUN_END but no summary: its wall
+    # time is unrecorded — incomplete with the reason, by pairing, not by
+    # the mere presence of the failure
+    failed = tmp_path / "failed"
+    _write_events(failed, [{"type": "run_start"},
+                           {"type": "run_end", "status": "failed"},
+                           {"type": "resumed"},
+                           {"type": "run_summary", "wall_time_s": 3.0}])
+    total, complete, reason = _durable_wall_time(failed)
+    assert (total, complete) == (3.0, False)
+    assert "failed without a run summary" in reason
+
+    # an invocation still open at the end of the log is unterminated
+    open_run = tmp_path / "open"
+    _write_events(open_run, [{"type": "run_start"}, {"type": "task"}])
+    total, complete, reason = _durable_wall_time(open_run)
+    assert (total, complete) == (0.0, False)
+    assert "killed" in reason
+
+    # no events at all: nothing recorded, nothing missing
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert _durable_wall_time(empty) == (0.0, True, None)
+
+    # reading the same record twice gives the same verdict
+    assert _durable_wall_time(killed) == _durable_wall_time(killed)
+
+
+def test_c1_crash_resume_marks_the_lost_portion_unknown(tmp_path):
+    # The recipe integration: a hard-killed NVT leg followed by a clean
+    # resume finalizes with the lost portion marked, not silently complete.
+    crash_root = _r1_crashed_root(tmp_path)
+    manifest = run_serial_recipe(crash_root, _stages_for(crash_root),
+                                 verbose=False, force_unlock=True)
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    nvt = next(s for s in manifest["stages"] if s["name"] == "nvt")
+    assert nvt["wall_time_s"] > 0  # the recorded resume leg
+    assert nvt["wall_time_complete"] is False
+    assert "killed" in nvt["wall_time_incomplete_reason"]
+    # the uninterrupted stages and a continuous control run are complete
+    assert next(s for s in manifest["stages"]
+                if s["name"] == "nve")["wall_time_complete"] is True
+    control = tmp_path / "control"
+    control_manifest = run_serial_recipe(control, write_recipe(control),
+                                         verbose=False)
+    assert all(s["wall_time_complete"] is True
+               for s in control_manifest["stages"])
+
+
 # --- R2: finished / resumable / not-started by run facts ------------------------
 
 
@@ -965,6 +1053,10 @@ def test_sigint_stops_an_md_stage_at_the_boundary_and_resumes(tmp_path,
                                  force_unlock=True)
     assert "stopped_early" not in manifest
     assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    # both invocations (the stop and the resume) closed with their own
+    # summaries — the stage's measured time is complete
+    assert next(s for s in manifest["stages"]
+                if s["name"] == "nvt")["wall_time_complete"] is True
     for stage, run_id in (("nvt", "h2-nvt"), ("nve", "h2-nve")):
         rows_a, rows_b = _rows(crash / stage, run_id), _rows(
             control / stage, run_id)
