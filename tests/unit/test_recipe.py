@@ -849,3 +849,82 @@ def test_r3_provenance_model_id_is_the_boundary_commit(tmp_path):
     last_step = next(e for e in reversed(events(run_dir))
                      if e["type"] == "step_completed")
     assert state.provenance["model_id"] == last_step["model_id"]
+
+
+# --- F2: SIGINT stops an MD stage at the complete-step boundary -----------------
+
+
+def test_sigint_stops_an_md_stage_at_the_boundary_and_resumes(tmp_path):
+    import signal
+
+    control = tmp_path / "control"
+    run_serial_recipe(control, write_recipe(control), verbose=False)
+    crash = tmp_path / "crash"
+    stages = write_recipe(crash)
+    monkey = pytest.MonkeyPatch()
+    real_append_once = EventLog.append_once
+
+    def sigint_at_step(self, key, event_type, payload):
+        result = real_append_once(self, key, event_type, payload)
+        if key == "step:h2-nvt:2":
+            os.kill(os.getpid(), signal.SIGINT)
+        return result
+
+    monkey.setattr(EventLog, "append_once", sigint_at_step)
+    try:
+        with pytest.raises(WorkflowError, match="completed 3 of 6"):
+            run_serial_recipe(crash, stages, verbose=False)
+    finally:
+        monkey.undo()
+    # The stop landed on a complete-step boundary: 3 complete steps, a
+    # checkpoint, and the stage left resumable — never marked failed.
+    assert len([e for e in events(crash / "nvt")
+                if e["type"] == "step_completed"]) == 3
+    assert (crash / "nvt" / "checkpoints" / "latest.json").is_file()
+    manifest = json.loads((crash / "workflow.json").read_text())
+    assert next(s for s in manifest["stages"]
+                if s["name"] == "nvt")["status"] == "running"
+    # Resuming continues to the configured total and runs NVE, matching the
+    # uninterrupted control bit-for-bit.
+    manifest = run_serial_recipe(crash, _stages_for(crash), verbose=False,
+                                 force_unlock=True)
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    for stage, run_id in (("nvt", "h2-nvt"), ("nve", "h2-nve")):
+        rows_a, rows_b = _rows(crash / stage, run_id), _rows(
+            control / stage, run_id)
+        assert len(rows_a) == len(rows_b)
+        for row_a, row_b in zip(rows_a, rows_b):
+            np.testing.assert_array_equal(row_a.toatoms().positions,
+                                          row_b.toatoms().positions)
+            np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
+                                          row_b.toatoms().get_momenta())
+
+
+def test_sigint_disabled_keeps_the_old_recipe_behavior(tmp_path):
+    import signal
+
+    root = tmp_path / "recipe"
+    stages = write_recipe(root)
+    monkey = pytest.MonkeyPatch()
+    real_append_once = EventLog.append_once
+
+    def sigint_at_step(self, key, event_type, payload):
+        result = real_append_once(self, key, event_type, payload)
+        if key == "step:h2-nvt:2":
+            os.kill(os.getpid(), signal.SIGINT)
+        return result
+
+    monkey.setattr(EventLog, "append_once", sigint_at_step)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_serial_recipe(root, stages, verbose=False,
+                              handle_sigint=False)
+    finally:
+        monkey.undo()
+    # with the guard off there is no boundary stop: the raw interrupt
+    # aborts the run and the stage stays incomplete (running)
+    manifest = json.loads((root / "workflow.json").read_text())
+    assert next(s for s in manifest["stages"]
+                if s["name"] == "nvt")["status"] == "running"
+    assert len([e for e in events(root / "nvt")
+                if e["type"] == "step_completed"]) < 6

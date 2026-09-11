@@ -207,3 +207,39 @@ def test_si_recipe_keeps_user_configs_visibly(tmp_path, capsys):
         invoke(root)
     out, _ = capsys.readouterr()
     assert "keeping existing nvt.toml" in out
+
+
+def test_validate_defers_controller_materialized_structure(tmp_path):
+    # F1: `pyramid validate recipe/nvt.toml` pre-run — the materialized
+    # input is absent by convention, so the structure section defers with
+    # an explicit scope note; backends and capabilities still validate.
+    from pyraimd2.config import load_config
+    from pyraimd2.workflows import validate_setup
+
+    root = _write_si_recipe(tmp_path)
+    assert not (root / "nvt" / "initial.traj").exists()
+    report = validate_setup(load_config(root / "nvt.toml"))
+    assert "deferred" in report["structure"]
+    assert report["capabilities"]["surrogate"]["energy_kind"]
+    assert report["capabilities"]["reference"]["energy_kind"]
+    # the probe path needs a real structure and refuses honestly
+    with pytest.raises(WorkflowError, match="needs a loadable structure"):
+        validate_setup(load_config(root / "nvt.toml"), probe=True)
+    # a missing structure outside the controller's convention stays an error
+    text = (root / "nvt.toml").read_text().replace(
+        "nvt/initial.traj", "missing.extxyz")
+    (root / "bad.toml").write_text(text)
+    with pytest.raises(WorkflowError, match="structure.file not found"):
+        validate_setup(load_config(root / "bad.toml"))
+    # once the controller materialized the input, the full check applies
+    run_serial_recipe(root, _stages(root)[:1], verbose=False)
+    import pyraimd2.workflows.stages as stages_module
+
+    relax_state = stages_module.load_completed_state(root / "relax")
+    record = {"source": None, "status": "pending"}
+    stages_module._prepare_md_stage(
+        record, RecipeStage("nvt", root / "nvt.toml", momenta="initialize"),
+        load_config(root / "nvt.toml"), root / "nvt", relax_state)
+    report = validate_setup(load_config(root / "nvt.toml"))
+    assert "deferred" not in report["structure"]
+    assert report["structure"]["n_atoms"] == 8

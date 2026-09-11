@@ -59,8 +59,12 @@ refusals, retries). The NVT stage's momenta are initialized exactly once
 at 300 K (`velocity_seed = 7`, recorded in the manifest and the run's
 RUN_START streams block); the NVE stage keeps the complete momenta and has
 no bath settings. Configuration checks without any computation:
-`pyramid validate recipe/nvt.toml` (after providing the inputs above;
-the NVT stage's structure is materialized by the controller at run time).
+`pyramid validate recipe/nvt.toml` — a recipe stage's structure is
+materialized by the controller at stage start, so validate reports the
+structure section as *deferred* and checks schema, backends and
+capabilities; `--probe-backends` needs the materialized input (run the
+recipe once first) or a plain structure config such as
+`run-md-adaptive.toml`.
 
 ## Settings and files
 

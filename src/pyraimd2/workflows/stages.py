@@ -357,7 +357,8 @@ def _read_initial_digest(path: Path) -> str:
 
 def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
                       verbose: bool = True,
-                      force_unlock: bool = False) -> dict:
+                      force_unlock: bool = False,
+                      handle_sigint: bool = True) -> dict:
     """Run the serial recipe (e.g. relax → NVT → NVE), idempotently.
 
     Each stage owns an independent run id, config and cost ledger under
@@ -372,6 +373,10 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
     new-output-directory instruction.  Source runs are read-only.
     ``force_unlock`` is the caller's deliberate assertion that an
     interrupted stage's writer lock is stale — never taken unconditionally.
+    ``handle_sigint`` (default on) stops an MD stage at the next
+    complete-step boundary on SIGINT, checkpoint saved and the stage left
+    resumable; a relax stage aborts as failed (no optimizer stop boundary
+    exists).
     Returns the manifest dict (also written to ``root/workflow.json``).
     """
     root = Path(root)
@@ -419,7 +424,8 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
         try:
             state = _advance_stage(record, stage, config, stage_dir,
                                    previous, verbose=verbose,
-                                   force_unlock=force_unlock)
+                                   force_unlock=force_unlock,
+                                   handle_sigint=handle_sigint)
         except Exception:
             # MD stages recover through the ordinary resume protocol on the
             # next invocation (status stays "running"); relax stages have
@@ -507,7 +513,8 @@ def _reconcile_stage_identity(manifest: list | dict, stage: RecipeStage,
 
 def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
                    stage_dir: Path, previous: CompletedState | None, *,
-                   verbose: bool, force_unlock: bool) -> CompletedState:
+                   verbose: bool, force_unlock: bool,
+                   handle_sigint: bool) -> CompletedState:
     """Dispatch one non-done stage by its parsed run state (R2)."""
     if config.task.kind == "md":
         if previous is None:
@@ -538,7 +545,8 @@ def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
                       + (" (binding one committed tail step)"
                          if facts["healable"] else ""))
             resume_workflow(stage_dir, extra, verbose=verbose,
-                            handle_sigint=False, force_unlock=force_unlock)
+                            handle_sigint=handle_sigint,
+                            force_unlock=force_unlock)
             return load_completed_state(stage_dir)
         if facts["started"]:
             # Run records exist but nothing resumable: no complete boundary
@@ -552,7 +560,8 @@ def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
                 "(the existing run is preserved)")
         if verbose:
             print(f"recipe {stage.name}: running md ({config.task.mode})")
-        run_workflow(config, verbose=verbose, handle_sigint=False)
+        run_workflow(config, verbose=verbose,
+                     handle_sigint=handle_sigint)
         return load_completed_state(stage_dir)
     # relax: no optimizer resume anywhere; a converged run is adopted, a
     # started unconverged one is a hard stop (R2)
@@ -568,7 +577,8 @@ def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
             "clean recipe root (the existing run is preserved)")
     if verbose:
         print(f"recipe {stage.name}: running relax ({config.task.mode})")
-    run_workflow(config, verbose=verbose, handle_sigint=False)
+    run_workflow(config, verbose=verbose,
+                 handle_sigint=handle_sigint)
     return load_completed_state(stage_dir)
 
 

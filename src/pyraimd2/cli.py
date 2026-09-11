@@ -121,14 +121,17 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     report = validate_setup(config, probe=args.probe_backends)
     structure = report["structure"]
-    momenta = ("present in the file" if structure["has_momenta"]
-               else f"thermalized at {config.dynamics.temperature_K} K "
-                    f"(velocity_seed {config.dynamics.velocity_seed})")
     print(f"configuration : {config.source_path} (schema_version "
           f"{config.schema_version})")
     print(f"task          : {config.task.kind} / {config.task.mode}")
-    print(f"structure     : {structure['formula']}, {structure['n_atoms']} "
-          f"atoms, pbc={structure['pbc']}, momenta {momenta}")
+    if "deferred" in structure:
+        print(f"structure     : deferred — {structure['deferred']}")
+    else:
+        momenta = ("present in the file" if structure["has_momenta"]
+                   else f"thermalized at {config.dynamics.temperature_K} K "
+                        f"(velocity_seed {config.dynamics.velocity_seed})")
+        print(f"structure     : {structure['formula']}, {structure['n_atoms']} "
+              f"atoms, pbc={structure['pbc']}, momenta {momenta}")
     for section in ("reference", "surrogate"):
         backend = getattr(config, section)
         if backend is None:

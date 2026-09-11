@@ -267,12 +267,31 @@ def build_backends(config: PyramidConfig, *, run_dir: Path | None = None,
 # validation
 
 
+def _is_controller_materialized_input(config: PyramidConfig) -> bool:
+    """Whether ``structure.file`` names the serial-recipe controller's
+    materialized input: ``initial.traj`` inside the run directory (the
+    exact shape ``run_serial_recipe`` owns and writes at stage start)."""
+    try:
+        return (config.structure.file.resolve()
+                == (config.run.directory / "initial.traj").resolve())
+    except OSError:
+        return False
+
+
 def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
     """Full pre-run validation; returns a human-presentable report dict.
 
     Default mode runs no SCF, no inference and downloads nothing; with
     ``probe=True`` each configured backend additionally evaluates the
     structure once as a self-check.
+
+    A ``structure.file`` that names the serial-recipe controller's
+    materialized input (``initial.traj`` in the run directory) is allowed
+    to be absent at validate time: it is written by the controller at stage
+    start, so the report marks the structure as deferred to run time and
+    validation covers schema, backends and capabilities only.  Any other
+    missing structure file stays an error, and ``probe=True`` always
+    requires a loadable structure.
     """
     if config.task.kind not in ("singlepoint", "relax", "md"):
         raise WorkflowError(
@@ -280,13 +299,31 @@ def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
             "singlepoint, relax or md")
     report: dict[str, Any] = {"config": config, "probes": {}}
 
-    atoms = load_structure(config)
-    report["structure"] = {
-        "formula": atoms.get_chemical_formula(),
-        "n_atoms": len(atoms),
-        "pbc": [bool(p) for p in atoms.pbc],
-        "has_momenta": "momenta" in atoms.arrays,
-    }
+    atoms = None
+    try:
+        atoms = load_structure(config)
+    except WorkflowError as error:
+        if "structure.file not found" in str(error) \
+                and _is_controller_materialized_input(config):
+            report["structure"] = {
+                "deferred": (
+                    "structure.file is absent and names the serial-recipe "
+                    "controller's materialized input (initial.traj in the "
+                    "run directory); it is written by the controller at "
+                    "stage start and validated there.  Validation here "
+                    "covers schema, backends and capabilities only — the "
+                    "structure itself, species-pseudopotential coverage and "
+                    "any --probe-backends evaluation run at stage start."),
+            }
+        else:
+            raise
+    else:
+        report["structure"] = {
+            "formula": atoms.get_chemical_formula(),
+            "n_atoms": len(atoms),
+            "pbc": [bool(p) for p in atoms.pbc],
+            "has_momenta": "momenta" in atoms.arrays,
+        }
 
     problems: list[str] = []
     for section in ("reference", "surrogate"):
@@ -297,9 +334,10 @@ def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
         raise WorkflowError("invalid path options:\n  - " + "\n  - ".join(problems))
 
     engine, surrogate = build_backends(config)
-    problems.extend(_resolved_pseudo_problems(engine, atoms))
-    if problems:
-        raise WorkflowError("invalid backend paths:\n  - " + "\n  - ".join(problems))
+    if atoms is not None:
+        problems.extend(_resolved_pseudo_problems(engine, atoms))
+        if problems:
+            raise WorkflowError("invalid backend paths:\n  - " + "\n  - ".join(problems))
     capabilities = {}
     for section, backend in (("reference", engine), ("surrogate", surrogate)):
         if backend is None:
@@ -333,6 +371,13 @@ def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
 
     check_run_directory_available(config)
 
+    if probe and atoms is None:
+        raise WorkflowError(
+            "--probe-backends evaluates the structure once per backend, so "
+            "it needs a loadable structure.file; for a serial-recipe stage "
+            "config the structure is materialized by the controller at "
+            "stage start — validate without the probe, or probe the "
+            "materialized input once the stage has run")
     if probe:
         for section, backend in (("reference", engine), ("surrogate", surrogate)):
             if backend is None:
