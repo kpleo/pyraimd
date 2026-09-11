@@ -2406,22 +2406,6 @@ class EnergeticRunner:
         tail, unconsumed = _replay_window(calc, store, events, cursor=cursor,
                                           updater=updater,
                                           models_dir=run_dir / "models")
-        if unconsumed:
-            if not _is_stateful(updater):
-                raise ResumeError(
-                    f"labels {unconsumed} were committed but their consumption "
-                    "state was never persisted, and no stateful updater is "
-                    "available to re-deliver them; automatic resume stops "
-                    "here as pending")
-            # The persisted facts decide (M3B-2/C): these labels' evaluations
-            # committed but their consumption/update transaction never did,
-            # so each is re-delivered once to the restored updater before any
-            # new dynamics.  Committed training is never re-executed (an
-            # identical artifact re-publish is a registry no-op); an
-            # uncommitted pre-crash attempt keeps its own billed task and the
-            # retry is billed as a separate recovery task.
-            for label_id in unconsumed:
-                calc._redeliver_label(store, label_id)
         # Rebuild the numeric label cache from durable records: rows carrying
         # an engine payload and a durable label ID fully determine (geometry,
         # reference identity, energy kind) -> label ID. Without this, a cold
@@ -2439,6 +2423,24 @@ class EnergeticRunner:
         runner._checkpoints = CheckpointManager(run_dir)
         runner._model_registry = ModelRegistry(run_dir)
         calc._model_publisher = runner._publish_model_artifact
+        if unconsumed:
+            if not _is_stateful(updater):
+                raise ResumeError(
+                    f"labels {unconsumed} were committed but their consumption "
+                    "state was never persisted, and no stateful updater is "
+                    "available to re-deliver them; automatic resume stops "
+                    "here as pending")
+            # The persisted facts decide (M3B-2/C): these labels' evaluations
+            # committed but their consumption/update transaction never did,
+            # so each is re-delivered once to the restored updater before any
+            # new dynamics — with the artifact publisher already wired, so a
+            # committed update's artifact lands exactly as the live path's.
+            # Committed training is never re-executed (an identical artifact
+            # re-publish is a registry no-op); an uncommitted pre-crash
+            # attempt keeps its own billed task and the retry is billed as a
+            # separate recovery task.
+            for label_id in unconsumed:
+                calc._redeliver_label(store, label_id)
         # Boundary atoms: full-step momenta of the last committed evaluation.
         atoms = calc._identity_from_arrays(arrays)
         if calc._projection is not None:

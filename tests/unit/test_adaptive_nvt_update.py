@@ -18,6 +18,11 @@ real DFT budget.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -34,14 +39,14 @@ K_REF = 1.2  # the Reference toy's spring constant (trainable target)
 
 def _run_nvt(run_dir, *, updater=None, steps=8, check_probability=0.5,
              checkpoint_interval=4, positions=None, momenta=None,
-             temperature=None, model=None):
+             temperature=None, model=None, engine=None):
     """NVT adaptive run with the trainable harmonic model against the
     analytic reference (k=1.2) — the GuardedUpdater path.  When an updater
     is given, pass the model it wraps so the runner and the updater share
     one object."""
     run_dir.mkdir(parents=True)
     model = TrainableHarmonic() if model is None else model
-    engine = Reference(k=K_REF)
+    engine = Reference(k=K_REF) if engine is None else engine
     runner = EnergeticRunner(
         _atoms() if positions is None else _atoms(positions, momenta),
         model, engine, Store(run_dir / "trajectory.db"), "run",
@@ -510,3 +515,301 @@ def test_b_publish_failure_stops_then_resume_retries_the_update(tmp_path):
         np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
                                       row_b.toatoms().get_momenta())
     assert model2.k == cmodel.k
+
+
+# --- M3B-3 C: clean split and true cross-process crash windows ----------------
+
+from pyraimd2.engines.base import EngineResult
+
+
+class CountingReference:
+    """The guard-update toy reference (k=1.2 + quartic) counting every real
+    compute call in a shared file, with a per-call drift so a silent
+    re-execution is numerically distinguishable, and an armed mode whose
+    calls raise — proving a recovery phase never touches the live backend."""
+
+    name = "counting-guard-reference"
+
+    def __init__(self, count_file, *, drift_scale=0.0, armed=False):
+        from pathlib import Path as _Path
+
+        self.count_file = _Path(count_file)
+        self.drift_scale = drift_scale
+        self.armed = armed
+        self.inner = Reference(k=K_REF)
+
+    @property
+    def fingerprint(self):
+        return None  # mirrors the unfingerprinted toy reference
+
+    @property
+    def capabilities(self):
+        return None
+
+    @property
+    def n_calls(self):
+        return int(self.count_file.read_text()) \
+            if self.count_file.exists() else 0
+
+    def compute(self, atoms):
+        if self.armed:
+            raise AssertionError("the recovery phase touched a live backend")
+        n = self.n_calls + 1
+        self.count_file.write_text(str(n))
+        label = self.inner.compute(atoms)
+        drift = self.drift_scale * n
+        return EngineResult(label.energy + drift, label.forces + drift,
+                            None, 0.0)
+
+
+_C_UPDATER = "GuardedUpdater(model, UpdatePolicy(n_label=2, guard_size=1))"
+
+_C_CHILD = '''
+import os
+import sys
+from pathlib import Path
+
+from test_adaptive_nvt_update import CountingReference, _run_nvt
+from test_guarded_update import TrainableHarmonic
+from pyraimd2.loop import GuardedUpdater, UpdatePolicy
+from pyraimd2.runtime.events import EventLog
+
+run_dir = Path(os.environ["RUN_DIR"])
+steps = int(os.environ["STEPS"])
+kill_key = os.environ.get("KILL_KEY")
+kill_after = os.environ.get("KILL_AFTER") == "1"
+
+if kill_key:
+    original = EventLog.append_once
+
+    def patched(self, key, event_type, payload):
+        if key == kill_key and not kill_after:
+            os._exit(73)
+        result = original(self, key, event_type, payload)
+        if key == kill_key and kill_after:
+            os._exit(73)
+        return result
+
+    EventLog.append_once = patched
+
+model = TrainableHarmonic()
+_run_nvt(run_dir,
+         updater=GuardedUpdater(model, UpdatePolicy(n_label=2, guard_size=1)),
+         model=model, steps=steps,
+         engine=CountingReference(os.environ["COUNT_FILE"], drift_scale=1e-6))
+'''
+
+
+def _c_update_control(tmp_path, *, steps=20):
+    """Continuous control run with real updates, its own counter file."""
+    count_file = tmp_path / "control.calls"
+    run_dir = tmp_path / "control"
+    model = TrainableHarmonic()
+    _run_nvt(run_dir,
+             updater=GuardedUpdater(model, UpdatePolicy(n_label=2,
+                                                        guard_size=1)),
+             model=model, steps=steps,
+             engine=CountingReference(count_file, drift_scale=1e-6))
+    return run_dir, count_file, model
+
+
+def _c_update_child(tmp_path, *, steps, kill_key=None, kill_after=False):
+    run_dir = tmp_path / "crashed"
+    count_file = tmp_path / "crashed.calls"
+    child = tmp_path / "child.py"
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    child.write_text(textwrap.dedent(_C_CHILD))
+    env = dict(os.environ, RUN_DIR=str(run_dir), STEPS=str(steps),
+               COUNT_FILE=str(count_file),
+               PYTHONPATH=os.pathsep.join(
+                   [str(Path(__file__).parents[2] / "src"),
+                    str(Path(__file__).parent)]))
+    if kill_key is not None:
+        env["KILL_KEY"] = kill_key
+        env["KILL_AFTER"] = "1" if kill_after else "0"
+    result = subprocess.run([sys.executable, str(child)],
+                            env=env, capture_output=True, text=True,
+                            check=False)
+    expected = 73 if kill_key is not None else 0
+    assert result.returncode == expected, result.stderr[-500:]
+    return run_dir, count_file
+
+
+def _model_chain(run_dir):
+    """The model lineage facts: updates (without the digest, which binds
+    measured wall times by design) and per-commit driving identities."""
+    evs = events(run_dir)
+    updates = [(e["generation"], e["model_id"], e["origin_label_id"])
+               for e in evs if e["type"] == "model_update"]
+    driving = [(int((e.get("context") or {})["evaluation_id"]), e["model_id"],
+                e.get("segment_id"))
+               for e in evs if e["type"] == "evaluation_committed"]
+    labels = [(e.get("type"), str(e.get("label_id")
+                                  or e.get("origin_label_id")))
+              for e in evs if e.get("type") in ("label_consumed",
+                                                "model_update",
+                                                "update_rejected")]
+    return updates, driving, labels
+
+
+def _assert_artifact_digests_self_consistent(run_dir):
+    """Every committed update's digest recomputes from its artifact (R2) —
+    per-run binding; cross-run equality covers the physical content, not
+    volatile timing fields."""
+    from pyraimd2.runtime.models import ModelRegistry, artifact_digest
+
+    registry = ModelRegistry(run_dir)
+    for event in events(run_dir):
+        if event["type"] != "model_update":
+            continue
+        artifact = registry.read(event["model_id"])
+        assert artifact is not None
+        assert artifact_digest(artifact) == event["artifact_digest"]
+        assert artifact["generation"] == event["generation"]
+        assert artifact["label_ids"] == event["label_ids"]
+
+
+def _c_update_compare(crash_dir, count_file, control_dir, control_calls_file,
+                      *, remaining, control_model,
+                      expected_extra_reference=0, expected_extra_trainings=0):
+    """Resume with an armed sentinel, continue, and compare the complete
+    state against the control: rows, boundaries, three streams, model
+    chain, label ids, artifacts, ledger, export, final checkpoint."""
+    from pyraimd2.runtime.checkpoint import CheckpointManager
+    from pyraimd2.workflows.export import export_run
+
+    calls_before = int(count_file.read_text())
+    sentinel = CountingReference(count_file, drift_scale=1e-6, armed=True)
+    model = TrainableHarmonic()
+    updater = GuardedUpdater(model, UpdatePolicy(n_label=2, guard_size=1))
+    runner = EnergeticRunner.resume(
+        crash_dir, model, sentinel, updater=updater, event_log_force=True,
+        checkpoint_interval_steps=4)
+    assert sentinel.n_calls == calls_before  # recovery: zero live calls
+    sentinel.armed = False
+    runner.run(remaining)
+    runner.close()
+
+    rows_a, rows_b = _rows(crash_dir), _rows(control_dir)
+    assert len(rows_a) == len(rows_b)
+    for row_a, row_b in zip(rows_a, rows_b):
+        np.testing.assert_array_equal(row_a.toatoms().positions,
+                                      row_b.toatoms().positions)
+        np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
+                                      row_b.toatoms().get_momenta())
+    boundaries_a = _complete_boundaries(crash_dir)
+    boundaries_b = _complete_boundaries(control_dir)
+    for (pos_a, mom_a), (pos_b, mom_b) in zip(boundaries_a, boundaries_b):
+        np.testing.assert_array_equal(pos_a, pos_b)
+        np.testing.assert_array_equal(mom_a, mom_b)
+
+    steps_a = {e["step_id"]: e for e in events(crash_dir)
+               if e["type"] == "step_completed"}
+    steps_b = {e["step_id"]: e for e in events(control_dir)
+               if e["type"] == "step_completed"}
+    assert steps_a.keys() == steps_b.keys()
+    for step_id, event in steps_a.items():
+        control_event = steps_b[step_id]
+        assert event["state_digest"] == control_event["state_digest"]
+        assert event["boundary_digest"] == control_event["boundary_digest"]
+        assert event["thermostat_rng"] == control_event["thermostat_rng"]
+        assert event["model_id"] == control_event["model_id"]
+        assert event["segment_id"] == control_event["segment_id"]
+    assert [(p["accepted"], p["reason"], p.get("check_draw"))
+            for p in _proposals(crash_dir)] == \
+           [(p["accepted"], p["reason"], p.get("check_draw"))
+            for p in _proposals(control_dir)]
+    assert _model_chain(crash_dir) == _model_chain(control_dir)
+    assert _segment_anchors(crash_dir) == _segment_anchors(control_dir)
+    _assert_artifact_digests_self_consistent(crash_dir)
+
+    # committed training never re-executes; only genuine retries add calls.
+    # The crashed window's own attempt may never have run (its task is then
+    # absent) or may have completed uncommitted (its task stays billed); the
+    # recovery retry is marked — together they account for every callback
+    # the control billed, no more and no fewer.
+    control_trainings = [t for t in _tasks(control_dir)
+                         if t.get("operation") == "training"]
+    crash_trainings = [t for t in _tasks(crash_dir)
+                       if t.get("operation") == "training"
+                       and not t.get("recovery")]
+    recovery_trainings = [t for t in _tasks(crash_dir)
+                          if t.get("operation") == "training"
+                          and t.get("recovery")]
+    assert len(recovery_trainings) == expected_extra_trainings
+    assert (len(crash_trainings) + len(recovery_trainings)
+            == len(control_trainings))
+    assert model.finetune_calls == control_model.finetune_calls
+    assert (int(count_file.read_text())
+            == int(control_calls_file.read_text())
+              + expected_extra_reference)
+
+    # export and the final checkpoint name the same complete boundary
+    from ase.io import read as ase_read
+
+    report = export_run(crash_dir, force=True)
+    frames = ase_read(report["output"], index=":")
+    control_report = export_run(control_dir, force=True)
+    control_frames = ase_read(control_report["output"], index=":")
+    assert len(frames) == len(control_frames) == len(rows_a)
+    for frame, control_frame in zip(frames, control_frames):
+        np.testing.assert_array_equal(frame.positions,
+                                      control_frame.positions)
+        np.testing.assert_array_equal(frame.get_momenta(),
+                                      control_frame.get_momenta())
+    checkpoint = CheckpointManager(crash_dir).read_latest_valid()
+    final_positions, final_momenta = boundaries_a[-1]
+    np.testing.assert_array_equal(checkpoint.arrays["positions"],
+                                  final_positions)
+    np.testing.assert_array_equal(checkpoint.arrays["momenta"],
+                                  final_momenta)
+
+
+def test_c_clean_split_with_updates_20_equals_7_plus_13(tmp_path):
+    control_dir, control_calls, cmodel = _c_update_control(tmp_path / "ctl")
+    updates = [e for e in events(control_dir) if e["type"] == "model_update"]
+    assert any(int(e["origin_evaluation_id"]) <= 7 for e in updates), \
+        "an update must sit near the split point"
+    assert any(int(e["origin_evaluation_id"]) > 7 for e in updates)
+    crash_dir, count_file = _c_update_child(tmp_path / "split", steps=7)
+    _c_update_compare(crash_dir, count_file, control_dir, control_calls,
+                      remaining=13, control_model=cmodel)
+
+
+def test_c_committed_evaluation_uncommitted_update_redelivers(tmp_path):
+    # os._exit right after the commit of the label whose consumption fires
+    # an update: the consumption never persisted, so resume re-delivers it
+    # once — the pre-crash training attempt keeps its billed task and the
+    # retry is marked recovery; the committed step is never recomputed.
+    control_dir, control_calls, cmodel = _c_update_control(tmp_path / "ctl")
+    first_update = next(e for e in events(control_dir)
+                        if e["type"] == "model_update")
+    kill_eval = int(first_update["origin_evaluation_id"])
+    crash_dir, count_file = _c_update_child(
+        tmp_path / "w", steps=20,
+        kill_key=f"evaluation:run:{kill_eval}", kill_after=True)
+    _c_update_compare(crash_dir, count_file, control_dir, control_calls,
+                      remaining=20 - kill_eval, control_model=cmodel,
+                      expected_extra_trainings=1)
+    recovery = [t for t in _tasks(crash_dir) if t.get("recovery")]
+    assert len(recovery) == 1 and recovery[0]["status"] == "success"
+
+
+def test_c_model_update_committed_step_not(tmp_path):
+    # os._exit right after a MODEL_UPDATE lands but before the step
+    # completes: resume loads the published artifact — no retraining — and
+    # completes the step with the original frozen driving forces and the
+    # same bath increments.
+    control_dir, control_calls, cmodel = _c_update_control(tmp_path / "ctl")
+    updates = [e for e in events(control_dir) if e["type"] == "model_update"]
+    assert len(updates) >= 2
+    mid = updates[0]
+    kill_eval = int(mid["origin_evaluation_id"])
+    crash_dir, count_file = _c_update_child(
+        tmp_path / "w", steps=20,
+        kill_key=f"model-update:{mid['origin_label_id']}:eval-{kill_eval}",
+        kill_after=True)
+    _c_update_compare(crash_dir, count_file, control_dir, control_calls,
+                      remaining=20 - kill_eval, control_model=cmodel)
+    # zero recovery retries: everything up to the crash was committed
+    assert not [t for t in _tasks(crash_dir) if t.get("recovery")]
