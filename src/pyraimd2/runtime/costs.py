@@ -72,7 +72,9 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
     evidence and counted in ``reference['unresolved_attempts']``, never
     billed as an execution and never guessed a success.
     ``cost_record_complete`` is False when any unresolved attempt exists,
-    None (unknown) for logs whose attempts predate the receipt protocol.
+    None (unknown) for logs whose external-launch (QE) attempts predate
+    the receipt protocol; in-process attempts carry no launch window, so
+    their logs are complete when nothing is unresolved.
     """
     events = list(events)
     attempts_by_parent: dict[str, list[dict]] = {}
@@ -197,6 +199,17 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
                          "unknowable from the record"),
         })
     reference["unresolved_attempts"] = len(unresolved)
+    # The ledger's completeness: False when unresolved attempts exist;
+    # None ("unknown") when EXTERNAL-launch attempts (the QE engines'
+    # subprocess protocol) predate launch receipts — such a log alone
+    # cannot prove no launch went unrecorded, and the run-directory
+    # reconciliation in :func:`inspect_run` (or an external audit)
+    # decides.  In-process attempts (the call IS the launch) carry no
+    # such window: with no unresolved receipts the ledger is complete.
+    legacy_external = any(
+        child.get("source") == "qe-engine"
+        for children in attempts_by_parent.values()
+        for child in children) and not receipts
     return {
         "total_elapsed_s": total_elapsed,
         "by": sorted(by.values(),
@@ -204,16 +217,10 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
         "reference": reference,
         "counts": counts,
         # Confirmed executions/successes live in ``reference``; unresolved
-        # attempts are listed here with their evidence.  The ledger's
-        # completeness: False when unresolved attempts exist; None
-        # ("unknown") when attempt events predate the launch-receipt
-        # protocol, because such a log alone cannot prove no launch went
-        # unrecorded — the run-directory reconciliation in
-        # :func:`inspect_run` (or an external audit) decides then.
+        # attempts are listed here with their evidence.
         "unresolved_attempts": unresolved,
         "cost_record_complete": (False if unresolved
-                                 else None if (attempts_by_parent
-                                               and not receipts)
+                                 else None if legacy_external
                                  else True),
     }
 
