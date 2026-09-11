@@ -918,7 +918,8 @@ def test_r3_provenance_model_id_is_the_boundary_commit(tmp_path):
 # --- F2: SIGINT stops an MD stage at the complete-step boundary -----------------
 
 
-def test_sigint_stops_an_md_stage_at_the_boundary_and_resumes(tmp_path):
+def test_sigint_stops_an_md_stage_at_the_boundary_and_resumes(tmp_path,
+                                                              capsys):
     import signal
 
     control = tmp_path / "control"
@@ -936,22 +937,33 @@ def test_sigint_stops_an_md_stage_at_the_boundary_and_resumes(tmp_path):
 
     monkey.setattr(EventLog, "append_once", sigint_at_step)
     try:
-        with pytest.raises(WorkflowError, match="completed 3 of 6"):
-            run_serial_recipe(crash, stages, verbose=False)
+        manifest = run_serial_recipe(crash, stages, verbose=True)
     finally:
         monkey.undo()
+    # A deliberate stop is a clean return, not a failure traceback: the
+    # manifest says where the invocation stopped and how to continue.
+    out = capsys.readouterr().out
+    assert "recipe stopped" in out
+    assert "3 of 6" in out
+    assert "again to continue" in out
+    assert manifest["stopped_early"] is True
+    assert manifest["stop"]["stage"] == "nvt"
+    assert manifest["stop"]["complete_steps"] == 3
     # The stop landed on a complete-step boundary: 3 complete steps, a
-    # checkpoint, and the stage left resumable — never marked failed.
+    # checkpoint, and the stage left resumable — never marked failed, and
+    # the next stage was never started.
     assert len([e for e in events(crash / "nvt")
                 if e["type"] == "step_completed"]) == 3
     assert (crash / "nvt" / "checkpoints" / "latest.json").is_file()
-    manifest = json.loads((crash / "workflow.json").read_text())
-    assert next(s for s in manifest["stages"]
+    assert not (crash / "nve" / "events.jsonl").exists()
+    manifest_on_disk = json.loads((crash / "workflow.json").read_text())
+    assert next(s for s in manifest_on_disk["stages"]
                 if s["name"] == "nvt")["status"] == "running"
     # Resuming continues to the configured total and runs NVE, matching the
-    # uninterrupted control bit-for-bit.
+    # uninterrupted control bit-for-bit — the stop marker does not latch.
     manifest = run_serial_recipe(crash, _stages_for(crash), verbose=False,
                                  force_unlock=True)
+    assert "stopped_early" not in manifest
     assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
     for stage, run_id in (("nvt", "h2-nvt"), ("nve", "h2-nve")):
         rows_a, rows_b = _rows(crash / stage, run_id), _rows(
@@ -962,6 +974,66 @@ def test_sigint_stops_an_md_stage_at_the_boundary_and_resumes(tmp_path):
                                           row_b.toatoms().positions)
             np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
                                           row_b.toatoms().get_momenta())
+
+
+def test_sigint_on_the_final_step_ends_the_recipe_before_the_next_stage(tmp_path):
+    import signal
+
+    root = tmp_path / "recipe"
+    stages = write_recipe(root)
+
+    import pyraimd2.workflows.stages as stages_module
+
+    calls = []
+    real_run = stages_module.run_workflow
+    real_resume = stages_module.resume_workflow
+
+    def counting_run(config, **kwargs):
+        calls.append(("run", config.run.id))
+        return real_run(config, **kwargs)
+
+    def counting_resume(path, extra, **kwargs):
+        calls.append(("resume", extra))
+        return real_resume(path, extra, **kwargs)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(stages_module, "run_workflow", counting_run)
+    monkey.setattr(stages_module, "resume_workflow", counting_resume)
+    real_append_once = EventLog.append_once
+
+    def sigint_at_final(self, key, event_type, payload):
+        result = real_append_once(self, key, event_type, payload)
+        if key == "step:h2-nvt:5":  # the final NVT step's commit
+            os.kill(os.getpid(), signal.SIGINT)
+        return result
+
+    monkey.setattr(EventLog, "append_once", sigint_at_final)
+    try:
+        manifest = run_serial_recipe(root, stages, verbose=False)
+    finally:
+        monkey.undo()
+    # the stage finished AND the stop was honored: NVT persisted done with
+    # its correct result, the invocation ended, NVE was never started
+    by_name = {s["name"]: s for s in manifest["stages"]}
+    assert by_name["nvt"]["status"] == "done"
+    assert by_name["nvt"]["result"]["complete_steps"] == 6
+    assert manifest["stopped_early"] is True
+    assert manifest["stop"]["stage_done"] is True
+    assert calls == [("run", "h2-relax"), ("run", "h2-nvt")]
+    assert not (root / "nve" / "events.jsonl").exists()
+    # the next explicit invocation adopts the finished NVT and starts NVE
+    # only — the stop marker does not latch, the finished stage is not
+    # recomputed
+    monkey.setattr(stages_module, "run_workflow", counting_run)
+    monkey.setattr(stages_module, "resume_workflow", counting_resume)
+    try:
+        manifest = run_serial_recipe(root, _stages_for(root), verbose=False)
+    finally:
+        monkey.undo()
+    assert "stopped_early" not in manifest
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    assert calls == [("run", "h2-relax"), ("run", "h2-nvt"),
+                     ("run", "h2-nve")]
 
 
 def test_sigint_disabled_keeps_the_old_recipe_behavior(tmp_path):

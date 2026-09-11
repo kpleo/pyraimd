@@ -11,6 +11,8 @@ real-material acceptance belongs to the cluster side.
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -178,6 +180,77 @@ def test_si_recipe_resume_after_mid_nvt_crash(tmp_path):
                                           row_b.toatoms().positions)
             np.testing.assert_array_equal(row_a.toatoms().get_momenta(),
                                           row_b.toatoms().get_momenta())
+
+
+def test_si_recipe_sigint_on_the_final_nvt_step_stops_before_nve(tmp_path):
+    """The M5 review trigger: SIGINT lands on the final NVT step commit —
+    the stage's done result is persisted and the invocation ends before
+    NVE; the next explicit invocation starts NVE only."""
+    import signal
+
+    import pyraimd2.workflows.stages as stages_module
+
+    root = _write_si_recipe(tmp_path)
+    calls = []
+    real_run = stages_module.run_workflow
+    real_resume = stages_module.resume_workflow
+
+    def counting_run(config, **kwargs):
+        calls.append(("run", config.run.id))
+        return real_run(config, **kwargs)
+
+    def counting_resume(path, extra, **kwargs):
+        calls.append(("resume", extra))
+        return real_resume(path, extra, **kwargs)
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(stages_module, "run_workflow", counting_run)
+    monkey.setattr(stages_module, "resume_workflow", counting_resume)
+    real_append_once = EventLog.append_once
+
+    def sigint_at_final(self, key, event_type, payload):
+        result = real_append_once(self, key, event_type, payload)
+        if key == "step:si-nvt:11":  # the final NVT step's commit
+            os.kill(os.getpid(), signal.SIGINT)
+        return result
+
+    monkey.setattr(EventLog, "append_once", sigint_at_final)
+    try:
+        manifest = run_serial_recipe(root, _stages(root), verbose=False)
+    finally:
+        monkey.undo()
+    # the stage finished AND the stop was honored: NVT persisted done with
+    # its correct 12-step result, the invocation ended, NVE was never
+    # started
+    by_name = {s["name"]: s for s in manifest["stages"]}
+    assert by_name["nvt"]["status"] == "done"
+    assert by_name["nvt"]["result"]["complete_steps"] == 12
+    assert manifest["stopped_early"] is True
+    assert manifest["stop"]["stage_done"] is True
+    assert calls == [("run", "si-relax"), ("run", "si-nvt")]
+    assert not (root / "nve" / "events.jsonl").exists()
+    # the durable run records agree: the NVT run stopped after its last
+    # step, checkpoint saved
+    nvt_events = [json.loads(line) for line in
+                  (root / "nvt" / "events.jsonl").read_text().splitlines()]
+    assert any(e["type"] == "run_end" and e.get("status") == "stopped"
+               for e in nvt_events)
+    assert nvt_events[-1]["type"] == "run_summary"
+    assert nvt_events[-1]["stopped_early"] is True
+    assert (root / "nvt" / "checkpoints" / "latest.json").is_file()
+    # the next explicit invocation adopts the finished NVT and starts NVE
+    # only — the stop marker does not latch, the finished stage is not
+    # recomputed
+    monkey.setattr(stages_module, "run_workflow", counting_run)
+    monkey.setattr(stages_module, "resume_workflow", counting_resume)
+    try:
+        manifest = run_serial_recipe(root, _stages(root), verbose=False)
+    finally:
+        monkey.undo()
+    assert "stopped_early" not in manifest
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    assert calls == [("run", "si-relax"), ("run", "si-nvt"),
+                     ("run", "si-nve")]
 
 
 def test_si_recipe_keeps_user_configs_visibly(tmp_path, capsys):

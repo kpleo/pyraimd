@@ -20,6 +20,7 @@ backend evaluation, or a FIRE/BFGS optimization driven by a fixed backend
 from __future__ import annotations
 
 import dataclasses
+import json
 import signal
 import sys
 import time
@@ -170,8 +171,26 @@ def _complete_steps(run_dir: Path, run_id: str) -> int:
 
 
 def _stopped_early(run_dir: Path, run_id: str) -> bool:
-    info = inspect_run(run_dir, run_id=run_id)
-    return bool(info["failure"] and info["failure"].get("status") == "stopped")
+    """Did THIS invocation end on a stop request?  The latest RUN_SUMMARY
+    carries its own invocation's flag — an older ``stopped`` RUN_END left by
+    a previous interrupted invocation must not poison a later completed one.
+    A stopped RUN_END with no summary at all is the torn crash window
+    between the two writes and counts as stopped."""
+    events_path = run_dir / "events.jsonl"
+    last_summary = None
+    last_end = None
+    if events_path.is_file():
+        for line in events_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if event.get("type") == "run_summary":
+                last_summary = event
+            elif event.get("type") == "run_end":
+                last_end = event
+    if last_summary is not None:
+        return bool(last_summary.get("stopped_early"))
+    return bool(last_end is not None and last_end.get("status") == "stopped")
 
 
 # ---------------------------------------------------------------------------
@@ -741,9 +760,12 @@ class _PlainDriver:
         except Exception as error:
             self._fail(error, completed + 1)
             raise
-        stopped = self._stop_requested and completed < start_step + n_steps
+        stopped = bool(self._stop_requested)
         wall = time.perf_counter() - run_start
         if stopped:
+            # A stop received on the final step is still a received stop:
+            # the run's own records say so (the adaptive runner does the
+            # same), and the recipe layer ends the invocation there.
             self.event_log.append(RUN_END, {
                 "run_id": self.run_id, "status": "stopped",
                 "reason": "stop requested; checkpoint saved at the last "

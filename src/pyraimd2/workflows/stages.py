@@ -378,7 +378,12 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
     ``handle_sigint`` (default on) stops an MD stage at the next
     complete-step boundary on SIGINT, checkpoint saved and the stage left
     resumable; a relax stage aborts as failed (no optimizer stop boundary
-    exists).
+    exists).  A received stop belongs to the whole recipe: the invocation
+    ends before any next stage — a stage that just reached its target is
+    still persisted done first — and the returned manifest carries
+    ``stopped_early`` with a ``stop`` record (complete steps and how to
+    continue).  The next explicit invocation clears the marker and
+    continues; the stop never latches.
     Returns the manifest dict (also written to ``root/workflow.json``).
     """
     root = Path(root)
@@ -390,6 +395,10 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
             raise WorkflowError(
                 f"{manifest_path} has schema {manifest.get('schema')!r}, "
                 f"expected {RECIPE_SCHEMA!r}")
+        # The stop marker records how the PREVIOUS invocation ended; it is
+        # history, never a latch — this invocation decides fresh.
+        manifest.pop("stopped_early", None)
+        manifest.pop("stop", None)
     else:
         manifest = {"schema": RECIPE_SCHEMA, "created_unix": time.time(),
                     "stages": []}
@@ -451,10 +460,9 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
         # 3. authoritative run state from parsed events (R2), then dispatch
         started = time.perf_counter()
         try:
-            state = _advance_stage(record, stage, config, stage_dir,
-                                   previous, verbose=verbose,
-                                   force_unlock=force_unlock,
-                                   handle_sigint=handle_sigint)
+            state, stopped = _advance_stage(
+                record, stage, config, stage_dir, previous, verbose=verbose,
+                force_unlock=force_unlock, handle_sigint=handle_sigint)
         except Exception:
             # MD stages recover through the ordinary resume protocol on the
             # next invocation (status stays "running"); relax stages have
@@ -465,8 +473,42 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
             _write_json_atomic(manifest_path, manifest)
             raise
         record["wall_time_s"] += time.perf_counter() - started
-        _finalize_stage_record(record, stage_dir, config, state)
+        if state is not None:
+            # A stage that reached its target finalizes done even when the
+            # same invocation also received a stop request: completing the
+            # stage and honoring the stop are two separate facts.
+            _finalize_stage_record(record, stage_dir, config, state)
         _write_json_atomic(manifest_path, manifest)
+        if stopped:
+            # The stop request belongs to the whole recipe: this invocation
+            # ends here, before any next-stage computation.  The manifest
+            # says exactly where things stand; the next explicit invocation
+            # clears the marker and continues (nothing is poisoned).
+            complete = (int(state.provenance["boundary_step_id"]) + 1
+                        if state is not None
+                        else _run_facts(stage_dir)["complete_steps"])
+            manifest["stopped_early"] = True
+            manifest["stop"] = {
+                "stage": stage.name,
+                "stage_done": state is not None,
+                "complete_steps": complete,
+                "target_steps": (int(config.dynamics.steps)
+                                 if config.task.kind == "md" else None),
+            }
+            _write_json_atomic(manifest_path, manifest)
+            if verbose:
+                if state is not None:
+                    print(f"recipe stopped: stage {stage.name!r} finished "
+                          f"all {complete} steps; the stop request ends "
+                          "this invocation before the next stage — run the "
+                          "recipe command again to continue")
+                else:
+                    print(f"recipe stopped: stage {stage.name!r} stopped "
+                          f"at {complete} of {int(config.dynamics.steps)} "
+                          "complete steps (checkpoint saved; the stage "
+                          "resumes there) — run the recipe command again "
+                          "to continue")
+            return manifest
         previous = state
     _write_json_atomic(manifest_path, manifest)
     return manifest
@@ -543,10 +585,17 @@ def _reconcile_stage_identity(manifest: list | dict, stage: RecipeStage,
 def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
                    stage_dir: Path, previous: CompletedState | None, *,
                    verbose: bool, force_unlock: bool,
-                   handle_sigint: bool) -> CompletedState:
+                   handle_sigint: bool) -> tuple[CompletedState | None, bool]:
     """Dispatch one non-done stage by its parsed run state (R2).  The MD
     input preparation and source binding already happened in the main loop,
-    before the stage identity was persisted."""
+    before the stage identity was persisted.
+
+    Returns ``(state, stopped)``: the stage's authoritative completed state
+    (None when a stop request ended the invocation below the stage target —
+    the partial run stays resumable), and whether the run/resume invocation
+    reported a received stop request.  A received stop is honored by the
+    caller even when the stage reached its target in the same invocation.
+    """
     if config.task.kind == "md":
         if previous is None:
             raise WorkflowError(
@@ -560,7 +609,7 @@ def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
             if verbose:
                 print(f"recipe {stage.name}: already complete "
                       f"({facts['complete_steps']} steps) — adopting")
-            return load_completed_state(stage_dir)
+            return load_completed_state(stage_dir), False
         has_checkpoint = (stage_dir / "checkpoints"
                           / "latest.json").is_file()
         if has_checkpoint and (facts["complete_steps"] > 0
@@ -574,10 +623,13 @@ def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
                       f"{facts['complete_steps']} -> {target} steps"
                       + (" (binding one committed tail step)"
                          if facts["healable"] else ""))
-            resume_workflow(stage_dir, extra, verbose=verbose,
-                            handle_sigint=handle_sigint,
-                            force_unlock=force_unlock)
-            return load_completed_state(stage_dir)
+            result = resume_workflow(stage_dir, extra, verbose=verbose,
+                                     handle_sigint=handle_sigint,
+                                     force_unlock=force_unlock)
+            if result.stopped_early \
+                    and _run_facts(stage_dir)["complete_steps"] < target:
+                return None, True
+            return load_completed_state(stage_dir), result.stopped_early
         if facts["started"]:
             # Run records exist but nothing resumable: no complete boundary
             # and no committed tail to bind — never silently restart over
@@ -590,17 +642,21 @@ def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
                 "(the existing run is preserved)")
         if verbose:
             print(f"recipe {stage.name}: running md ({config.task.mode})")
-        run_workflow(config, verbose=verbose,
-                     handle_sigint=handle_sigint)
-        return load_completed_state(stage_dir)
+        result = run_workflow(config, verbose=verbose,
+                              handle_sigint=handle_sigint)
+        if result.stopped_early \
+                and _run_facts(stage_dir)["complete_steps"] < target:
+            return None, True
+        return load_completed_state(stage_dir), result.stopped_early
     # relax: no optimizer resume anywhere; a converged run is adopted, a
-    # started unconverged one is a hard stop (R2)
+    # started unconverged one is a hard stop (R2).  A relax has no stop
+    # boundary — SIGINT aborts it as failed, so no stop is reported here.
     facts = _run_facts(stage_dir)
     if facts["started"]:
         if facts["converged"]:
             if verbose:
                 print(f"recipe {stage.name}: already converged — adopting")
-            return load_completed_state(stage_dir)
+            return load_completed_state(stage_dir), False
         raise WorkflowError(
             f"stage {stage.name!r} has a started but unconverged relax run; "
             "optimizer resume is not supported — fix the stage and use a "
@@ -609,7 +665,7 @@ def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
         print(f"recipe {stage.name}: running relax ({config.task.mode})")
     run_workflow(config, verbose=verbose,
                  handle_sigint=handle_sigint)
-    return load_completed_state(stage_dir)
+    return load_completed_state(stage_dir), False
 
 
 def _run_facts(stage_dir: Path) -> dict:
