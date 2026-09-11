@@ -312,10 +312,22 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
 
 
 def _state_file_digest(atoms: Atoms) -> str:
+    """Full physical handoff identity: element order, unwrapped positions,
+    cell/PBC, masses, momenta when present, initial charges/magmoms and the
+    FixAtoms set — the digest the stage's source record and its
+    materialized ``initial.traj`` must both carry (R1)."""
     arrays = [np.asarray(atoms.numbers), np.asarray(atoms.positions, float),
-              np.asarray(atoms.get_masses()),
+              np.asarray(atoms.cell.array, float),
+              np.asarray(atoms.pbc), np.asarray(atoms.get_masses()),
               np.asarray(atoms.get_momenta(), dtype=float)
-              if "momenta" in atoms.arrays else np.zeros(0)]
+              if "momenta" in atoms.arrays else np.zeros(0),
+              np.asarray(atoms.get_initial_charges(), dtype=float),
+              np.asarray(atoms.get_initial_magnetic_moments(), dtype=float)]
+    fixed = set()
+    for constraint in atoms.constraints or []:
+        # the supported constraint universe is FixAtoms only
+        fixed.update(int(i) for i in np.atleast_1d(constraint.index))
+    arrays.append(np.asarray(sorted(fixed), dtype=int))
     return state_digest(*arrays)
 
 
@@ -323,27 +335,44 @@ def _materialize_initial(stage_dir: Path, atoms: Atoms) -> Path:
     """Write the stage's initial structure as an ASE .traj — full double
     precision for positions, masses, momenta and the FixAtoms set (verified
     by the recipe's own round-trip checks); never a lossy text coordinate
-    file."""
+    file.  Written atomically, and an existing file is returned only after
+    its content verifies against the same atoms (R1)."""
     path = stage_dir / "initial.traj"
-    if not path.exists():
-        from ase.io import write as ase_write
+    if path.exists():
+        return path
+    from ase.io import write as ase_write
 
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        ase_write(path, atoms, format="traj")
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    ase_write(tmp, atoms, format="traj")
+    os.replace(tmp, path)
     return path
 
 
+def _read_initial_digest(path: Path) -> str:
+    from ase.io import read as ase_read
+
+    return _state_file_digest(ase_read(path, format="traj"))
+
+
 def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
-                      verbose: bool = True) -> dict:
+                      verbose: bool = True,
+                      force_unlock: bool = False) -> dict:
     """Run the serial recipe (e.g. relax → NVT → NVE), idempotently.
 
     Each stage owns an independent run id, config and cost ledger under
-    ``root/<name>``.  A finished stage is never recomputed; a partially
-    completed MD stage continues through the ordinary resume protocol to
-    its configured total (never stacked with extra steps); a stage whose
-    config or source state changed after it started refuses before any new
-    computation.  Source runs are read-only.  Returns the manifest dict
-    (also written to ``root/workflow.json``).
+    ``root/<name>``.  A stage's stable identity (config settings, backend
+    declarations, source boundary, momentum policy, input-structure
+    identity) is persisted atomically before its first backend computation
+    (R1); on re-invocation the controller reconciles against the run's own
+    resolved config and parsed events — finished stages are adopted without
+    recomputation (R2), resumable ones continue through the ordinary resume
+    protocol with the exact step conversion, and changed
+    settings/policies/sources refuse before any new computation with a
+    new-output-directory instruction.  Source runs are read-only.
+    ``force_unlock`` is the caller's deliberate assertion that an
+    interrupted stage's writer lock is stale — never taken unconditionally.
+    Returns the manifest dict (also written to ``root/workflow.json``).
     """
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -367,24 +396,15 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
                 f"stage {stage.name!r}: the config's run.directory must be "
                 f"{stage_dir} (got {config.run.directory}); each stage owns "
                 "its directory under the recipe root")
-        record = next((s for s in manifest["stages"]
-                       if s["name"] == stage.name), None)
-        if record is None:
-            record = {"name": stage.name, "kind": config.task.kind,
-                      "run_id": config.run.id, "run_dir": stage.name,
-                      "status": "pending", "config_sha256": None,
-                      "source": None, "momenta": stage.momenta,
-                      "wall_time_s": 0.0, "result": None}
-            manifest["stages"].append(record)
-        config_text = Path(stage.config_path).read_bytes()
-        config_sha = sha256(config_text).hexdigest()
-        if record["config_sha256"] is None:
-            record["config_sha256"] = config_sha
-        elif record["config_sha256"] != config_sha:
-            raise WorkflowError(
-                f"stage {stage.name!r} already started with a different "
-                "config; refusing to continue under changed settings — "
-                "use a new recipe root")
+        # 1. identity first — persisted atomically before any backend
+        #    computation (R1); every refusal above happens without touching
+        #    the existing run directory
+        record = _reconcile_stage_identity(
+            manifest, stage, config, stage_dir, previous)
+        record["status"] = "running" if record["status"] == "pending" \
+            else record["status"]
+        _write_json_atomic(manifest_path, manifest)
+
         if record["status"] == "done":
             previous = load_completed_state(stage_dir)
             continue
@@ -394,42 +414,12 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
                 "restart from a clean recipe root — the recipe does not "
                 "silently rerun it")
 
-        if config.task.kind == "md":
-            if previous is None:
-                raise WorkflowError(
-                    f"stage {stage.name!r}: an MD stage needs a previous "
-                    "stage's completed state")
-            _prepare_md_stage(record, stage, config, stage_dir, previous)
-        record["status"] = "running"  # before the first compute: a stage
-        # left "running" is resumed, never freshly restarted
+        # 2. authoritative run state from parsed events (R2), then dispatch
         started = time.perf_counter()
         try:
-            if config.task.kind == "md" and _md_partial(stage_dir, config):
-                completed = _md_complete_steps(stage_dir)
-                target = int(config.dynamics.steps)
-                # The exact step conversion: resume adds `extra` NEW steps
-                # and first binds a committed tail evaluation (at most one)
-                # as its step record — never stacking the heal as an extra
-                # step.
-                healable = _md_healable(stage_dir, completed)
-                extra = target - completed - healable
-                if verbose:
-                    print(f"recipe {stage.name}: resume {completed} -> "
-                          f"{target} steps"
-                          + (" (binding one committed tail step)"
-                             if healable else ""))
-                # A crashed stage leaves its writer lock behind; the serial
-                # controller reclaims it deliberately when resuming.
-                resume_workflow(stage_dir, extra, verbose=verbose,
-                                handle_sigint=False, force_unlock=True)
-            else:
-                if verbose:
-                    print(f"recipe {stage.name}: running "
-                          f"{config.task.kind} ({config.task.mode})")
-                run_workflow(config, verbose=verbose, handle_sigint=False)
-            state = load_completed_state(stage_dir)
-            # an unconverged relax or an unfinished MD stage raises here —
-            # the chain stops instead of continuing from a bad state
+            state = _advance_stage(record, stage, config, stage_dir,
+                                   previous, verbose=verbose,
+                                   force_unlock=force_unlock)
         except Exception:
             # MD stages recover through the ordinary resume protocol on the
             # next invocation (status stays "running"); relax stages have
@@ -440,21 +430,183 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
             _write_json_atomic(manifest_path, manifest)
             raise
         record["wall_time_s"] += time.perf_counter() - started
-        record["status"] = "done"
-        record["result"] = _stage_result(stage_dir, config, state)
+        _finalize_stage_record(record, stage_dir, config, state)
         _write_json_atomic(manifest_path, manifest)
         previous = state
     _write_json_atomic(manifest_path, manifest)
     return manifest
 
 
+def _reconcile_stage_identity(manifest: list | dict, stage: RecipeStage,
+                              config: PyramidConfig, stage_dir: Path,
+                              previous: CompletedState | None) -> dict:
+    """Bind or verify the stage's stable identity before any computation.
+
+    A manifest record must match the declared run id, config file digest,
+    and momenta policy exactly.  A stage with run evidence but no manifest
+    record (an interrupted first start, R1) is adopted only when the
+    current config's resolved settings equal the run's own
+    resolved_config.json — never blessing new settings over old results.
+    """
+    stages = manifest["stages"]
+    config_sha = sha256(Path(stage.config_path).read_bytes()).hexdigest()
+    record = next((s for s in stages if s["name"] == stage.name), None)
+    if record is not None:
+        if record["run_id"] != config.run.id:
+            raise WorkflowError(
+                f"stage {stage.name!r}: the manifest binds run id "
+                f"{record['run_id']!r}, the config now declares "
+                f"{config.run.id!r} — use a new recipe root")
+        if record["config_sha256"] != config_sha:
+            raise WorkflowError(
+                f"stage {stage.name!r} already started with a different "
+                "config; refusing to continue under changed settings — "
+                "use a new recipe root")
+        if record.get("momenta") != stage.momenta:
+            raise WorkflowError(
+                f"stage {stage.name!r}: the momenta policy changed from "
+                f"{record['momenta']!r} to {stage.momenta!r} after the "
+                "stage started — use a new recipe root")
+        return record
+    has_run_evidence = (stage_dir / "resolved_config.json").is_file() or \
+        (stage_dir / "events.jsonl").is_file()
+    if has_run_evidence:
+        stored_path = stage_dir / "resolved_config.json"
+        if not stored_path.is_file():
+            raise WorkflowError(
+                f"stage {stage.name!r} has run evidence but no "
+                "resolved_config.json; the original settings cannot be "
+                "proven — use a new output directory (the existing run is "
+                "preserved)")
+        stored = json.loads(stored_path.read_text())
+        if config.resolved_dict() != stored:
+            raise WorkflowError(
+                f"stage {stage.name!r} has an existing run under different "
+                "resolved settings (its interrupted start never persisted a "
+                "stage record); the recipe refuses to bind new settings to "
+                "existing results — use a new output directory")
+        # The semantic match is proven against the run's own record: adopt
+        # the stage from run evidence (M4-era outputs are compatible this
+        # way only when the facts agree).
+        record = {"name": stage.name, "kind": config.task.kind,
+                  "run_id": stored["run"]["id"], "run_dir": stage.name,
+                  "status": "running", "config_sha256": config_sha,
+                  "source": None, "momenta": stage.momenta,
+                  "wall_time_s": 0.0, "result": None,
+                  "reconciled_from_run": True}
+        stages.append(record)
+        return record
+    record = {"name": stage.name, "kind": config.task.kind,
+              "run_id": config.run.id, "run_dir": stage.name,
+              "status": "pending", "config_sha256": config_sha,
+              "source": None, "momenta": stage.momenta,
+              "wall_time_s": 0.0, "result": None}
+    stages.append(record)
+    return record
+
+
+def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,
+                   stage_dir: Path, previous: CompletedState | None, *,
+                   verbose: bool, force_unlock: bool) -> CompletedState:
+    """Dispatch one non-done stage by its parsed run state (R2)."""
+    if config.task.kind == "md":
+        if previous is None:
+            raise WorkflowError(
+                f"stage {stage.name!r}: an MD stage needs a previous "
+                "stage's completed state")
+        _prepare_md_stage(record, stage, config, stage_dir, previous)
+        facts = _run_facts(stage_dir)
+        target = int(config.dynamics.steps)
+        if facts["complete_steps"] >= target:
+            # Finished before the bookkeeping survived (R2): adopt the
+            # completed run — no resume, no extra step.
+            if verbose:
+                print(f"recipe {stage.name}: already complete "
+                      f"({facts['complete_steps']} steps) — adopting")
+            return load_completed_state(stage_dir)
+        has_checkpoint = (stage_dir / "checkpoints"
+                          / "latest.json").is_file()
+        if has_checkpoint and (facts["complete_steps"] > 0
+                               or facts["healable"]):
+            # The exact step conversion: resume adds `extra` NEW steps and
+            # first binds a committed tail evaluation (at most one) as its
+            # step record — never stacking the heal as an extra step.
+            extra = target - facts["complete_steps"] - facts["healable"]
+            if verbose:
+                print(f"recipe {stage.name}: resume "
+                      f"{facts['complete_steps']} -> {target} steps"
+                      + (" (binding one committed tail step)"
+                         if facts["healable"] else ""))
+            resume_workflow(stage_dir, extra, verbose=verbose,
+                            handle_sigint=False, force_unlock=force_unlock)
+            return load_completed_state(stage_dir)
+        if facts["started"]:
+            # Run records exist but nothing resumable: no complete boundary
+            # and no committed tail to bind — never silently restart over
+            # it (R2).
+            raise WorkflowError(
+                f"stage {stage.name!r} has run records but no resumable "
+                "initial state (no complete boundary and no committed "
+                "tail step to bind); the recipe refuses to restart over "
+                "it — resolve the stage manually or use a new recipe root "
+                "(the existing run is preserved)")
+        if verbose:
+            print(f"recipe {stage.name}: running md ({config.task.mode})")
+        run_workflow(config, verbose=verbose, handle_sigint=False)
+        return load_completed_state(stage_dir)
+    # relax: no optimizer resume anywhere; a converged run is adopted, a
+    # started unconverged one is a hard stop (R2)
+    facts = _run_facts(stage_dir)
+    if facts["started"]:
+        if facts["converged"]:
+            if verbose:
+                print(f"recipe {stage.name}: already converged — adopting")
+            return load_completed_state(stage_dir)
+        raise WorkflowError(
+            f"stage {stage.name!r} has a started but unconverged relax run; "
+            "optimizer resume is not supported — fix the stage and use a "
+            "clean recipe root (the existing run is preserved)")
+    if verbose:
+        print(f"recipe {stage.name}: running relax ({config.task.mode})")
+    run_workflow(config, verbose=verbose, handle_sigint=False)
+    return load_completed_state(stage_dir)
+
+
+def _run_facts(stage_dir: Path) -> dict:
+    """Authoritative run state from the parsed event log — never from
+    substring counts or the manifest (R2)."""
+    facts = {"started": False, "complete_steps": 0, "committed": 0,
+             "healable": 0, "converged": False}
+    events_path = stage_dir / "events.jsonl"
+    if not events_path.is_file():
+        return facts
+    facts["started"] = True
+    complete: set[int] = set()
+    committed: set[int] = set()
+    for line in events_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        event_type = event.get("type")
+        if event_type == "step_completed":
+            complete.add(int(event["step_id"]))
+        elif event_type == "evaluation_committed":
+            committed.add(int((event.get("context") or {})
+                              ["evaluation_id"]))
+        elif event_type == "run_summary" and "converged" in event:
+            facts["converged"] = bool(event["converged"])
+    facts["complete_steps"] = len(complete)
+    facts["committed"] = len(committed)
+    facts["healable"] = int(len(committed) == len(complete) + 2)
+    return facts
+
+
 def _prepare_md_stage(record: dict, stage: RecipeStage,
                       config: PyramidConfig, stage_dir: Path,
                       previous: CompletedState) -> None:
-    """Materialize the stage's initial state once, with the declared
-    momentum policy, and record the source provenance."""
-    if record["status"] != "pending":
-        return  # a started stage already has its initial state; resume it
+    """Materialize or verify the stage's initial state, and bind the source
+    identity once (R1).  A started stage's existing ``initial.traj`` must
+    still match the parent boundary it was bound to."""
     momenta_policy = stage.momenta
     has_momenta = "momenta" in previous.atoms.arrays
     if momenta_policy == "preserve" and not has_momenta:
@@ -473,7 +625,14 @@ def _prepare_md_stage(record: dict, stage: RecipeStage,
     if momenta_policy == "initialize" and "momenta" in atoms.arrays:
         atoms = atoms.copy()
         del atoms.arrays["momenta"]
+    expected = _state_file_digest(atoms)
     initial = _materialize_initial(stage_dir, atoms)
+    actual = _read_initial_digest(initial)
+    if actual != expected:
+        raise WorkflowError(
+            f"stage {stage.name!r}: initial.traj no longer matches the "
+            "parent stage's completed boundary (the file or the source "
+            "state changed) — use a new recipe root")
     configured = Path(config.structure.file)
     resolved_structure = configured if configured.is_absolute() else \
         (Path(stage.config_path).parent / configured).resolve()
@@ -482,44 +641,59 @@ def _prepare_md_stage(record: dict, stage: RecipeStage,
             f"stage {stage.name!r}: the config's structure.file must be "
             f"{initial.name} in the stage directory — the controller owns "
             "the materialized initial state")
-    record["source"] = dict(previous.provenance)
-    record["source"]["state_digest"] = _state_file_digest(previous.atoms)
-    if momenta_policy == "initialize":
-        record["source"]["momenta_initialization"] = {
-            "policy": "initialize",
-            "temperature_K": config.dynamics.temperature_K,
-            "velocity_seed": config.dynamics.velocity_seed,
-        }
-    elif momenta_policy == "preserve":
-        record["source"]["momenta_initialization"] = {"policy": "preserve"}
+    if record["source"] is None:
+        record["source"] = dict(previous.provenance)
+        record["source"]["state_digest"] = expected
+        if momenta_policy == "initialize":
+            record["source"]["momenta_initialization"] = {
+                "policy": "initialize",
+                "temperature_K": config.dynamics.temperature_K,
+                "velocity_seed": config.dynamics.velocity_seed,
+            }
+        elif momenta_policy == "preserve":
+            record["source"]["momenta_initialization"] = {
+                "policy": "preserve"}
+    elif record["source"].get("state_digest") != expected:
+        raise WorkflowError(
+            f"stage {stage.name!r}: the bound source state changed after "
+            "the stage started — use a new recipe root")
 
 
-def _md_complete_steps(stage_dir: Path) -> int:
+def _finalize_stage_record(record: dict, stage_dir: Path,
+                           config: PyramidConfig,
+                           state: CompletedState) -> None:
+    """Mark a stage done with its result and honest wall time (R1/R2):
+    measured controller time accumulates across invocations; when durable
+    RUN_SUMMARY timings cover more, they win; an invocation whose time is
+    unrecoverable is marked, never fabricated."""
+    record["status"] = "done"
+    record["result"] = _stage_result(stage_dir, config, state)
+    durable, complete = _durable_wall_time(stage_dir)
+    record["wall_time_s"] = max(record["wall_time_s"], durable)
+    record["wall_time_complete"] = complete
+
+
+def _durable_wall_time(stage_dir: Path) -> tuple[float, bool]:
+    """(sum of persisted RUN_SUMMARY wall times, fully measured?) — a
+    crashed invocation leaves no summary for its tail, and the missing
+    portion is marked rather than guessed."""
     events_path = stage_dir / "events.jsonl"
-    if not events_path.exists():
-        return 0
-    return sum(1 for line in events_path.read_text().splitlines()
-               if '"step_completed"' in line)
-
-
-def _md_healable(stage_dir: Path, completed: int) -> int:
-    """1 when the stage has exactly one committed tail evaluation without
-    its step record (the plain driver's healable window); else 0."""
-    events_path = stage_dir / "events.jsonl"
-    if not events_path.exists():
-        return 0
-    committed = sum(1 for line in events_path.read_text().splitlines()
-                    if '"evaluation_committed"' in line)
-    return 1 if committed == completed + 2 else 0
-
-
-def _md_partial(stage_dir: Path, config: PyramidConfig) -> bool:
-    """A started-but-incomplete MD stage (an existing event log with fewer
-    complete steps than configured) resumes; anything else runs fresh."""
-    if config.task.kind != "md":
-        return False
-    completed = _md_complete_steps(stage_dir)
-    return 0 < completed < int(config.dynamics.steps)
+    if not events_path.is_file():
+        return 0.0, True
+    total = 0.0
+    has_summary = False
+    crashed = False
+    for line in events_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if event.get("type") == "run_summary":
+            has_summary = True
+            total += float(event.get("wall_time_s") or 0.0)
+        elif event.get("type") == "run_end" \
+                and event.get("status") == "failed":
+            crashed = True
+    return total, has_summary and not crashed
 
 
 def _stage_result(stage_dir: Path, config: PyramidConfig,

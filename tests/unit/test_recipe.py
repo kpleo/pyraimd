@@ -129,6 +129,16 @@ def write_recipe(root: Path, *, relax_steps=50, nvt_steps=6,
     return stages
 
 
+def _stages_for(root: Path):
+    """Rebuild the stage list from the recipe root's current config files —
+    without rewriting them (rerun paths must see user edits)."""
+    return [RecipeStage("relax", root / "relax" / "run.toml"),
+            RecipeStage("nvt", root / "nvt" / "run.toml",
+                        momenta="initialize"),
+            RecipeStage("nve", root / "nve" / "run.toml",
+                        momenta="preserve")]
+
+
 def _rows(run_dir, run_id):
     return sorted(Store(run_dir / "trajectory.db")._db.select(run_id=run_id),
                   key=lambda row: int(row.key_value_pairs["step"]))
@@ -274,9 +284,11 @@ def test_b_mid_stage_crash_resumes_in_a_new_process(tmp_path):
                             env=env, capture_output=True, text=True,
                             check=False)
     assert result.returncode == 73, result.stderr[-500:]
-    # the new-process re-invocation resumes NVT 4 -> 6 and runs NVE
-    manifest = run_serial_recipe(crash_root, write_recipe(crash_root),
-                                 verbose=False)
+    # the new-process re-invocation resumes NVT 4 -> 6 and runs NVE; the
+    # crashed stage's writer lock is reclaimed deliberately (force_unlock
+    # is the caller's assertion, never taken unconditionally)
+    manifest = run_serial_recipe(crash_root, _stages_for(crash_root),
+                                 verbose=False, force_unlock=True)
     assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
     for stage, run_id in (("nvt", "h2-nvt"), ("nve", "h2-nve")):
         rows_a = _rows(crash_root / stage, run_id)
@@ -439,6 +451,284 @@ def test_b_sentinel_proves_preparation_computes_nothing(tmp_path):
     failed = [e for e in nvt_events if e["type"] == "task"
               and e.get("status") == "failed"]
     assert failed and "touched a live backend" in (failed[0]["error"] or "")
+
+
+# --- R1: stage identity persisted before compute -------------------------------
+
+
+def test_r1_stage_record_persists_before_first_compute(tmp_path):
+    # Kill the NVT stage mid-flight: the manifest already names the running
+    # stage with its config digest and bound source — not only relax (R1).
+    root = tmp_path / "recipe"
+    stages = write_recipe(root)
+
+    monkey = pytest.MonkeyPatch()
+    real_append_once = EventLog.append_once
+
+    def crash_step(self, key, event_type, payload):
+        if key == "step:h2-nvt:2":
+            raise RuntimeError("injected crash")
+        return real_append_once(self, key, event_type, payload)
+
+    monkey.setattr(EventLog, "append_once", crash_step)
+    try:
+        with pytest.raises(RuntimeError, match="injected crash"):
+            run_serial_recipe(root, stages, verbose=False)
+    finally:
+        monkey.undo()
+    manifest = json.loads((root / "workflow.json").read_text())
+    by_name = {s["name"]: s for s in manifest["stages"]}
+    assert by_name["nvt"]["status"] == "running"
+    assert by_name["nvt"]["config_sha256"]
+    assert by_name["nvt"]["source"]["source_run_id"] == "h2-relax"
+    assert by_name["nvt"]["source"]["state_digest"]
+    assert by_name["nvt"]["momenta"] == "initialize"
+
+
+_R1_CHILD = '''
+import os
+import sys
+from pyraimd2.runtime.events import EventLog
+from test_recipe import run_serial_recipe, write_recipe
+
+kill_key = os.environ["KILL_KEY"]
+original = EventLog.append_once
+
+
+def patched(self, key, event_type, payload):
+    if key == kill_key:
+        os._exit(73)
+    return original(self, key, event_type, payload)
+
+
+EventLog.append_once = patched
+run_serial_recipe(os.environ["ROOT"],
+                  write_recipe(os.environ["ROOT"]), verbose=False,
+                  force_unlock=True)
+'''
+
+
+def _r1_crashed_root(tmp_path):
+    crash_root = tmp_path / "crash"
+    write_recipe(crash_root)
+    child = tmp_path / "child.py"
+    child.write_text(textwrap.dedent(_R1_CHILD))
+    env = dict(os.environ, ROOT=str(crash_root), KILL_KEY="step:h2-nvt:5",
+               PYTHONPATH=os.pathsep.join(
+                   [str(Path(__file__).parents[2] / "src"),
+                    str(Path(__file__).parent)]))
+    result = subprocess.run([sys.executable, str(child)],
+                            env=env, capture_output=True, text=True,
+                            check=False)
+    assert result.returncode == 73, result.stderr[-500:]
+    return crash_root
+
+
+def test_r1_changed_config_after_interrupted_start_refused(tmp_path):
+    # The reviewer's window: committed tail at step 5, hard exit, manifest
+    # record present — bias edit refuses through the bound config digest.
+    crash_root = _r1_crashed_root(tmp_path)
+    nvt_config = crash_root / "nvt" / "run.toml"
+    original = nvt_config.read_text()
+    edited = original.replace("bias = 0.05", "bias = 0.2")
+    nvt_config.write_text(edited)
+    with pytest.raises(WorkflowError, match="different config"):
+        run_serial_recipe(crash_root, _stages_for(crash_root),
+                          verbose=False, force_unlock=True)
+    # zero new computation: NVT events unchanged, NVE never created
+    assert not (crash_root / "nve" / "events.jsonl").exists()
+
+    # Restore the original config: heal to 6 and run NVE; a final invoke
+    # computes nothing.
+    nvt_config.write_text(original)
+    manifest = run_serial_recipe(crash_root, _stages_for(crash_root),
+                                 verbose=False, force_unlock=True)
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    nvt_events = (crash_root / "nvt" / "events.jsonl").read_bytes()
+    run_serial_recipe(crash_root, _stages_for(crash_root),
+                      verbose=False, force_unlock=True)
+    assert (crash_root / "nvt" / "events.jsonl").read_bytes() == nvt_events
+
+
+def test_r1_interrupted_manifest_record_rebuilds_only_on_semantic_match(tmp_path):
+    # M4-era window: the interrupted first start left NO stage record (the
+    # record entry is removed to simulate it).  Adoption happens only when
+    # the current config's resolved settings equal the run's own record.
+    crash_root = _r1_crashed_root(tmp_path)
+    manifest_path = crash_root / "workflow.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["stages"] = [s for s in manifest["stages"]
+                          if s["name"] != "nvt"]
+    (crash_root / "workflow.json").write_text(json.dumps(manifest))
+
+    nvt_config = crash_root / "nvt" / "run.toml"
+    original = nvt_config.read_text()
+    nvt_config.write_text(original.replace("bias = 0.05", "bias = 0.2"))
+    with pytest.raises(WorkflowError, match="new output directory"):
+        run_serial_recipe(crash_root, _stages_for(crash_root),
+                          verbose=False, force_unlock=True)
+    assert not (crash_root / "nve" / "events.jsonl").exists()
+    # the persisted resolved_config keeps the original settings
+    resolved = json.loads(
+        (crash_root / "nvt" / "resolved_config.json").read_text())
+    assert resolved["surrogate"]["options"]["bias"] == 0.05
+
+    # restoring the original config reconciles from run evidence and
+    # completes the chain
+    nvt_config.write_text(original)
+    manifest = run_serial_recipe(crash_root, _stages_for(crash_root),
+                                 verbose=False, force_unlock=True)
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    nvt = next(s for s in manifest["stages"] if s["name"] == "nvt")
+    assert nvt.get("reconciled_from_run") is True
+
+
+def test_r1_momenta_policy_change_refused(tmp_path):
+    crash_root = _r1_crashed_root(tmp_path)
+    stages = write_recipe(crash_root)
+    stages[1] = RecipeStage("nvt", stages[1].config_path, momenta="preserve")
+    with pytest.raises(WorkflowError, match="momenta policy changed"):
+        run_serial_recipe(crash_root, stages, verbose=False,
+                          force_unlock=True)
+    assert not (crash_root / "nve" / "events.jsonl").exists()
+
+
+def test_r1_initial_traj_tamper_refused_then_recovers(tmp_path):
+    from ase.io import read as ase_read
+    from ase.io import write as ase_write
+
+    crash_root = _r1_crashed_root(tmp_path)
+    traj = crash_root / "nvt" / "initial.traj"
+    atoms = ase_read(traj, format="traj")
+    atoms.cell = atoms.cell.array * 1.1 + 0.5  # a different cell
+    ase_write(traj, atoms, format="traj")
+    with pytest.raises(WorkflowError, match="no longer matches the parent"):
+        run_serial_recipe(crash_root, _stages_for(crash_root),
+                          verbose=False, force_unlock=True)
+    # Deleting the tampered file lets the controller re-materialize the
+    # bound state and finish the chain.
+    traj.unlink()
+    manifest = run_serial_recipe(crash_root, _stages_for(crash_root),
+                                 verbose=False, force_unlock=True)
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+
+
+# --- R2: finished / resumable / not-started by run facts ------------------------
+
+
+_R2_CHILD = '''
+import os
+import sys
+import pyraimd2.workflows.stages as stages_module
+from test_recipe import run_serial_recipe, write_recipe
+
+real_run = stages_module.run_workflow
+
+
+def wrapped(config, **kwargs):
+    result = real_run(config, **kwargs)
+    if config.run.id == "h2-nvt":
+        os._exit(73)  # NVT finished normally; the controller never
+        # persisted its done bookkeeping (the finished window)
+    return result
+
+
+stages_module.run_workflow = wrapped
+run_serial_recipe(os.environ["ROOT"],
+                  write_recipe(os.environ["ROOT"]), verbose=False)
+'''
+
+
+def test_r2_finished_stage_adopted_without_recompute(tmp_path):
+    crash_root = tmp_path / "crash"
+    write_recipe(crash_root)
+    child = tmp_path / "child.py"
+    child.write_text(textwrap.dedent(_R2_CHILD))
+    env = dict(os.environ, ROOT=str(crash_root),
+               PYTHONPATH=os.pathsep.join(
+                   [str(Path(__file__).parents[2] / "src"),
+                    str(Path(__file__).parent)]))
+    result = subprocess.run([sys.executable, str(child)],
+                            env=env, capture_output=True, text=True,
+                            check=False)
+    assert result.returncode == 73, result.stderr[-500:]
+    nvt_events = (crash_root / "nvt" / "events.jsonl").read_bytes()
+    nvt_db = (crash_root / "nvt" / "trajectory.db").read_bytes()
+
+    import pyraimd2.workflows.stages as stages_module
+
+    calls = []
+    real_run = stages_module.run_workflow
+    real_resume = stages_module.resume_workflow
+
+    def counting(kind):
+        def wrapped(*args, **kwargs):
+            calls.append(kind)
+            return (real_run if kind == "run" else real_resume)(*args,
+                                                                **kwargs)
+        return wrapped
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(stages_module, "run_workflow", counting("run"))
+    monkey.setattr(stages_module, "resume_workflow", counting("resume"))
+    try:
+        manifest = run_serial_recipe(crash_root, _stages_for(crash_root),
+                                     verbose=False, force_unlock=True)
+    finally:
+        monkey.undo()
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    assert calls == ["run"]  # exactly one computation: the NVE stage
+    # NVT's record is adopted as-is — events and database untouched
+    assert (crash_root / "nvt" / "events.jsonl").read_bytes() == nvt_events
+    assert (crash_root / "nvt" / "trajectory.db").read_bytes() == nvt_db
+    nvt = next(s for s in manifest["stages"] if s["name"] == "nvt")
+    assert nvt["result"]["complete_steps"] == 6
+    # a final full-chain invoke computes nothing
+    monkey.setattr(stages_module, "run_workflow", counting("run"))
+    monkey.setattr(stages_module, "resume_workflow", counting("resume"))
+    try:
+        run_serial_recipe(crash_root, _stages_for(crash_root),
+                          verbose=False, force_unlock=True)
+    finally:
+        monkey.undo()
+    assert calls == ["run"]
+
+
+def test_r2_unrecoverable_started_stage_is_explained(tmp_path):
+    # Crash before the first step completes (no checkpoint, no healable
+    # tail): started-but-unrecoverable is explained, never silently
+    # restarted, and the run is preserved.
+    crash_root = tmp_path / "crash"
+    write_recipe(crash_root)
+    child = tmp_path / "child.py"
+    child.write_text(textwrap.dedent(_R1_CHILD))
+    env = dict(os.environ, ROOT=str(crash_root), KILL_KEY="step:h2-nvt:0",
+               PYTHONPATH=os.pathsep.join(
+                   [str(Path(__file__).parents[2] / "src"),
+                    str(Path(__file__).parent)]))
+    result = subprocess.run([sys.executable, str(child)],
+                            env=env, capture_output=True, text=True,
+                            check=False)
+    assert result.returncode == 73, result.stderr[-500:]
+    nvt_events = (crash_root / "nvt" / "events.jsonl").read_bytes()
+    with pytest.raises(WorkflowError, match="no resumable initial state"):
+        run_serial_recipe(crash_root, _stages_for(crash_root),
+                          verbose=False, force_unlock=True)
+    assert (crash_root / "nvt" / "events.jsonl").read_bytes() == nvt_events
+    manifest = json.loads((crash_root / "workflow.json").read_text())
+    assert next(s for s in manifest["stages"]
+                if s["name"] == "nvt")["status"] == "running"
+
+
+def test_r2_stale_lock_needs_the_callers_deliberate_flag(tmp_path):
+    crash_root = _r1_crashed_root(tmp_path)
+    assert (crash_root / "nvt" / "events.jsonl.lock").exists()
+    with pytest.raises(Exception, match="active writer"):
+        run_serial_recipe(crash_root, _stages_for(crash_root),
+                          verbose=False)  # default: never grabs the lock
+    manifest = run_serial_recipe(crash_root, _stages_for(crash_root),
+                                 verbose=False, force_unlock=True)
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
 
 
 # --- R3: the completed-state reader --------------------------------------------

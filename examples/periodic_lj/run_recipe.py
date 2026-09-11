@@ -19,7 +19,6 @@ not a claim of physical thermal equilibrium.
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -41,7 +40,15 @@ def main() -> None:
         subprocess.run([sys.executable, str(HERE / "make_structure.py")],
                        cwd=out, check=True)
     for name in STAGE_TOMLS:
-        shutil.copy2(HERE / "recipe" / name, out / name)
+        target = out / name
+        template = (HERE / "recipe" / name).read_bytes()
+        if not target.exists():
+            target.write_bytes(template)
+        elif target.read_bytes() != template:
+            # Existing user configs are kept, never silently overwritten;
+            # the recipe controller reconciles or refuses on differences.
+            print(f"  keeping existing {name} (differs from the shipped "
+                  "template; edits stay visible)")
     manifest = run_serial_recipe(
         out, [RecipeStage("relax", out / "relax.toml"),
               RecipeStage("nvt", out / "nvt.toml", momenta="initialize"),
