@@ -35,7 +35,10 @@ from ase.md.velocitydistribution import thermalize_momenta
 
 from pyraimd2 import __version__
 from pyraimd2.config import PyramidConfig, load_resolved_config
-from pyraimd2.engines.ase_resources import file_resource_baseline_sha256
+from pyraimd2.engines.ase_resources import (
+    file_resource_baseline_sha256,
+    verify_file_resource_baseline,
+)
 from pyraimd2.engines.base import EngineError, EngineResult
 from pyraimd2.loop import EnergeticRunner
 from pyraimd2.loop.constraints import validate_constraints
@@ -515,13 +518,15 @@ class _PlainDriver:
         self._checkpoints: CheckpointManager | None = CheckpointManager(run_dir)
         self._resume_state = resume_state
         # The immutable file-resource baseline digest joins every new
-        # checkpoint's verified state; a resume restores it from the
-        # checkpoint itself (the recorded association), never re-trusting
-        # the current file location.
-        self._file_resource_baseline_sha256 = (
-            file_resource_baseline_sha256 if file_resource_baseline_sha256
-            is not None else (resume_state or {}).get(
-                "file_resource_baseline_sha256"))
+        # checkpoint's verified state; a RESUME inherits the association
+        # from the valid checkpoint only — never recomputed from the
+        # current side file, and a baseline file never upgrades an old run
+        # whose checkpoint lacks the association.
+        if resume_state is not None:
+            self._file_resource_baseline_sha256 = resume_state.get(
+                "file_resource_baseline_sha256")
+        else:
+            self._file_resource_baseline_sha256 = file_resource_baseline_sha256
         if resume_state is not None:
             self._task_counter = int(resume_state["task_counter"])
             self.dyn.nsteps = int(resume_state["nsteps"])
@@ -1318,6 +1323,24 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
             f"this run used task.kind {config.task.kind!r}; resume is "
             "implemented for md runs (singlepoint has nothing to continue, "
             "relax runs reach their target or stop)")
+    # Resource-baseline gate (T2): a run whose valid checkpoint carries a
+    # resource association is verified against the CURRENT baseline file
+    # before any backend factory, evaluation or new step — missing,
+    # unreadable, corrupt or mismatched baselines refuse with the expected
+    # and actual values named.  Runs whose checkpoint carries no
+    # association (old records) keep their exact old behavior: a baseline
+    # file never upgrades them, and the association is inherited only from
+    # the checkpoint — never recomputed from the current side file.
+    # Checkpoint selection itself is untouched (read_latest_valid).
+    checkpoint = CheckpointManager(run_dir).read_latest_valid()
+    if checkpoint is not None:
+        recorded = checkpoint.state.get("file_resource_baseline_sha256")
+        if recorded is not None:
+            try:
+                verify_file_resource_baseline(
+                    run_dir, expected_sha256=recorded, run_id=config.run.id)
+            except ValueError as error:
+                raise WorkflowError(str(error)) from error
     if config.task.mode != "adaptive":
         return _resume_plain(config, run_dir, extra_steps,
                              force_unlock=force_unlock, verbose=verbose,
@@ -1565,9 +1588,7 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             resume_state = dict(state)
             resume_state["thermostat"] = {"rng": thermostat_rng}
         driver = _PlainDriver(config, atoms, backend, run_dir,
-                              event_log=event_log, resume_state=resume_state,
-                              file_resource_baseline_sha256=(
-                                  file_resource_baseline_sha256(run_dir)))
+                              event_log=event_log, resume_state=resume_state)
         driver._task_counter = task_counter
         driver.dyn.nsteps = current
         driver.atoms.calc.atoms = atoms.copy()

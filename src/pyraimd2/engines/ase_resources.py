@@ -196,3 +196,55 @@ def file_resource_baseline_sha256(run_dir: str | Path) -> str | None:
     if not path.is_file():
         return None
     return read_file_sha256(path)
+
+
+def verify_file_resource_baseline(run_dir: str | Path, *,
+                                  expected_sha256: str, run_id: str) -> None:
+    """Re-read and check the current baseline against the association
+    carried by a valid checkpoint — the resume-time gate.
+
+    The baseline file is re-read from its bytes every time (never the stat
+    cache): missing, unreadable, unparsable, wrong schema, wrong run id, or
+    a digest that no longer matches the checkpoint's recorded one all
+    refuse, with the actual and expected values named.  Nothing is
+    reconstructed from a side file and no legacy manifest substitutes.
+    Raises ValueError on every violation.
+    """
+    path = Path(run_dir) / BASELINE_FILENAME
+    if not path.is_file():
+        raise ValueError(
+            f"the run's file-resource baseline {path} is missing; the "
+            "checkpoint carries a resource association, so the run cannot "
+            "resume without its baseline file — restore the original file")
+    try:
+        actual_sha256 = read_file_sha256(path)
+    except OSError as error:
+        raise ValueError(
+            f"the run's file-resource baseline {path} is unreadable "
+            f"({error}); the checkpoint's recorded association cannot be "
+            "verified — restore the original file") from error
+    if actual_sha256 != expected_sha256:
+        raise ValueError(
+            f"the file-resource baseline {path} no longer matches the "
+            f"checkpoint's recorded digest (current {actual_sha256[:16]}…, "
+            f"recorded {expected_sha256[:16]}…); the baseline was modified "
+            "or replaced — restore the original file or start a new run")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ValueError(
+            f"the file-resource baseline {path} is corrupt ({error}); its "
+            "digest still matches, which is contradictory — the run "
+            "directory is inconsistent") from error
+    schema = payload.get("schema")
+    if schema != FILE_RESOURCE_BASELINE_SCHEMA:
+        raise ValueError(
+            f"the file-resource baseline {path} declares schema "
+            f"{schema!r}, expected {FILE_RESOURCE_BASELINE_SCHEMA!r}")
+    recorded_run_id = payload.get("run_id")
+    if recorded_run_id != run_id:
+        raise ValueError(
+            f"the file-resource baseline {path} belongs to run "
+            f"{recorded_run_id!r}, not {run_id!r}; the run directory is "
+            "inconsistent")
+

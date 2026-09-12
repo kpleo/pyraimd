@@ -66,15 +66,20 @@ def _write_run(root, *, steps=4, checkpoint=2, backend="file-backed-test",
 backend = "{backend}"
 {options}
 """
-    else:
+    elif mode == "surrogate":
         surrogate_block = f"""[surrogate]
 backend = "{backend}"
 {options}
 """
+    else:  # adaptive uses both sections
         reference_block = """[reference]
 backend = "harmonic-reference"
 k = 1.0
 r0 = 0.9
+"""
+        surrogate_block = f"""[surrogate]
+backend = "{backend}"
+{options}
 """
     text = f"""\
 schema_version = 1
