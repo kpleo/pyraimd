@@ -252,6 +252,22 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         if failed and not committed:
             failure = {"status": "failed",
                        "reason": failed[-1].get("error", "reference task failed")}
+    # Calibration-pacing decisions (0.6 prototype): why each calibration
+    # opportunity did or did not spend probes — calibrate/defer plus the
+    # reason; the counters never invent "saved" executions.
+    pacing_events = [e for e in events if e.get("type") == "pacing_decision"]
+    pacing = None
+    if pacing_events:
+        decisions: dict[str, int] = {}
+        reasons: dict[str, int] = {}
+        for event in pacing_events:
+            decisions[str(event["decision"])] = \
+                decisions.get(str(event["decision"]), 0) + 1
+            reasons[str(event.get("reason"))] = \
+                reasons.get(str(event.get("reason")), 0) + 1
+        pacing = {"opportunities": len(pacing_events),
+                  "decisions": decisions, "reasons": reasons,
+                  "last_wait_remaining": pacing_events[-1].get("wait_remaining")}
     return {
         "run_id": run_id,
         "schema_version": (start or {}).get("schema_version"),
@@ -270,6 +286,7 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
                         else None),
         "last_checkpoint": _last_checkpoint(run_dir),
         "failure": failure,
+        "pacing": pacing,
         "events": {"count": len(events),
                    "last_seq": max((int(e.get("seq", 0)) for e in events), default=0)},
     }
@@ -312,6 +329,13 @@ def format_inspection(info: dict) -> str:
         f"  last checkpoint       : {info['last_checkpoint']}",
         f"  failure               : {info['failure']}",
     ]
+    if info.get("pacing") is not None:
+        pacing = info["pacing"]
+        decisions = pacing["decisions"]
+        lines.append(
+            f"  calibration pacing    : {decisions.get('calibrate', 0)} "
+            f"calibrated, {decisions.get('defer', 0)} deferred "
+            f"(reasons {pacing['reasons']})")
     return "\n".join(lines)
 
 

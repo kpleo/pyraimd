@@ -200,6 +200,16 @@ def _stopped_early(run_dir: Path, run_id: str) -> bool:
 def _policy_kwargs(config: PyramidConfig) -> dict:
     policy = config.policy
     verification = config.verification
+    pacing = None
+    if policy is not None and policy.calibration_pacing is not None \
+            and policy.calibration_pacing.enabled:
+        # Opt-in calibration pacing (0.6 prototype): only an explicitly
+        # enabled section reaches the controller; absent/disabled keeps the
+        # 0.5.0 policy record and behavior.
+        pacing_config = policy.calibration_pacing
+        pacing = {"failure_streak_limit": pacing_config.failure_streak_limit,
+                  "wait_initial": pacing_config.wait_initial,
+                  "wait_max": pacing_config.wait_max}
     return {
         "force_budget": policy.force_budget_eV_A,
         "timestep_fs": config.dynamics.timestep_fs,
@@ -212,6 +222,7 @@ def _policy_kwargs(config: PyramidConfig) -> dict:
         "check_seed": verification.seed,
         "failure_probability": verification.failure_probability,
         "tilt": verification.tilt,
+        "calibration_pacing": pacing,
     }
 
 
@@ -293,6 +304,10 @@ def _print_run_report(summary: EnergeticRunSummary, run_dir: Path) -> None:
     print(f"  reference calls {summary.n_reference} "
           f"(anchor {summary.n_anchor}, probe {summary.n_probe}, "
           f"check {summary.n_checks}); wall time {summary.wall_time_s:.2f} s")
+    if summary.pacing is not None:
+        print(f"  calibration pacing: {summary.pacing['deferred']} deferred, "
+              f"{summary.pacing['retried']} retried, "
+              f"{summary.pacing['safety_exits']} safety exits")
     print(f"  outputs: {run_dir}/summary.json, summary.csv, trajectory.extxyz")
 
 

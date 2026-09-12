@@ -103,6 +103,20 @@ class BackendConfig:
 
 
 @dataclass(frozen=True)
+class CalibrationPacingConfig:
+    """``[policy.calibration_pacing]`` — opt-in cost-aware calibration
+    pacing (0.6 prototype).  Absent section or ``enabled = false`` means
+    the 0.5.0 behavior, unchanged.  When disabled, the tuning fields carry
+    no meaning and are rejected when set explicitly (no pretend
+    parameters)."""
+
+    enabled: bool
+    failure_streak_limit: int = 3
+    wait_initial: int = 1
+    wait_max: int = 8
+
+
+@dataclass(frozen=True)
 class PolicyConfig:
     force_budget_eV_A: float
     probe_steps_A: tuple[float, float]
@@ -110,6 +124,7 @@ class PolicyConfig:
     time_cap_fs: float
     transverse_cap: float
     force_metric: str = "active_dofs_max_atom"
+    calibration_pacing: CalibrationPacingConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +224,17 @@ class PyramidConfig:
                 "time_cap_fs": self.policy.time_cap_fs,
                 "transverse_cap": self.policy.transverse_cap,
                 "force_metric": self.policy.force_metric,
+                # the pacing block appears only when the user configured
+                # the section — an absent section keeps the resolved
+                # identity byte-identical to pre-pacing versions
+                **({} if self.policy.calibration_pacing is None else {
+                    "calibration_pacing": {
+                        "enabled": self.policy.calibration_pacing.enabled,
+                        "failure_streak_limit": self.policy
+                        .calibration_pacing.failure_streak_limit,
+                        "wait_initial": self.policy
+                        .calibration_pacing.wait_initial,
+                        "wait_max": self.policy.calibration_pacing.wait_max}}),
             }),
             "verification": (None if self.task.mode != "adaptive" else {
                 "probability": self.verification.probability,
@@ -596,7 +622,7 @@ def _parse_policy(table: dict | None) -> PolicyConfig | None:
     _reject_unknown(table,
                     ("name", "force_budget_eV_A", "probe_steps_A",
                      "numerical_floor_eV_A", "time_cap_fs", "transverse_cap",
-                     "force_metric"),
+                     "force_metric", "calibration_pacing"),
                     "policy", "field")
     _str_field(table, "name", "policy", default="energetic",
                choices=POLICY_NAMES)
@@ -621,9 +647,51 @@ def _parse_policy(table: dict | None) -> PolicyConfig | None:
     force_metric = _str_field(table, "force_metric", "policy",
                               default="active_dofs_max_atom",
                               choices=FORCE_METRICS)
+    pacing = _parse_calibration_pacing(table.pop("calibration_pacing", None))
     return PolicyConfig(force_budget_eV_A=force_budget, probe_steps_A=probe,
                         numerical_floor_eV_A=numerical_floor, time_cap_fs=time_cap,
-                        transverse_cap=transverse_cap, force_metric=force_metric)
+                        transverse_cap=transverse_cap, force_metric=force_metric,
+                        calibration_pacing=pacing)
+
+
+def _parse_calibration_pacing(
+        table: dict | None) -> CalibrationPacingConfig | None:
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        raise ConfigError(
+            f"policy.calibration_pacing must be a table, got {table!r}")
+    _reject_unknown(table,
+                    ("enabled", "failure_streak_limit", "wait_initial",
+                     "wait_max"),
+                    "policy.calibration_pacing", "field")
+    enabled = table.pop("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ConfigError(
+            f"policy.calibration_pacing.enabled must be a boolean, got "
+            f"{enabled!r}")
+    if not enabled:
+        for key in ("failure_streak_limit", "wait_initial", "wait_max"):
+            if key in table:
+                raise ConfigError(
+                    f"policy.calibration_pacing.{key} is set but the feature "
+                    "is disabled; a disabled segment carries no pretend "
+                    "parameters — remove it or set enabled = true")
+        return CalibrationPacingConfig(enabled=False)
+    streak = _int_field(table, "failure_streak_limit",
+                        "policy.calibration_pacing", default=3, minimum=1)
+    wait_initial = _int_field(table, "wait_initial",
+                              "policy.calibration_pacing", default=1,
+                              minimum=1)
+    wait_max = _int_field(table, "wait_max", "policy.calibration_pacing",
+                          default=8, minimum=1)
+    if wait_max < wait_initial:
+        raise ConfigError(
+            f"policy.calibration_pacing.wait_max ({wait_max}) must be >= "
+            f"wait_initial ({wait_initial})")
+    return CalibrationPacingConfig(enabled=True, failure_streak_limit=streak,
+                                   wait_initial=wait_initial,
+                                   wait_max=wait_max)
 
 
 def _parse_relax(table: dict | None) -> RelaxConfig:

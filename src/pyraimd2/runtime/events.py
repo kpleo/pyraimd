@@ -46,6 +46,11 @@ RUN_SUMMARY = "run_summary"
 RUN_END = "run_end"
 RESUMED = "resumed"
 UPDATE_REJECTED = "update_rejected"
+# Frozen calibration-pacing decisions (0.6 prototype; only present when
+# [policy.calibration_pacing] is enabled): one keyed event per refused
+# evaluation, persisted before any probe spend so a crash/rebuild never
+# re-decides or double-advances the state.
+PACING_DECISION = "pacing_decision"
 
 # ``record`` discriminant on attempt events (and on nested physical I/O
 # task events): the cost ledger counts physical executions by it.

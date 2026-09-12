@@ -77,6 +77,19 @@ from pyraimd2.loop.integrators import (
     derive_stream_seed,
     state_digest,
 )
+from pyraimd2.loop.pacing import (
+    PACING_RECORD,
+    CalibrationPacing,
+    PacingState,
+    decide_on_refusal,
+    initial_state,
+)
+from pyraimd2.loop.pacing import (
+    on_accept as _pacing_on_accept,
+)
+from pyraimd2.loop.pacing import (
+    on_calibration as _pacing_on_calibration,
+)
 from pyraimd2.runtime import (
     EvaluationContext,
     EvaluationPhase,
@@ -95,6 +108,7 @@ from pyraimd2.runtime.events import (
     EVENT_SCHEMA_VERSION,
     LABEL_CONSUMED,
     MODEL_UPDATE,
+    PACING_DECISION,
     PROBE_COMPLETED,
     RESUMED,
     RUN_END,
@@ -211,6 +225,11 @@ class _Pending:
     # (segment, n_calibrations) frozen by a recalibration that ran before an
     # uncommitted proposal; applied when the rebuilt evaluation commits (C4).
     restored_counters: tuple[int, int] | None = None
+    # Calibration pacing (0.6 prototype): the frozen pacing_decision event of
+    # a rebuilt pending (replayed, never re-decided), and the post-decision
+    # state to apply when this evaluation commits.
+    pacing_decision: dict | None = None
+    pacing_after: dict | None = None
 
 
 @dataclass
@@ -301,6 +320,9 @@ class EnergeticRunSummary:
     accepted_fraction: float
     verification: dict | None
     wall_time_s: float
+    # Calibration-pacing counters (0.6 prototype; None when the feature is
+    # off): deferred opportunities / forced retries / safety exits.
+    pacing: dict | None = None
 
 
 class EnergeticCalculator(Calculator):
@@ -379,6 +401,7 @@ class EnergeticCalculator(Calculator):
         force_metric: str = "active_dofs_max_atom",
         integrator_spec: IntegratorSpec | dict | None = None,
         velocity_seed: int | None = None,
+        calibration_pacing: dict | None = None,
         _resume_state: dict | None = None,
     ) -> None:
         super().__init__()
@@ -472,6 +495,36 @@ class EnergeticCalculator(Calculator):
         self._last_committed_route: str | None = None
         self._last_committed_segment: int | None = None
         self._last_committed_model_id: str | None = None
+        # Calibration pacing (0.6 prototype, opt-in): the validated settings
+        # and the durable rule state.  Two deliberate non-compositions fail
+        # here, before any backend compute: online label updates (the
+        # deferred-recalibration machinery owns that path) and explicit
+        # direction callbacks (the rule is defined for the default
+        # single-direction displacement paths).
+        self._pacing_settings: CalibrationPacing | None = None
+        self._pacing: PacingState | None = None
+        if calibration_pacing is not None:
+            if not isinstance(calibration_pacing, dict):
+                raise ValueError(
+                    "calibration_pacing must be a settings dict, got "
+                    f"{calibration_pacing!r}")
+            self._pacing_settings = CalibrationPacing(
+                failure_streak_limit=int(
+                    calibration_pacing["failure_streak_limit"]),
+                wait_initial=int(calibration_pacing["wait_initial"]),
+                wait_max=int(calibration_pacing["wait_max"]))
+            if on_label is not None:
+                raise ValueError(
+                    "calibration pacing does not compose with "
+                    "on_label/online model updates in this version: the "
+                    "deferred-recalibration path owns that combination — "
+                    "run without calibration_pacing or without the updater")
+            if direction is not None:
+                raise ValueError(
+                    "calibration pacing supports the default "
+                    "single-direction displacement paths only; an explicit "
+                    "direction callback is not composable in this version")
+            self._pacing = initial_state(self._pacing_settings)
         # WP02 run records: authoritative event log (optional — direct legacy
         # use stays event-free), task/label ID counters, and the numeric
         # label cache (§5.4; disabled unless the reference declares a
@@ -485,6 +538,10 @@ class EnergeticCalculator(Calculator):
         # calibration, and the model-artifact publisher the runner installs.
         self._probe_reuse: dict[tuple, dict] = {}
         self._model_publisher: Callable[[str, dict | None], None] | None = None
+        # Pacing decisions replayed in the resume window (evaluation_id ->
+        # frozen pacing_decision event); a rebuilt pending replays its
+        # recorded decision verbatim instead of re-deciding.
+        self._pacing_decisions: dict[int, dict] = {}
         if _resume_state is None:
             self._emit(RUN_START, run_id=self.run_id,
                        schema_version=STORE_SCHEMA_VERSION,
@@ -603,7 +660,16 @@ class EnergeticCalculator(Calculator):
                 "failure_probability": self.failure_probability,
                 "tilt": self.tilt,
                 "force_metric": self.force_metric,
-                "integrator_spec": self._integrator_spec.as_dict()}
+                "integrator_spec": self._integrator_spec.as_dict(),
+                # the pacing settings join the policy identity only when the
+                # feature is on — a pacing-off run keeps the pre-0.6 policy
+                # record and its exact resume semantics
+                **({} if self._pacing_settings is None else {
+                    "calibration_pacing": {
+                        "failure_streak_limit": self._pacing_settings
+                        .failure_streak_limit,
+                        "wait_initial": self._pacing_settings.wait_initial,
+                        "wait_max": self._pacing_settings.wait_max}})}
 
     def _checkpoint_payload(self, boundary_atoms: Atoms) -> tuple[dict, dict]:
         """Complete-step state for ``CheckpointManager.write``.
@@ -657,6 +723,12 @@ class EnergeticCalculator(Calculator):
             },
             "constraint": (None if self._projection is None
                            else self._projection.as_dict()),
+            # Calibration pacing state at this complete-step boundary
+            # (versioned; absent on old checkpoints = the feature was off,
+            # never reconstructed as on).  The post-checkpoint committed
+            # tail re-applies its own committed pacing states on replay.
+            "pacing": (None if self._pacing is None
+                       else self._pacing.as_dict()),
         }
         updater_state = (self.on_label.state_dict()
                          if _is_stateful(self.on_label) else None)
@@ -733,6 +805,9 @@ class EnergeticCalculator(Calculator):
             self.verification = bound
         self._rng = np.random.default_rng(self._check_seed_effective)
         self._rng.bit_generator.state = state["check_rng"]
+        pacing_payload = state.get("pacing")
+        if pacing_payload is not None:
+            self._pacing = PacingState.from_dict(pacing_payload)
         self._anchor = (_anchor_from_record(state["anchor"])
                         if state["anchor"] is not None else None)
         constraint = state.get("constraint")
@@ -825,9 +900,19 @@ class EnergeticCalculator(Calculator):
                 self._anchor = _anchor_from_record(new_anchor_rec)
                 self.n_calibrations += 1
             else:
-                self._anchor = None
+                # A pacing defer commits no new anchor: the retained
+                # diagnostic anchor (prefix closed) is restored instead;
+                # without either record the refusal left no anchor.
+                retained_rec = metadata.get("retained_anchor")
+                self._anchor = (_anchor_from_record(retained_rec)
+                                if retained_rec is not None else None)
             self._next_reason = ("direction_unavailable_reference"
                                  if self._anchor is None else "reference_required")
+        pacing_payload = metadata.get("pacing")
+        if pacing_payload is not None and self._pacing is not None:
+            # The committed pacing state is authoritative on replay —
+            # applied exactly as the live commit made it, never recomputed.
+            self._pacing = PacingState.from_dict(pacing_payload)
         for key, count in event["reference_calls_this_evaluation"].items():
             self.reference_calls[key] += int(count)
         self.n_evaluations += 1
@@ -984,8 +1069,9 @@ class EnergeticCalculator(Calculator):
             # persisted one (F01).
             self._rng.bit_generator.state = proposal["check_rng_after"]
         bath_step = proposal.get("bath_step")
+        evaluation_index = int(context.evaluation_id)
         return _Pending(
-            atoms, int(context.evaluation_id), prediction, anchor,
+            atoms, evaluation_index, prediction, anchor,
             bool(proposal["accepted"]), proposal["reason"],
             [dict(f) for f in proposal["forecasts"]],
             proposal["selected_direction"],
@@ -998,7 +1084,12 @@ class EnergeticCalculator(Calculator):
             context=context,
             model_generation=int(proposal["model_generation"]),
             bath_step=None if bath_step is None else dict(bath_step),
-            restored_counters=pending_counters)
+            restored_counters=pending_counters,
+            # A pacing decision persisted before the crash replays
+            # verbatim; when none exists (the crash preceded it) the
+            # evaluation re-decides from the replayed state — identical
+            # inputs, identical decision.
+            pacing_decision=self._pacing_decisions.get(evaluation_index))
 
     def _check_identity(self, atoms: Atoms) -> None:
         """Reject any change that must never happen mid-run.
@@ -1456,6 +1547,56 @@ class EnergeticCalculator(Calculator):
                 "force_budget_exceeded": error > self.force_budget,
                 "observed_coefficient_A2_eV": 2 * work / error**2 if error > 0 else None}
 
+    def _pacing_decide(self, pending: _Pending,
+                       observed: dict | None) -> str:
+        """The calibration decision for a refused evaluation.
+
+        Pacing off: the legacy behavior — every refusal recalibrates.
+        Pacing on: the pure rule decides from the durable state; the
+        decision is persisted as a keyed ``pacing_decision`` event BEFORE
+        any probe spend, bound to the evaluation id, the serving segment
+        and the model generation.  A rebuilt pending replays its persisted
+        decision verbatim — a failed attempt never re-decides and never
+        advances the wait or the streak a second time.  The post-decision
+        state (``pending.pacing_after``) is applied only at the commit.
+        """
+        if pending.pacing_decision is not None:
+            pending.pacing_after = dict(
+                pending.pacing_decision["state_after"])
+            return str(pending.pacing_decision["decision"])
+        if self._pacing is None:
+            return "calibrate"
+        if pending.anchor is None:
+            # No usable anchor: the existing mandatory fallback calibrates
+            # (or reports unavailable) — pacing governs only deferrable
+            # probe investments and never overrides it.
+            decision, reason, after = "calibrate", "no_anchor", self._pacing
+        else:
+            observed_error = (None if observed is None
+                              else observed.get("max_force_error_eV_A"))
+            decision, reason, after = decide_on_refusal(
+                self._pacing, self._pacing_settings,
+                observed_error=observed_error,
+                force_budget=self.force_budget)
+        pending.pacing_after = after.as_dict()
+        payload = dict(
+            record=PACING_RECORD,
+            evaluation_id=pending.index,
+            segment=(None if pending.anchor is None
+                     else pending.anchor.segment),
+            model_generation=self._model_generation,
+            model_id=self.model_id,
+            decision=decision,
+            reason=reason,
+            wait_remaining=after.wait,
+            state_before=self._pacing.as_dict(),
+            state_after=after.as_dict())
+        self._emit_once(
+            f"pacing:{self.run_id}:{pending.index}", PACING_DECISION,
+            **payload)
+        pending.pacing_decision = payload
+        return decision
+
     def _finish(self, pending: _Pending) -> None:
         self._active_evaluation_id = pending.index
         # The realized displacement of the step this evaluation closes
@@ -1502,13 +1643,41 @@ class EnergeticCalculator(Calculator):
                 # semantics as the surrogate path: fixed DOFs zeroed.
                 pending.forces = self._projection.project_forces(pending.forces)
             if not pending.calibration_done and self.on_label is None:
-                pending.new_anchor = self._calibrate(pending)
-                pending.calibration_done = True
+                # The calibration decision comes after the reference label
+                # and the observed residual are known, and is persisted
+                # before any probe launches.
+                decision = self._pacing_decide(pending, observed)
+                if decision == "defer":
+                    # Deferral keeps the reference drive (already paid) and
+                    # skips only the probe investment; the serving anchor is
+                    # retained as a diagnostic record with its prefix closed
+                    # at the commit below.
+                    pending.calibration_done = True
+                else:
+                    pending.new_anchor = self._calibrate(pending)
+                    pending.calibration_done = True
         bound = copy.deepcopy(self.verification)
         if bound is not None:
             bound.update(pending.accepted, pending.checked, violation)
         anchor = pending.anchor
         new_anchor = pending.new_anchor
+        # The pacing state applies only at a successful commit; the value
+        # recorded here is the post-decision state (for an accept, the
+        # reset transition; for a refusal, the frozen decision's outcome).
+        pacing_after = pending.pacing_after
+        if self._pacing is not None and pending.accepted:
+            pacing_after = _pacing_on_accept(
+                self._pacing, self._pacing_settings).as_dict()
+        pacing_defer = (pending.pacing_decision is not None
+                        and pending.pacing_decision.get("decision") == "defer")
+        retained_record = None
+        if pacing_defer and anchor is not None:
+            # The retained anchor is recorded with its prefix closed: a
+            # failed step stops the accepted prefix, and a geometry that
+            # re-enters the domain later never reopens it.
+            retained_record = self._anchor_record(anchor)
+            retained_record["open_prefix"] = [False] * len(
+                retained_record["open_prefix"])
         energy_source = pending.prediction if pending.accepted else pending.label
         drive = SurrogatePrediction(pending.energy, pending.forces.copy(), None,
                                     pending.prediction.uncertainty.copy(),
@@ -1540,6 +1709,19 @@ class EnergeticCalculator(Calculator):
             "unusable_probe_records": pending.probe_records if new_anchor is None else [],
             "constraint": self._constraint_record(pending),
         }
+        if self._pacing is not None:
+            # Calibration pacing (0.6 prototype): the post-decision state
+            # applied at this commit, the decision summary, and — on a
+            # defer — the retained diagnostic anchor with its prefix
+            # closed.  Pacing-off runs carry none of these fields and stay
+            # byte-identical to 0.5.0 records.
+            metadata["pacing"] = pacing_after
+            metadata["pacing_decision"] = (
+                None if pending.pacing_decision is None else {
+                    "decision": pending.pacing_decision["decision"],
+                    "reason": pending.pacing_decision["reason"],
+                    "wait_remaining": pending.pacing_decision["wait_remaining"]})
+            metadata["retained_anchor"] = retained_record
         io_task_id = self._new_task_id()
         io_started = time.time()
         io_start = time.perf_counter()
@@ -1572,8 +1754,27 @@ class EnergeticCalculator(Calculator):
             self._anchor = None if violation else anchor
             self._next_reason = "previous_independent_check_violation" if violation else "reference_required"
         else:
-            self._anchor = new_anchor
-            self._next_reason = "direction_unavailable_reference" if new_anchor is None else "reference_required"
+            if new_anchor is not None:
+                self._anchor = new_anchor
+            elif pacing_defer and anchor is not None:
+                # Retain the serving anchor as diagnostic-only: its prefix
+                # is closed (a failed step stops the accepted prefix), it
+                # never accepts again, and its correction still feeds the
+                # waiting steps' safety residual.
+                anchor.open_prefix = [False] * len(anchor.open_prefix)
+                self._anchor = anchor
+            else:
+                self._anchor = None
+            self._next_reason = ("direction_unavailable_reference"
+                                 if self._anchor is None else "reference_required")
+        # The pacing state transitions only at a successful commit: the
+        # accept reset, or the frozen decision's outcome — with the pending
+        # segment opened only by a calibration that actually completed.
+        if self._pacing is not None and pacing_after is not None:
+            after = PacingState.from_dict(pacing_after)
+            if not pending.accepted and new_anchor is not None:
+                after = _pacing_on_calibration(after)
+            self._pacing = after
         self.results = {"energy": drive.energy, "forces": drive.forces.copy()}
         self._results_model_generation = self._model_generation
         committed_payload = {
@@ -1597,6 +1798,8 @@ class EnergeticCalculator(Calculator):
             "segment_id": None if anchor is None else anchor.segment,
             "model_id": self.model_id,
         }
+        if self._pacing is not None:
+            committed_payload["pacing"] = pacing_after
         if pending.index == 0:
             committed_payload["input_hash"] = atoms_input_hash(pending.atoms)
         if (self._integrator_spec.algorithm == "langevin"
@@ -2085,6 +2288,10 @@ def _replay_window(calc: EnergeticCalculator, store: Store, events: list[dict], 
             calc._replay_label_event(event, store, updater, models_dir)
             unconsumed.discard(str(event.get("label_id")
                                        or event.get("origin_label_id")))
+        elif event_type == PACING_DECISION:
+            # Frozen pacing decisions in the window: the tail evaluation's
+            # rebuild replays its decision verbatim (never re-decided).
+            calc._pacing_decisions[int(event["evaluation_id"])] = event
     # A label first consumed anywhere in the history (including before the
     # checkpoint) and only reused in the window is not a consumption loss.
     unconsumed -= consumed_anywhere
@@ -2262,6 +2469,7 @@ class EnergeticRunner:
         event_log: EventLog | None = None, label_cache: bool = True,
         run_dir: str | Path | None = None, checkpoint_interval_steps: int | None = None,
         handle_sigint: bool = False,
+        calibration_pacing: dict | None = None,
     ) -> None:
         temperature_K = _positive(temperature_K, "temperature_K", zero=True)
         if checkpoint_interval_steps is not None and (
@@ -2287,6 +2495,7 @@ class EnergeticRunner:
             direction=direction, on_label=on_label, event_log=event_log,
             label_cache=label_cache, force_metric=force_metric,
             integrator_spec=integrator_spec, velocity_seed=velocity_seed,
+            calibration_pacing=calibration_pacing,
         )
         self.calc._validate_atoms(atoms)
         if "momenta" not in atoms.arrays:
@@ -2393,7 +2602,10 @@ class EnergeticRunner:
         if self._failed:
             raise RuntimeError("an energetic MD step failed; start a new run from a deliberate state")
         before = (self.calc.n_evaluations, self.calc.n_accepted, self.calc.n_violations,
-                  self.calc.n_calibrations, self.calc.reference_calls.copy())
+                  self.calc.n_calibrations, self.calc.reference_calls.copy(),
+                  None if self.calc._pacing is None else
+                  (self.calc._pacing.n_deferred, self.calc._pacing.n_retried,
+                   self.calc._pacing.n_safety_exits))
         start = time.perf_counter()
         stopped = False
         try:
@@ -2412,6 +2624,15 @@ class EnergeticRunner:
         n_evaluations = self.calc.n_evaluations - before[0]
         n_accepted = self.calc.n_accepted - before[1]
         calls = {key: count - before[4][key] for key, count in self.calc.reference_calls.items()}
+        pacing = None
+        if before[5] is not None:
+            # Per-invocation pacing deltas: deferred opportunities, forced
+            # retries and safety exits — the real accounting; never a
+            # fabricated "saved DFT" figure.
+            pacing = {"deferred": self.calc._pacing.n_deferred - before[5][0],
+                      "retried": self.calc._pacing.n_retried - before[5][1],
+                      "safety_exits": self.calc._pacing.n_safety_exits
+                      - before[5][2]}
         summary = EnergeticRunSummary(
             int(n_steps), n_evaluations, n_accepted, sum(calls.values()), calls["anchor"],
             calls["probe"], calls["check"], self.calc.n_violations - before[2],
@@ -2419,13 +2640,15 @@ class EnergeticRunner:
             n_accepted / n_evaluations if n_evaluations else 0.0,
             None if self.calc.verification is None else self.calc.verification.as_dict(),
             time.perf_counter() - start,
+            pacing=pacing,
         )
         # The outer wall time is measured directly here — never re-summed
         # from nested task timings downstream.
         self.calc._emit(RUN_SUMMARY, run_id=self.calc.run_id,
                         n_steps=summary.n_steps, n_evaluations=summary.n_evaluations,
                         n_accepted=summary.n_accepted, n_reference=summary.n_reference,
-                        wall_time_s=summary.wall_time_s, stopped_early=stopped)
+                        wall_time_s=summary.wall_time_s, stopped_early=stopped,
+                        pacing=pacing)
         return summary
 
     @staticmethod
