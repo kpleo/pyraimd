@@ -35,6 +35,7 @@ from ase.md.velocitydistribution import thermalize_momenta
 
 from pyraimd2 import __version__
 from pyraimd2.config import PyramidConfig, load_resolved_config
+from pyraimd2.engines.ase_resources import file_resource_baseline_sha256
 from pyraimd2.engines.base import EngineError, EngineResult
 from pyraimd2.loop import EnergeticRunner
 from pyraimd2.loop.constraints import validate_constraints
@@ -249,6 +250,8 @@ def _run_adaptive(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                 event_log=event_log, run_dir=run_dir,
                 checkpoint_interval_steps=config.checkpoint.interval_steps,
                 handle_sigint=handle_sigint,
+                file_resource_baseline_sha256=
+                file_resource_baseline_sha256(run_dir),
                 **_policy_kwargs(config))
             outputs = RunOutputs(
                 run_dir, config.run.id,
@@ -478,7 +481,8 @@ class _PlainDriver:
 
     def __init__(self, config: PyramidConfig, atoms: Atoms, backend: object,
                  run_dir: Path, *, event_log: EventLog | None = None,
-                 resume_state: dict | None = None) -> None:
+                 resume_state: dict | None = None,
+                 file_resource_baseline_sha256: str | None = None) -> None:
         self.config = config
         self.atoms = atoms
         self.backend = backend
@@ -510,6 +514,14 @@ class _PlainDriver:
                          else (fingerprint_of(backend) or type(backend).__qualname__))
         self._checkpoints: CheckpointManager | None = CheckpointManager(run_dir)
         self._resume_state = resume_state
+        # The immutable file-resource baseline digest joins every new
+        # checkpoint's verified state; a resume restores it from the
+        # checkpoint itself (the recorded association), never re-trusting
+        # the current file location.
+        self._file_resource_baseline_sha256 = (
+            file_resource_baseline_sha256 if file_resource_baseline_sha256
+            is not None else (resume_state or {}).get(
+                "file_resource_baseline_sha256"))
         if resume_state is not None:
             self._task_counter = int(resume_state["task_counter"])
             self.dyn.nsteps = int(resume_state["nsteps"])
@@ -687,6 +699,10 @@ class _PlainDriver:
             "constraint": (None if self.projection is None
                            else self.projection.as_dict()),
         }
+        if self._file_resource_baseline_sha256 is not None:
+            # the verified association to the immutable resource baseline
+            state["file_resource_baseline_sha256"] = \
+                self._file_resource_baseline_sha256
         arrays = {
             "numbers": self.atoms.numbers,
             "cell": self.atoms.cell.array,
@@ -806,7 +822,9 @@ def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
             config, engine=backend if config.task.mode == "reference" else None,
             surrogate=backend if config.task.mode == "surrogate" else None)
         driver = _PlainDriver(config, atoms, backend, run_dir,
-                              event_log=event_log)
+                              event_log=event_log,
+                              file_resource_baseline_sha256=(
+                                  file_resource_baseline_sha256(run_dir)))
         # Outputs construction joins the ownership scope: any setup failure
         # releases the log AND the driver's store before the error
         # continues (R4/S0a).
@@ -1547,7 +1565,9 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             resume_state = dict(state)
             resume_state["thermostat"] = {"rng": thermostat_rng}
         driver = _PlainDriver(config, atoms, backend, run_dir,
-                              event_log=event_log, resume_state=resume_state)
+                              event_log=event_log, resume_state=resume_state,
+                              file_resource_baseline_sha256=(
+                                  file_resource_baseline_sha256(run_dir)))
         driver._task_counter = task_counter
         driver.dyn.nsteps = current
         driver.atoms.calc.atoms = atoms.copy()

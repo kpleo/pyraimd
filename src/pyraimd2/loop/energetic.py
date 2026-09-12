@@ -402,6 +402,7 @@ class EnergeticCalculator(Calculator):
         integrator_spec: IntegratorSpec | dict | None = None,
         velocity_seed: int | None = None,
         calibration_pacing: dict | None = None,
+        file_resource_baseline_sha256: str | None = None,
         _resume_state: dict | None = None,
     ) -> None:
         super().__init__()
@@ -525,6 +526,10 @@ class EnergeticCalculator(Calculator):
                     "single-direction displacement paths only; an explicit "
                     "direction callback is not composable in this version")
             self._pacing = initial_state(self._pacing_settings)
+        # The immutable file-resource baseline digest joins every new
+        # checkpoint generation's verified state; a resume restores the
+        # recorded association from the checkpoint itself.
+        self._file_resource_baseline_sha256 = file_resource_baseline_sha256
         # WP02 run records: authoritative event log (optional — direct legacy
         # use stays event-free), task/label ID counters, and the numeric
         # label cache (§5.4; disabled unless the reference declares a
@@ -730,6 +735,11 @@ class EnergeticCalculator(Calculator):
             "pacing": (None if self._pacing is None
                        else self._pacing.as_dict()),
         }
+        # absent entirely for resource-less runs: old checkpoint states keep
+        # their exact key set, and an absent field reads as "no baseline"
+        if self._file_resource_baseline_sha256 is not None:
+            state["file_resource_baseline_sha256"] = \
+                self._file_resource_baseline_sha256
         updater_state = (self.on_label.state_dict()
                          if _is_stateful(self.on_label) else None)
         arrays = {
@@ -808,6 +818,9 @@ class EnergeticCalculator(Calculator):
         pacing_payload = state.get("pacing")
         if pacing_payload is not None:
             self._pacing = PacingState.from_dict(pacing_payload)
+        baseline_sha = state.get("file_resource_baseline_sha256")
+        if baseline_sha is not None:
+            self._file_resource_baseline_sha256 = baseline_sha
         self._anchor = (_anchor_from_record(state["anchor"])
                         if state["anchor"] is not None else None)
         constraint = state.get("constraint")
@@ -2485,6 +2498,7 @@ class EnergeticRunner:
         run_dir: str | Path | None = None, checkpoint_interval_steps: int | None = None,
         handle_sigint: bool = False,
         calibration_pacing: dict | None = None,
+        file_resource_baseline_sha256: str | None = None,
     ) -> None:
         temperature_K = _positive(temperature_K, "temperature_K", zero=True)
         if checkpoint_interval_steps is not None and (
@@ -2511,6 +2525,7 @@ class EnergeticRunner:
             label_cache=label_cache, force_metric=force_metric,
             integrator_spec=integrator_spec, velocity_seed=velocity_seed,
             calibration_pacing=calibration_pacing,
+            file_resource_baseline_sha256=file_resource_baseline_sha256,
         )
         self.calc._validate_atoms(atoms)
         if "momenta" not in atoms.arrays:

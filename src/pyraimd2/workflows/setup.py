@@ -463,7 +463,15 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
 
 def prepare_run_directory(config: PyramidConfig, *, engine: object | None,
                           surrogate: object | None) -> Path:
-    """Create the run directory with config copy, resolved config, manifest."""
+    """Create the run directory with config copy, resolved config, manifest.
+
+    When a constructed adapter declares immutable file resources, the
+    baseline (`file_resources.json`, schema ``file-resource-baseline-v1``)
+    is written here — before the first backend evaluation and the first
+    checkpoint — and its digest is shown in the manifest.  A declaration
+    that disagrees with the configured option refuses the run before any
+    evaluation."""
+    from pyraimd2.engines.ase_resources import collect_file_resource_baseline
     from pyraimd2.runtime.identity import fingerprint_of
 
     run_dir = config.run.directory
@@ -471,6 +479,11 @@ def prepare_run_directory(config: PyramidConfig, *, engine: object | None,
     if config.source_path is not None and Path(config.source_path).is_file():
         shutil.copy2(config.source_path, run_dir / "config.toml")
     _write_json_atomic(run_dir / "resolved_config.json", config.resolved_dict())
+    try:
+        baseline_sha = collect_file_resource_baseline(
+            config, engine=engine, surrogate=surrogate)
+    except ValueError as error:
+        raise WorkflowError(str(error)) from error
     manifest = {
         "run_id": config.run.id,
         "created_unix": time.time(),
@@ -525,6 +538,11 @@ def prepare_run_directory(config: PyramidConfig, *, engine: object | None,
                 derive_stream_seed(config.verification.seed, "verification")
                 if nvt else config.verification.seed)
         manifest["streams"] = streams
+    if baseline_sha is not None:
+        # display only — the checkpoint association is the authoritative
+        # link, the manifest never substitutes for it
+        manifest["file_resource_baseline"] = {
+            "file": "file_resources.json", "sha256": baseline_sha}
     _write_json_atomic(run_dir / "manifest.json", manifest)
     return run_dir
 
