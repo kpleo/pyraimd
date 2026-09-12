@@ -210,6 +210,32 @@ run requires a stateful updater.
   stays recorded as a diagnostic); the all-atom metric is an explicit
   alternative, never a silent redefinition.
 
+### [policy.calibration_pacing] (adaptive only; opt-in, 0.6 prototype)
+
+Cost-aware calibration pacing: after `failure_streak_limit` consecutive
+calibrations each failed to produce an accept, the probe investment of
+the next recalibrations is deferred and those steps drive
+reference-direct — the existing refusal path, with unchanged driving
+forces and an unchanged gate.  Off by default; an absent section (or
+`enabled = false`) is exactly the pre-0.6 behavior, and setting tuning
+fields while disabled is an error.  It composes with neither online model
+updates nor explicit direction callbacks (both are refused up front).
+
+- `enabled` (boolean, default false).
+- `failure_streak_limit` (integer >= 1, default 3): consecutive sterile
+  calibrations before the first deferral.
+- `wait_initial` (integer >= 1, default 1): opportunities skipped before
+  the first forced retry calibration.
+- `wait_max` (integer >= wait_initial, default 8): the backoff cap —
+  failure rounds wait 1×, 2×, ... up to this bound, so recalibration is
+  retried at a bounded interval, never suppressed permanently.
+
+Every refused evaluation's decision (calibrate / defer, with the reason
+and the remaining wait) is recorded as a `pacing_decision` event and is
+visible under `pyramid inspect`.  Reference executions are always billed
+by what actually ran; a deferral is visible as the ABSENCE of probes plus
+a recorded decision, never as an invented saving.
+
 ### [verification] (adaptive only)
 
 Independent checks over accepted evaluations; the segment parameters are
