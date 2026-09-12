@@ -558,6 +558,7 @@ def test_resume_at_a_committed_calibration_tail_replays_complete_state(
     as the continuous run: eval 11 defer/sterile_streak, eval 12
     calibrate/forced_retry."""
     import test_si_recipe as si
+
     from pyraimd2.workflows.stages import load_completed_state, run_serial_recipe
 
     control = _continuous_pacing_control(tmp_path)
