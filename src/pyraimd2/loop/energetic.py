@@ -1579,18 +1579,18 @@ class EnergeticCalculator(Calculator):
                 observed_error=observed_error,
                 force_budget=self.force_budget)
         pending.pacing_after = after.as_dict()
-        payload = dict(
-            record=PACING_RECORD,
-            evaluation_id=pending.index,
-            segment=(None if pending.anchor is None
-                     else pending.anchor.segment),
-            model_generation=self._model_generation,
-            model_id=self.model_id,
-            decision=decision,
-            reason=reason,
-            wait_remaining=after.wait,
-            state_before=self._pacing.as_dict(),
-            state_after=after.as_dict())
+        payload = {
+            "record": PACING_RECORD,
+            "evaluation_id": pending.index,
+            "segment": (None if pending.anchor is None
+                        else pending.anchor.segment),
+            "model_generation": self._model_generation,
+            "model_id": self.model_id,
+            "decision": decision,
+            "reason": reason,
+            "wait_remaining": after.wait,
+            "state_before": self._pacing.as_dict(),
+            "state_after": after.as_dict()}
         self._emit_once(
             f"pacing:{self.run_id}:{pending.index}", PACING_DECISION,
             **payload)
