@@ -166,12 +166,16 @@ def test_declaration_refusals(tmp_path):
     class Opaque(Calculator):
         implemented_properties: ClassVar[list[str]] = ["energy", "forces"]
 
-        def __init__(self):
+        def __init__(self, model_path):
             super().__init__()
-            self.parameters = {"blob": object()}  # not serializable
+            # a declared file slot beside an undeclared opaque parameter
+            self.parameters = {"blob": object(), "model": str(model_path)}
 
     with pytest.raises(ValueError, match="cannot be identified"):
-        AseEngine(Opaque(), file_parameters={"blob": "potential"})
+        AseEngine(Opaque(path), file_parameters={"model": "potential"})
+    # and a declared slot whose value is not a path at all
+    with pytest.raises(TypeError, match="must be a file path"):
+        AseEngine(Opaque(path), file_parameters={"blob": "potential"})
 
 
 def test_wrapper_subtree_refused(tmp_path):
@@ -193,3 +197,48 @@ def test_surrogate_forwards_the_declaration(tmp_path):
     assert surrogate.file_resources == engine.file_resources
     assert surrogate.file_resources[0].role == "potential"
     assert len(surrogate.file_resources[0].sha256) == 64
+
+
+def test_path_objects_accepted_without_conversion(tmp_path):
+    """A declared slot holding a pathlib.Path is validated and
+    content-identified directly — the legacy serializer never sees it,
+    the calculator's parameters are never converted in place, and the
+    Path form and the str form of the same file share one identity."""
+    path = _model(tmp_path, content="1.5\n")
+
+    class PathBacked(Calculator):
+        """Stores the Path object as its parameter and reads it directly."""
+
+        implemented_properties: ClassVar[list[str]] = ["energy", "forces"]
+
+        def __init__(self, model_path):
+            super().__init__()
+            self.parameters = {"model": model_path}  # a Path, never str
+
+        def calculate(self, atoms=None, properties=("energy",),
+                      system_changes=None):
+            super().calculate(atoms, properties, system_changes or [])
+            content = float(
+                self.parameters["model"].read_text().splitlines()[0])
+            self.results = {"energy": content,
+                            "forces": np.zeros((len(self.atoms), 3))}
+
+    engine_path = AseEngine(PathBacked(path),
+                            file_parameters={"model": "potential"})
+    engine_str = AseEngine(PathBacked(str(path)),
+                           file_parameters={"model": "potential"})
+    assert engine_path.fingerprint == engine_str.fingerprint
+    assert engine_path.file_resources == engine_str.file_resources
+    assert engine_path.file_resources[0].sha256 == \
+        engine_str.file_resources[0].sha256
+    # the calculator's own parameters keep their original types
+    assert isinstance(engine_path.calculator.parameters["model"], Path)
+    # and the surrogate adapter follows the same rule
+    surrogate_path = AseSurrogate(PathBacked(path),
+                                  file_parameters={"model": "potential"})
+    assert surrogate_path.fingerprint == f"ase-surrogate:{engine_path.fingerprint}"
+    # the content is genuinely read: the computed energy is the file's
+    from ase import Atoms
+
+    atoms = Atoms("H2", positions=[[0.85, 0.9, 0.9], [0.95, 0.9, 0.9]])
+    assert engine_path.compute(atoms).energy == 1.5

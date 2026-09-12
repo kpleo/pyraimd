@@ -230,14 +230,26 @@ class AseEngine:
                     "file resources in this version; declare resources on a "
                     "plain calculator")
             parameters = getattr(calculator, "parameters", None)
-            if not isinstance(parameters, dict) or \
-                    calculator_identity(calculator) is None:
+            if not isinstance(parameters, dict):
                 raise ValueError(
                     "file_parameters: the calculator's effective state cannot "
-                    "be identified (no serializable parameters); the opt-in "
-                    "file identity is refused")
+                    "be identified (no parameter dict); the opt-in file "
+                    "identity is refused")
             self._file_resources = validate_resource_declaration(
                 parameters, file_parameters)
+            # The remaining parameters are evaluated on a separate identity
+            # view without the declared slots — a declared slot's path object
+            # (str or PathLike) never has to satisfy the legacy JSON
+            # serialization, and the calculator's own parameters are never
+            # converted in place.  Undeclared opaque state still refuses.
+            try:
+                _jsonable(dict(self._undeclared_parameters()))
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "file_parameters: the undeclared parameters are not "
+                    "serializable — the calculator's effective state cannot "
+                    "be identified; the opt-in file identity is refused"
+                ) from error
 
     @property
     def file_resources(self) -> tuple[DeclaredFileResource, ...]:
@@ -276,28 +288,31 @@ class AseEngine:
         ).hexdigest()[:16]
         return f"ase:{self.calculator.name}:{digest}:{flags}"
 
+    def _undeclared_parameters(self) -> dict:
+        """The identity view without the declared slots: the calculator's
+        own parameter dict is never modified in place, and declared path
+        objects never reach the legacy serializer."""
+        parameters = getattr(self.calculator, "parameters", None) or {}
+        declared = {resource.parameter for resource in self._file_resources}
+        return {key: value for key, value in dict(parameters).items()
+                if key not in declared}
+
     def _file_identity_fingerprint(self, flags: str) -> str:
         """The versioned content identity of a declared adapter
         (``ase-file-identity-v1``): the calculator class and name, every
         undeclared physical parameter with the old normalization and
         embedded-file semantics, and per declared slot the parameter name,
-        role and full content SHA-256 — never the path."""
-        identity = calculator_identity(self.calculator)
-        if identity is None:
-            # The declaration was validated at construction; this is a
-            # defense-in-depth guard, never a silent downgrade.
-            raise ValueError(
-                "the calculator's identity is unknown; the opt-in file "
-                "identity cannot be computed")
-        declared = {resource.parameter for resource in self._file_resources}
-        parameters = {key: value for key, value in identity["parameters"].items()
-                      if key not in declared}
-        files = sorted(set(_embedded_files(parameters)))
+        role and full content SHA-256 — never the path.  Construction and
+        this fingerprint share one rule: the reduced identity view."""
+        parameters = self._undeclared_parameters()
+        normalized = _jsonable(dict(parameters))
+        files = sorted(set(_embedded_files(normalized)))
         payload = {
             "format": FILE_IDENTITY_FORMAT,
-            "class": identity["class"],
+            "class": f"{type(self.calculator).__module__}."
+                     f"{type(self.calculator).__qualname__}",
             "name": self.calculator.name,
-            "parameters": parameters,
+            "parameters": normalized,
             # undeclared embedded files keep the legacy path-keyed hashing;
             # declared slots never enter the path-keyed files map again
             "files": {path: _file_sha256(Path(path)) for path in files},
