@@ -449,7 +449,54 @@ def test_si_stub_recipe_pacing_regression(tmp_path, _si_stub_backends):
 
     info = inspect_run(runs["k3w2"] / "nvt", run_id="si-nvt")
     assert info["cost"]["reference"]["actual_executions"] == 45
-    assert info["pacing"]["decisions"] == {"calibrate": 9, "defer": 2}
+    assert info["pacing"]["planned"] == {"calibrate": 9, "defer": 2}
+    # outcomes from the authoritative commits: 8 effective calibrations
+    # (the eval-0 fallback found no direction and reports unavailable)
+    assert info["pacing"]["completed"] == 8
+    assert info["pacing"]["unavailable"] == 1
+    assert info["pacing"]["deferred"] == 2
+    assert info["pacing"]["pending"] == 0
+
+
+def test_inspect_distinguishes_decisions_from_outcomes(tmp_path):
+    """A1: a planned calibrate is not a completed calibration — the
+    initial no-direction fallback reports unavailable; the effective
+    calibration reports completed."""
+    from pyraimd2.runtime.inspect import inspect_run
+
+    _runner(tmp_path / "on", HarmonicSurrogate(k=1.01, r0=R0),
+            pacing=dict(_PACING), spec=_spec()).run(8)
+    info = inspect_run(tmp_path / "on", run_id="run")
+    assert info["pacing"]["completed"] == 1
+    assert info["pacing"]["unavailable"] == 1
+    assert info["pacing"]["deferred"] == 0
+    assert info["pacing"]["pending"] == 0
+    assert info["pacing"]["planned"] == {"calibrate": 2}
+    # read-only and stable
+    assert inspect_run(tmp_path / "on", run_id="run")["pacing"] == \
+        info["pacing"]
+
+
+def test_inspect_marks_an_uncommitted_frozen_decision_pending(
+        tmp_path, _si_stub_backends):
+    """A1: a defer decision durable but uncommitted (hard exit before the
+    store append) is pending — never counted as completed."""
+
+    from pyraimd2.runtime.inspect import inspect_run
+
+    crash_root = _pacing_crash_root(tmp_path, "pacing:si-nvt:11")
+    before = {p: p.read_bytes()
+              for p in (crash_root / "nvt").rglob("*") if p.is_file()}
+    info = inspect_run(crash_root / "nvt", run_id="si-nvt")
+    assert info["pacing"]["pending"] == 1
+    assert info["pacing"]["planned"] == {"calibrate": 9, "defer": 1}
+    assert info["pacing"]["completed"] == 8
+    assert info["pacing"]["unavailable"] == 1
+    # repeated reads identical, nothing modified
+    assert inspect_run(crash_root / "nvt", run_id="si-nvt")["pacing"] == \
+        info["pacing"]
+    assert before == {p: p.read_bytes()
+                      for p in (crash_root / "nvt").rglob("*") if p.is_file()}
 
 
 # --- 5. recovery windows --------------------------------------------------------

@@ -156,6 +156,7 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
                   "last_temperature_K": None, "n_accepted": 0,
                   "last_step": None}
     last_evaluation = None
+    pacing_outcomes: dict[int, str] = {}
     db_path = _find_db(run_dir)
     if db_path is not None:
         with Store(db_path) as store:
@@ -166,6 +167,12 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
             trajectory["n_committed"] = len(pairs)
             trajectory["n_accepted"] = sum(
                 row.key_value_pairs["route"] == "ml" for _event, row in pairs)
+            for _event, row in pairs:
+                meta = row.data.get("metadata") or {}
+                decision = meta.get("pacing_decision")
+                if decision is not None:
+                    pacing_outcomes[int(meta["evaluation_index"])] = str(
+                        decision.get("outcome"))
             if pairs:
                 # The current trajectory state is the last COMPLETE boundary
                 # (or the initial evaluation); the latest committed evaluation
@@ -252,9 +259,10 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         if failed and not committed:
             failure = {"status": "failed",
                        "reason": failed[-1].get("error", "reference task failed")}
-    # Calibration-pacing decisions (0.6 prototype): why each calibration
-    # opportunity did or did not spend probes — calibrate/defer plus the
-    # reason; the counters never invent "saved" executions.
+    # Calibration-pacing (0.6 prototype): PLANNED decisions come from the
+    # pre-probe frozen pacing_decision events; the OUTCOMES come from the
+    # authoritative committed rows — a decision without its evaluation's
+    # commit is pending, never counted as completed.
     pacing_events = [e for e in events if e.get("type") == "pacing_decision"]
     pacing = None
     if pacing_events:
@@ -265,8 +273,26 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
                 decisions.get(str(event["decision"]), 0) + 1
             reasons[str(event.get("reason"))] = \
                 reasons.get(str(event.get("reason")), 0) + 1
-        pacing = {"opportunities": len(pacing_events),
-                  "decisions": decisions, "reasons": reasons,
+        outcomes = {"completed": 0, "deferred": 0, "unavailable": 0}
+        pending_count = 0
+        for event in pacing_events:
+            outcome = pacing_outcomes.get(int(event["evaluation_id"]))
+            if outcome is None:
+                pending_count += 1
+            elif outcome == "calibrated":
+                outcomes["completed"] += 1
+            elif outcome == "deferred":
+                outcomes["deferred"] += 1
+            else:
+                outcomes["unavailable"] += 1
+        pacing = {"completed": outcomes["completed"],
+                  "deferred": outcomes["deferred"],
+                  "unavailable": outcomes["unavailable"],
+                  "pending": pending_count,
+                  # planned decision counts stay as separate JSON fields —
+                  # a planned calibrate is not a completed calibration
+                  "planned": decisions,
+                  "reasons": reasons,
                   "last_wait_remaining": pacing_events[-1].get("wait_remaining")}
     return {
         "run_id": run_id,
@@ -331,11 +357,11 @@ def format_inspection(info: dict) -> str:
     ]
     if info.get("pacing") is not None:
         pacing = info["pacing"]
-        decisions = pacing["decisions"]
         lines.append(
-            f"  calibration pacing    : {decisions.get('calibrate', 0)} "
-            f"calibrated, {decisions.get('defer', 0)} deferred "
-            f"(reasons {pacing['reasons']})")
+            f"  calibration pacing    : {pacing['completed']} completed, "
+            f"{pacing['deferred']} deferred, {pacing['unavailable']} "
+            f"unavailable, {pacing['pending']} pending "
+            f"(planned {pacing['planned']}; reasons {pacing['reasons']})")
     return "\n".join(lines)
 
 
