@@ -543,8 +543,6 @@ def test_resume_after_a_defer_decision_hard_exit(tmp_path, _si_stub_backends):
     manifest = run_serial_recipe(crash_root, si._stages(crash_root),
                                  verbose=False, force_unlock=True)
     assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
-    for name in ("control", "crash"):
-        pass
     crash_ev = events(crash_root / "nvt")
     control_ev = events(control / "nvt")
     # the defer decision exists exactly once — replayed, never re-emitted
