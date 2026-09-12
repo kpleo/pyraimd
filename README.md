@@ -167,18 +167,28 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   use either a reference engine or a surrogate. MD supports reference-only,
   surrogate-only and adaptive modes, with checkpoints, resume and export.
   Adaptive mode applies only to MD.
-- **Dynamics.** The released version (0.4.2) supports fixed-cell NVE and
-  `FixAtoms`. Version 0.5.0 adds fixed-cell NVT (ASE Langevin,
-  `fixcm=False`): plain reference/surrogate modes, and adaptive MD in both
-  ensembles — with a fixed base model via TOML/CLI, or with guarded online
-  updates through the Python `GuardedUpdater` interface
-  (`EnergeticRunner(on_label=...)`; re-anchoring supported, each segment
-  recorded independently). Online updates are not expressible in
-  configuration files: no TOML key installs an update callback.
-  Variable-cell dynamics and other constraint types are unsupported.
-  The default force budget measures the free coordinates
-  (`active_dofs_max_atom`); `all_atoms_max_atom` is an explicit alternative.
-  Checkpoints retain two generations.
+- **Dynamics.** The current release (0.6.0) supports fixed-cell NVE and NVT
+  (ASE Langevin, `fixcm=False`) with `FixAtoms`: plain
+  reference/surrogate modes, and adaptive MD in both ensembles — with a
+  fixed base model via TOML/CLI, or with guarded online updates through
+  the Python `GuardedUpdater` interface (`EnergeticRunner(on_label=...)`;
+  re-anchoring supported, each segment recorded independently). Online
+  updates are not expressible in configuration files: no TOML key installs
+  an update callback. Variable-cell dynamics and other constraint types
+  are unsupported. The default force budget measures the free coordinates
+  (`active_dofs_max_atom`); `all_atoms_max_atom` is an explicit
+  alternative. Checkpoints retain two generations.
+- **Calibration pacing (opt-in).** When `[policy.calibration_pacing]` is
+  enabled, adaptive runs defer the probe investment of recalibrations
+  that keep failing to produce an accept: those steps drive
+  reference-direct, the wait retries on a bounded backoff, and every
+  decision is recorded and resumable.  This reduces repeated ineffective
+  calibration effort inside the existing accuracy-management protocol —
+  it does not relax the gate, the budgets or the independent checks, and
+  it gives no new error guarantee.  Scope: fixed base model, fixed cell,
+  the default single-direction NVE/NVT paths; not composable with online
+  updates or explicit direction callbacks.  Try it:
+  `examples/calibration_pacing` (analytic, core-only).
 - **Serial recipes.** `relax → NVT → NVE` chains run through
   `run_serial_recipe` with per-stage run identities and deduped
   stop/continue (`examples/periodic_lj` offline; `examples/si_bulk_qe_mace`

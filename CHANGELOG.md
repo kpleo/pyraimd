@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.6.0
+
+Opt-in calibration pacing for adaptive MD, with resumable rule state and
+outcome-accurate reporting.  No defaults change: a run without the new
+section is byte-identical to 0.5.0.
+
+### Added
+
+- `[policy.calibration_pacing]` (`enabled`, `failure_streak_limit`,
+  `wait_initial`, `wait_max`; default off): after that many consecutive
+  calibrations each failed to produce an accept, the probe investment of
+  the next recalibrations is deferred and those steps drive
+  reference-direct through the existing refusal path.  The wait retries
+  on a bounded doubling backoff and is cancelled immediately when a
+  refused step's retained-correction error exceeds the run's own force
+  budget.  Every refused evaluation records a keyed `pacing_decision`
+  event (calibrate / defer, reason, remaining wait) before any probe
+  spend; `pyramid inspect` separates completed, deferred, unavailable
+  and pending calibration outcomes.  Scope: fixed base model, fixed
+  cell, the default single-direction NVE/NVT paths; it composes with
+  neither online model updates nor explicit direction callbacks (both
+  are refused up front).  New example: `examples/calibration_pacing`
+  (analytic, core-only) demonstrates enabling, the decision log, stop
+  and continue, the on/off cost comparison and the offline error check.
+  See `docs/configuration.md`.
+
+### Fixed
+
+- A committed calibration's pending segment state is committed with the
+  evaluation (shared by the row, the commit event and the live state),
+  so a hard exit after the commit and before the next decision resumes
+  with exactly the continuous run's decision order and rule state.
+- The pacing section of `inspect` no longer counts planned calibrations
+  as completed; a frozen decision whose evaluation never committed is
+  reported pending.
+
 ## 0.5.0
 
 ### Added

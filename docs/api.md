@@ -171,6 +171,18 @@ Two entry levels have different model-update support, stated explicitly:
   callbacks. Resuming model updates requires a `StatefulUpdater`; a plain
   callback cannot restore model and label-consumption state.
 
+Calibration pacing (0.6, opt-in): `EnergeticRunner(calibration_pacing=...)`
+or the `[policy.calibration_pacing]` config section (see
+`docs/configuration.md`) defers the probe investment of recalibrations
+that keep failing to produce an accept, reference-direct in between, with
+a bounded retry backoff.  The rule state (`pyraimd2.loop.pacing`:
+`CalibrationPacing`, `PacingState`, `decide_on_refusal`) is a small pure
+state machine; every refused evaluation's decision is persisted before any
+probe spend (`pacing_decision` events), applied at the commit, restored on
+replay and carried in checkpoints.  It composes with neither `on_label`
+updates nor explicit `direction` callbacks, and changes no gate, budget or
+check semantics.
+
 The pre-0.4 switching interface (`Runner`, `RunSummary`,
 `SwitchingCalculator`, and the scheduled/conformal policies in
 `pyraimd2.switch`) remains available unchanged.
