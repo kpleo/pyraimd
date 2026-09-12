@@ -108,26 +108,43 @@ def build(output: Path, *, resume: bool, force_unlock: bool,
 
 def report(output: Path) -> None:
     """Decisions, costs, accepted-step true errors, Hamiltonian drift."""
+    from pyraimd2.runtime.costs import summarize_tasks
+
     events = [json.loads(line) for line in
               (output / "events.jsonl").read_text().splitlines()]
     decisions = [(e["evaluation_id"], e["decision"], e["reason"])
                  for e in events if e["type"] == "pacing_decision"]
-    reference = [e for e in events if e.get("type") == "task"
-                 and e.get("operation") == "reference"]
-    by_purpose: dict[str, int] = {}
-    for e in reference:
-        by_purpose[e["purpose"]] = by_purpose.get(e["purpose"], 0) + 1
+    # Costs use the ledger's own semantics: actual physical executions by
+    # purpose, never raw logical-task counts.
+    cost = summarize_tasks(events)
+    by_purpose = {b["purpose"]: b["count"] for b in cost["by"]
+                  if b["operation"] == "reference"}
+    n_reference = cost["reference"]["actual_executions"]
+    complete_steps = {int(e["step_id"]) for e in events
+                      if e["type"] == "step_completed"}
     errors = []
+    hamiltonian = []
     with Store(output / "trajectory.db") as store:
-        rows = sorted(store._db.select(run_id="pacing-demo"),
-                      key=lambda r: int(r.key_value_pairs["step"]))
-        hamiltonian = []
-        for row in rows:
-            atoms = row.toatoms()
-            hamiltonian.append(float(smooth_energy(atoms.positions - R0)
-                               - A_SURR * np.exp(-float(((atoms.positions - R0)
-                                ** 2).sum()) / (2 * ELL**2))
-                               + atoms.get_kinetic_energy()))
+        # The authoritative committed (commit event, row) pairs only —
+        # never raw store scans, and orphan rows stay out.
+        for commit, row in store.iter_committed(events, "pacing-demo"):
+            step = int(row.key_value_pairs["step"])
+            if step != -1 and step not in complete_steps:
+                continue
+            metadata = row.data.get("metadata") or {}
+            context = metadata.get("context") or {}
+            timestep = (float(context["physical_time_fs"])
+                        / int(context["evaluation_id"])
+                        if context.get("evaluation_id") else DT_FS)
+            # The complete-step frame reconstructs full-step momenta (the
+            # stored row is a mid-step record); the initial evaluation
+            # carries the complete initial momenta.
+            frame = store.complete_step_frame(row, timestep, commit=commit)
+            # E_ref + K: the plain harmonic reference energy read directly,
+            # kinetic energy from the complete-step momenta.
+            dr = frame.positions - R0
+            hamiltonian.append(float(0.5 * K_REF * (dr**2).sum())
+                               + float(frame.get_kinetic_energy()))
             if row.key_value_pairs["route"] != "ml":
                 continue
             driving = row.data.get("driving")
@@ -135,12 +152,12 @@ def report(output: Path) -> None:
                 continue
             error = float(np.linalg.norm(
                 np.asarray(driving["forces"], dtype=float)
-                - (-K_REF * (atoms.positions - R0)), axis=1).max())
+                - (-K_REF * (frame.positions - R0)), axis=1).max())
             errors.append(error)
     hamiltonian = np.asarray(hamiltonian)
     errors = np.asarray(errors)
     print(f"run directory: {output}")
-    print(f"  reference evaluations: {len(reference)} ({by_purpose})")
+    print(f"  reference evaluations: {n_reference} ({by_purpose})")
     print(f"  pacing decisions: {decisions if decisions else '— (feature off)'}")
     if len(errors):
         print(f"  accepted-step true force errors (analytic oracle): "
@@ -148,9 +165,10 @@ def report(output: Path) -> None:
               f"{float(np.sqrt((errors**2).mean())):.4f} eV/A, "
               f"over budget ({BUDGET_EV_A}): {int((errors > BUDGET_EV_A).sum())}"
               f" of {len(errors)}")
-    print(f"  reference Hamiltonian (E_ref + K) drift over the run: "
+    print(f"  reference Hamiltonian (E_ref + K) drift over complete steps: "
           f"{float(hamiltonian[-1] - hamiltonian[0]):.3e} eV "
           f"(range {float(np.ptp(hamiltonian)):.3e} eV)")
+
 
 
 def main() -> None:

@@ -563,6 +563,44 @@ def test_public_example_counts_match_actual_runs(tmp_path):
     # decisions, the log only grows
     assert out_resume.count("calibrate") + out_resume.count("defer") > 0
     assert "pacing this call: 0 deferred" in out_resume
+    # the Hamiltonian diagnostic uses complete-step momenta: the printed
+    # drift equals the complete-step reconstruction and NOT the naive
+    # half-step row momenta
+    import json
+
+    from pyraimd2.runtime.events import STEP_COMPLETED
+    from pyraimd2.store import Store
+
+    demo_events = [json.loads(line) for line in
+                   (on_dir / "events.jsonl").read_text().splitlines()]
+    complete_steps = {int(e["step_id"]) for e in demo_events
+                      if e["type"] == STEP_COMPLETED}
+    naive, complete = [], []
+    with Store(on_dir / "trajectory.db") as store:
+        for commit, row in store.iter_committed(demo_events, "pacing-demo"):
+            step = int(row.key_value_pairs["step"])
+            if step != -1 and step not in complete_steps:
+                continue
+            metadata = row.data.get("metadata") or {}
+            context = metadata.get("context") or {}
+            timestep = (float(context["physical_time_fs"])
+                        / int(context["evaluation_id"])
+                        if context.get("evaluation_id") else 0.5)
+            atoms = row.toatoms()
+            frame = store.complete_step_frame(row, timestep, commit=commit)
+            dr_naive = atoms.positions - 0.9
+            dr_complete = frame.positions - 0.9
+            naive.append(float(0.5 * (dr_naive**2).sum())
+                         + float(atoms.get_kinetic_energy()))
+            complete.append(float(0.5 * (dr_complete**2).sum())
+                            + float(frame.get_kinetic_energy()))
+    naive_drift = naive[-1] - naive[0]
+    complete_drift = complete[-1] - complete[0]
+    assert naive_drift != pytest.approx(complete_drift, rel=1e-9)
+    printed = float(re.search(r"drift over complete steps: (\S+)",
+                              out_resume).group(1))
+    assert printed == pytest.approx(complete_drift, rel=1e-2)
+    assert printed != pytest.approx(naive_drift, rel=1e-2)
 
 
 # --- 5. recovery windows --------------------------------------------------------
