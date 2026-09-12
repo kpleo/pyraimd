@@ -54,7 +54,9 @@ class FileBacked(Calculator):
 
 
 def _write_run(root, *, steps=4, checkpoint=2, backend="file-backed-test",
-               options, mode="reference", ensemble="nve"):
+               options, mode="reference", ensemble="nve",
+               reference_backend="harmonic-reference",
+               reference_options="k = 1.0\nr0 = 0.9"):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     (root / "structure.extxyz").write_text(
@@ -72,10 +74,9 @@ backend = "{backend}"
 {options}
 """
     else:  # adaptive uses both sections
-        reference_block = """[reference]
-backend = "harmonic-reference"
-k = 1.0
-r0 = 0.9
+        reference_block = f"""[reference]
+backend = "{reference_backend}"
+{reference_options}
 """
         surrogate_block = f"""[surrogate]
 backend = "{backend}"
@@ -94,6 +95,7 @@ mode = "{mode}"
 file = "structure.extxyz"
 {reference_block}{surrogate_block}[dynamics]
 ensemble = "{ensemble}"
+{"integrator = \"langevin\"" if ensemble == "nvt" else ""}
 timestep_fs = 0.5
 steps = {steps}
 temperature_K = 300.0
