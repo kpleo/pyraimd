@@ -16,13 +16,22 @@ class AseSurrogate:
     The fingerprint is the wrapped engine's (parameters and model-file
     content, never just ``calculator.name``); it is None when the calculator
     state cannot be identified, unless an explicit ``identity`` is given.
+    ``file_parameters`` is forwarded to the wrapped engine unchanged (the
+    versioned file identity lives in exactly one place).
     """
 
     def __init__(self, calculator: Calculator, *, force_consistent: bool = False,
                  include_stress: bool = False,
-                 identity: str | None = None) -> None:
+                 identity: str | None = None,
+                 file_parameters: dict[str, str] | None = None) -> None:
         self._engine = AseEngine(calculator, force_consistent=force_consistent,
-                                 include_stress=include_stress, identity=identity)
+                                 include_stress=include_stress, identity=identity,
+                                 file_parameters=file_parameters)
+
+    @property
+    def file_resources(self):
+        """The immutable declared-resource view (empty when undeclared)."""
+        return self._engine.file_resources
 
     @property
     def capabilities(self) -> SurrogateCapabilities:

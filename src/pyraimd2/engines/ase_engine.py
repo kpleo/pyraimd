@@ -16,6 +16,11 @@ from ase.calculators.calculator import (
     all_changes,
 )
 
+from pyraimd2.engines.ase_resources import (
+    FILE_IDENTITY_FORMAT,
+    DeclaredFileResource,
+    validate_resource_declaration,
+)
 from pyraimd2.engines.base import (
     EnergyKind,
     EngineCapabilities,
@@ -195,15 +200,49 @@ class AseEngine:
     identified (no serializable parameters) yields fingerprint ``None``
     (unknown identity: consumers must not cache or compare on it) unless an
     explicit ``identity`` string is supplied.
+
+    ``file_parameters={parameter: role}`` declares the calculator's
+    top-level immutable file parameters for the versioned
+    ``ase-file-identity-v1`` branch: each declared slot is identified by
+    its content digest (streamed byte reads, never the stat cache) and its
+    path leaves the identity payload, while every undeclared parameter
+    keeps the pre-existing semantics exactly.  The declaration is
+    validated at construction and refuses unknown or incomplete
+    calculator identities, missing parameters, empty or duplicate roles,
+    non-regular or unreadable files, and wrapper/mixing calculator
+    subtrees.  An explicit ``identity`` never substitutes for the content
+    check.
     """
 
     def __init__(self, calculator: Calculator, *, force_consistent: bool = False,
                  include_stress: bool = False,
-                 identity: str | None = None) -> None:
+                 identity: str | None = None,
+                 file_parameters: dict[str, str] | None = None) -> None:
         self.calculator = calculator
         self.force_consistent = force_consistent
         self.include_stress = include_stress
         self.identity = identity
+        self._file_resources: tuple[DeclaredFileResource, ...] = ()
+        if file_parameters is not None:
+            if _wrapper_structure(calculator) is not None:
+                raise ValueError(
+                    "file_parameters: wrapper/mixing calculators cannot bind "
+                    "file resources in this version; declare resources on a "
+                    "plain calculator")
+            parameters = getattr(calculator, "parameters", None)
+            if not isinstance(parameters, dict) or \
+                    calculator_identity(calculator) is None:
+                raise ValueError(
+                    "file_parameters: the calculator's effective state cannot "
+                    "be identified (no serializable parameters); the opt-in "
+                    "file identity is refused")
+            self._file_resources = validate_resource_declaration(
+                parameters, file_parameters)
+
+    @property
+    def file_resources(self) -> tuple[DeclaredFileResource, ...]:
+        """The immutable declared-resource view (empty when undeclared)."""
+        return self._file_resources
 
     @property
     def name(self) -> str:
@@ -221,13 +260,53 @@ class AseEngine:
 
     @property
     def fingerprint(self) -> str | None:
-        identity = calculator_identity(self.calculator)
         flags = f"force_consistent={self.force_consistent}:stress={self.include_stress}"
+        if self._file_resources:
+            return self._file_identity_fingerprint(flags)
+        identity = calculator_identity(self.calculator)
         if identity is None:
             if self.identity is None:
                 return None  # unknown identity, honestly undeclared
             return f"ase:{self.calculator.name}:explicit:{self.identity}:{flags}"
         payload = dict(identity)
+        if self.identity is not None:
+            payload["explicit"] = self.identity
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode()
+        ).hexdigest()[:16]
+        return f"ase:{self.calculator.name}:{digest}:{flags}"
+
+    def _file_identity_fingerprint(self, flags: str) -> str:
+        """The versioned content identity of a declared adapter
+        (``ase-file-identity-v1``): the calculator class and name, every
+        undeclared physical parameter with the old normalization and
+        embedded-file semantics, and per declared slot the parameter name,
+        role and full content SHA-256 — never the path."""
+        identity = calculator_identity(self.calculator)
+        if identity is None:
+            # The declaration was validated at construction; this is a
+            # defense-in-depth guard, never a silent downgrade.
+            raise ValueError(
+                "the calculator's identity is unknown; the opt-in file "
+                "identity cannot be computed")
+        declared = {resource.parameter for resource in self._file_resources}
+        parameters = {key: value for key, value in identity["parameters"].items()
+                      if key not in declared}
+        files = sorted(set(_embedded_files(parameters)))
+        payload = {
+            "format": FILE_IDENTITY_FORMAT,
+            "class": identity["class"],
+            "name": self.calculator.name,
+            "parameters": parameters,
+            # undeclared embedded files keep the legacy path-keyed hashing;
+            # declared slots never enter the path-keyed files map again
+            "files": {path: _file_sha256(Path(path)) for path in files},
+            "resources": [
+                {"parameter": resource.parameter, "role": resource.role,
+                 "sha256": resource.sha256}
+                for resource in sorted(self._file_resources,
+                                       key=lambda r: r.parameter)],
+        }
         if self.identity is not None:
             payload["explicit"] = self.identity
         digest = hashlib.sha256(
