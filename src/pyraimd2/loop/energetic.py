@@ -1661,13 +1661,25 @@ class EnergeticCalculator(Calculator):
             bound.update(pending.accepted, pending.checked, violation)
         anchor = pending.anchor
         new_anchor = pending.new_anchor
-        # The pacing state applies only at a successful commit; the value
-        # recorded here is the post-decision state (for an accept, the
-        # reset transition; for a refusal, the frozen decision's outcome).
+        # The pacing state applies only at a successful commit, and the
+        # COMPLETE post-commit state is computed exactly once here — shared
+        # by the row metadata, the commit event and the live application:
+        # for an accept, the reset transition; for a refusal, the frozen
+        # decision's outcome, completed by the calibration transition when
+        # a new anchor actually exists (the frozen decision event keeps the
+        # pre-probe state — it is never rewritten in place).
         pacing_after = pending.pacing_after
-        if self._pacing is not None and pending.accepted:
-            pacing_after = _pacing_on_accept(
-                self._pacing, self._pacing_settings).as_dict()
+        if self._pacing is not None:
+            if pending.accepted:
+                pacing_after = _pacing_on_accept(
+                    self._pacing, self._pacing_settings).as_dict()
+            elif pacing_after is not None:
+                after = PacingState.from_dict(pacing_after)
+                if new_anchor is not None:
+                    # the calibration that just completed opens its pending
+                    # segment; an unavailable calibration never does
+                    after = _pacing_on_calibration(after)
+                pacing_after = after.as_dict()
         pacing_defer = (pending.pacing_decision is not None
                         and pending.pacing_decision.get("decision") == "defer")
         retained_record = None
@@ -1774,13 +1786,10 @@ class EnergeticCalculator(Calculator):
             self._next_reason = ("direction_unavailable_reference"
                                  if self._anchor is None else "reference_required")
         # The pacing state transitions only at a successful commit: the
-        # accept reset, or the frozen decision's outcome — with the pending
-        # segment opened only by a calibration that actually completed.
+        # complete post-commit state computed above (accept reset, or the
+        # frozen decision completed by the calibration outcome).
         if self._pacing is not None and pacing_after is not None:
-            after = PacingState.from_dict(pacing_after)
-            if not pending.accepted and new_anchor is not None:
-                after = _pacing_on_calibration(after)
-            self._pacing = after
+            self._pacing = PacingState.from_dict(pacing_after)
         self.results = {"energy": drive.energy, "forces": drive.forces.copy()}
         self._results_model_generation = self._model_generation
         committed_payload = {

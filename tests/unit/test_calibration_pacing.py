@@ -530,6 +530,76 @@ def _pacing_state(run_dir):
     return (row.data.get("metadata") or {}).get("pacing")
 
 
+def _all_committed_pacing(run_dir):
+    """Every authoritative commit's complete pacing state, in order."""
+    with Store(run_dir / "trajectory.db") as store:
+        rows = sorted(store._db.select(run_id="si-nvt"),
+                      key=lambda r: int(r.key_value_pairs["step"]))
+    return [(int((r.data.get("metadata") or {})["evaluation_index"]),
+             (r.data.get("metadata") or {}).get("pacing")) for r in rows]
+
+
+def _final_checkpoint_state(run_dir):
+    import json as _json
+
+    pointer = _json.loads(
+        (run_dir / "checkpoints" / "latest.json").read_text())
+    generation = int(pointer["generation"])
+    return _json.loads((run_dir / "checkpoints" / str(generation)
+                        / "state.json").read_text())
+
+
+def test_resume_at_a_committed_calibration_tail_replays_complete_state(
+        tmp_path, _si_stub_backends):
+    """The committed-calibration tail window: hard exit after eval 10's
+    commit (step:si-nvt:9) with eval 11's decision not yet frozen.  The
+    complete post-calibration state (pending=True included) is shared by
+    the row, the commit and the live state, so the resume decides exactly
+    as the continuous run: eval 11 defer/sterile_streak, eval 12
+    calibrate/forced_retry."""
+    import test_si_recipe as si
+    from pyraimd2.workflows.stages import load_completed_state, run_serial_recipe
+
+    control = _continuous_pacing_control(tmp_path)
+    # eval 10 committed; no pacing decision for eval 11 exists yet
+    crash_root = _pacing_crash_root(tmp_path, "step:si-nvt:9")
+    crash_ev = events(crash_root / "nvt")
+    assert [e for e in crash_ev if e["type"] == "evaluation_committed"
+            and e["context"]["evaluation_id"] == 10]
+    assert not [e for e in crash_ev if e["type"] == "pacing_decision"
+                and e["evaluation_id"] == 11]
+    manifest = run_serial_recipe(crash_root, si._stages(crash_root),
+                                 verbose=False, force_unlock=True)
+    assert [s["status"] for s in manifest["stages"]] == ["done"] * 3
+    # the decision sequence matches the continuous control exactly
+    assert _decisions(crash_root / "nvt") == _decisions(control / "nvt")
+    assert (11, "defer", "sterile_streak") in _decisions(crash_root / "nvt")
+    assert (12, "calibrate", "forced_retry") in _decisions(crash_root / "nvt")
+    # every authoritative commit's COMPLETE pacing state matches —
+    # including pending=True right after each completed calibration
+    crash_states = _all_committed_pacing(crash_root / "nvt")
+    control_states = _all_committed_pacing(control / "nvt")
+    assert crash_states == control_states
+    calibrated = [e for e, p in control_states
+                  if p and p["pending"]]
+    assert calibrated  # the completed calibrations await their forecasts
+    # the final checkpoint's pacing and both random streams match
+    crash_ck = _final_checkpoint_state(crash_root / "nvt")
+    control_ck = _final_checkpoint_state(control / "nvt")
+    assert crash_ck["pacing"] == control_ck["pacing"]
+    assert crash_ck["check_rng"] == control_ck["check_rng"]
+    assert crash_ck["thermostat"] == control_ck["thermostat"]
+    # q/p bitwise, and the same total cost
+    np.testing.assert_array_equal(
+        load_completed_state(crash_root / "nvt").atoms.positions,
+        load_completed_state(control / "nvt").atoms.positions)
+    np.testing.assert_array_equal(
+        load_completed_state(crash_root / "nve").atoms.get_momenta(),
+        load_completed_state(control / "nve").atoms.get_momenta())
+    assert len(_si_reference_tasks(crash_root)) == \
+        len(_si_reference_tasks(control))
+
+
 def test_resume_after_a_defer_decision_hard_exit(tmp_path, _si_stub_backends):
     """Hard exit with the defer decision durable but the evaluation
     uncommitted: the resume replays the frozen decision verbatim — no
