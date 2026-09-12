@@ -1077,8 +1077,9 @@ def test_parent_killed_after_start_records_one_unresolved_launch(
         tmp_path: Path) -> None:
     """The process was created (external counter proves it) but the parent
     died before the terminal record: a new process's read records that one
-    confirmed launch as unresolved — never zero-cost, never a success —
-    and repeated reads do not double count."""
+    confirmed launch as ONE actual execution with its outcome unresolved —
+    not zero-cost, never a success — and repeated reads do not double
+    count."""
     from pyraimd2.runtime.inspect import inspect_run
 
     run_dir, counter, result = _killed_parent_run(tmp_path, "started")
@@ -1095,20 +1096,23 @@ def test_parent_killed_after_start_records_one_unresolved_launch(
     with EventLog(run_dir, force=True) as log:
         events = list(log.iter_events())
     summary = summarize_tasks(events)
-    assert summary["reference"]["actual_executions"] == 0
+    assert summary["reference"]["actual_executions"] == 1
     assert summary["reference"]["successful_executions"] == 0
+    assert summary["reference"]["failed_attempts"] == 0
     assert summary["reference"]["unresolved_attempts"] == 1
+    assert summary["reference"]["unresolved_counted_as_executions"] == 1
     assert summary["cost_record_complete"] is False
     (unresolved,) = summary["unresolved_attempts"]
     assert unresolved["launched"] is True
+    assert unresolved["counted_as_execution"] is True
     assert unresolved["request_id"] == "run-task-9"
-    assert "run-task-9" in str(unresolved["directory"]) or True
+    assert str(unresolved["directory"]).endswith("kill-000000/attempt-1")
     assert summarize_tasks(events) == summary  # no double count on re-read
     # the library/CLI inspect view agrees and is read-only
     info = inspect_run(run_dir, run_id="kill-run")
     assert info["cost"]["reference"]["unresolved_attempts"] == 1
     assert info["cost"]["cost_record_complete"] is False
-    assert info["cost"]["reference"]["actual_executions"] == 0
+    assert info["cost"]["reference"]["actual_executions"] == 1
     info_again = inspect_run(run_dir, run_id="kill-run")
     assert info_again["cost"]["reference"]["unresolved_attempts"] == 1
     # clean up the orphaned fake pw.x (start_new_session detaches it)
@@ -1199,3 +1203,164 @@ def test_reconciled_staging_directories_complete_a_legacy_log(
     assert info["cost"]["reference"]["actual_executions"] == 1
     assert info["cost"]["reference"]["unresolved_attempts"] == 0
     assert info["cost"]["cost_record_complete"] is True
+
+
+def _receipt(phase: str, request_id: str = "qe-request-1", attempt: int = 1,
+             directory: str = "/calc/eval-000000/attempt-1") -> dict:
+    return {"type": "attempt_receipt",
+            "record": "physical_attempt_receipt", "phase": phase,
+            "operation": "reference", "purpose": "scf",
+            "request_id": request_id, "attempt": attempt,
+            "directory": directory, "started_unix": 1.0,
+            "start": "atomic", "source": "qe-engine"}
+
+
+def _terminal(request_id: str = "qe-request-1", attempt: int = 1,
+              directory: str = "/calc/eval-000000/attempt-1",
+              status: str = "success") -> dict:
+    return {"type": "attempt", "record": "physical_attempt",
+            "operation": "reference", "purpose": "scf",
+            "request_id": request_id, "attempt": attempt,
+            "status": status, "failure_kind": None, "started_unix": 1.0,
+            "elapsed_s": 2.0, "process_elapsed_s": 1.9, "returncode": 0,
+            "directory": directory, "start": "atomic",
+            "source": "qe-engine", "error": None}
+
+
+def test_c2_cost_semantics_table() -> None:
+    """The acceptance table — (actual, successful, failed, unresolved,
+    complete) per evidence shape.  Launch certainty and outcome certainty
+    are separate facts; unresolved overlaps actual for confirmed starts,
+    never a disjoint extra."""
+    def counts(events: list[dict]) -> tuple:
+        summary = summarize_tasks(events)
+        reference = summary["reference"]
+        return (reference["actual_executions"],
+                reference["successful_executions"],
+                reference["failed_attempts"],
+                reference["unresolved_attempts"],
+                summary["cost_record_complete"])
+
+    # started, hard exit, no terminal: one confirmed execution, outcome
+    # unresolved, record incomplete
+    started = [_receipt("prepared"), _receipt("started")]
+    assert counts(started) == (1, 0, 0, 1, False)
+    # a second launch reusing the logical request id in a NEW directory
+    # succeeds: the first directory's started attempt stays visible
+    reentry = started + [
+        _receipt("prepared", directory="/calc/eval-000001/attempt-1"),
+        _receipt("started", directory="/calc/eval-000001/attempt-1"),
+        _terminal(directory="/calc/eval-000001/attempt-1")]
+    assert counts(reentry) == (2, 1, 0, 1, False)
+    assert counts(reentry) == counts(reentry)  # deterministic re-read
+    # the same FULL identity later reaching its terminal updates the
+    # outcome without adding another execution
+    resolved = started + [_terminal()]
+    assert counts(resolved) == (1, 1, 0, 0, True)
+    # prepared only: launch unknown — zero confirmed executions, one
+    # unresolved
+    assert counts([_receipt("prepared")]) == (0, 0, 0, 1, False)
+    # not_launched: the engine knows no process started — zero and zero
+    assert counts([_receipt("prepared"),
+                   _receipt("not_launched")]) == (0, 0, 0, 0, True)
+
+
+_REENTRY_CHILD = '''
+import os
+import sys
+import time
+from ase import Atoms
+from pyraimd2.engines.qe_engine import QeConfig, QeEngine
+from pyraimd2.runtime.events import EventLog
+
+run_dir, script, counter, mode = sys.argv[1:5]
+original = EventLog.append
+if mode == "crash":
+    def append(self, kind, payload):
+        seq = original(self, kind, payload)
+        if kind == "attempt_receipt" and payload.get("phase") == "started":
+            deadline = time.monotonic() + 3
+            while not os.path.exists(counter) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            os._exit(73)
+        return seq
+    EventLog.append = append
+with EventLog(run_dir, force=(mode == "retry")) as log:
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=("bash", script), max_retries=0),
+        run_root=os.path.join(run_dir, "calculations"), event_log=log)
+    # The public engine API allocates qe-request-1 in each fresh process;
+    # the on-disk attempt directories stay unique across the processes.
+    engine.compute(Atoms("Si2", positions=[[0, 0, 0], [1.36] * 3],
+                         cell=[5.43] * 3, pbc=True), label="eval")
+'''
+
+
+def test_reentry_second_directory_does_not_erase_the_unresolved_start(
+        tmp_path: Path) -> None:
+    """C2-1 end to end through the public engine API: a fresh process
+    reuses qe-request-1/attempt-1 while the directory allocation advances;
+    the second launch's terminal success must not resolve the first
+    launch's started-but-unterminated attempt in its own directory."""
+    import subprocess
+    import sys
+    import textwrap
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    counter = tmp_path / "launches.txt"
+    script = tmp_path / "fake_pwx.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        f'printf "launched\\n" >> {counter}\n'
+        f"cat {FIXTURE.resolve()}\n")
+    script.chmod(0o755)
+    child = tmp_path / "child.py"
+    child.write_text(textwrap.dedent(_REENTRY_CHILD))
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(
+        [str(Path(__file__).parents[2] / "src"),
+         str(Path(__file__).parent)]))
+    first = subprocess.run([sys.executable, str(child), str(run_dir),
+                            str(script), str(counter), "crash"],
+                           env=env, capture_output=True, text=True,
+                           check=False)
+    assert first.returncode == 73, first.stderr[-500:]
+    for _ in range(100):
+        if counter.exists():
+            break
+        time.sleep(0.1)
+    assert len(counter.read_text().splitlines()) == 1
+
+    def read_summary():
+        # the killed writer's stale lock is reclaimed deliberately; the
+        # read appends nothing
+        with EventLog(run_dir, force=True) as log:
+            return summarize_tasks(list(log.iter_events()))
+
+    before = read_summary()
+    assert (before["reference"]["actual_executions"],
+            before["reference"]["successful_executions"],
+            before["reference"]["failed_attempts"],
+            before["reference"]["unresolved_attempts"],
+            before["cost_record_complete"]) == (1, 0, 0, 1, False)
+    second = subprocess.run([sys.executable, str(child), str(run_dir),
+                             str(script), str(counter), "retry"],
+                            env=env, capture_output=True, text=True,
+                            check=False)
+    assert second.returncode == 0, second.stderr[-500:]
+    assert len(counter.read_text().splitlines()) == 2
+    after = read_summary()
+    assert (after["reference"]["actual_executions"],
+            after["reference"]["successful_executions"],
+            after["reference"]["failed_attempts"],
+            after["reference"]["unresolved_attempts"],
+            after["cost_record_complete"]) == (2, 1, 0, 1, False)
+    # the surviving unresolved attempt is the FIRST directory's launch;
+    # both identities share the reused logical request id — the directory
+    # is what keeps them physically distinct
+    (unresolved,) = after["unresolved_attempts"]
+    assert unresolved["launched"] is True
+    assert unresolved["counted_as_execution"] is True
+    assert unresolved["request_id"] == "qe-request-1"
+    assert str(unresolved["directory"]).endswith("eval-000000/attempt-1")
+    assert read_summary() == after  # repeated reads stay identical

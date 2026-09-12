@@ -888,12 +888,16 @@ def _stage_result(stage_dir: Path, config: PyramidConfig,
         "kind": config.task.kind,
         "mode": config.task.mode,
         # Confirmed executions/successes only — an attempt whose launch
-        # receipt never closed is reported unresolved, never folded into
-        # the confirmed totals (C2); the completeness flag says whether
-        # the run's cost record accounts for every staging directory.
+        # receipt never closed is reported unresolved, with the confirmed
+        # starts among them still counted in executions (the overlap is
+        # explicit in reference_unresolved_counted; never sum the two as a
+        # disjoint total).  The completeness flag says whether the run's
+        # cost record accounts for every staging directory.
         "reference_executions": cost["reference"]["actual_executions"],
         "reference_failed": cost["reference"]["failed_attempts"],
         "reference_unresolved": cost["reference"]["unresolved_attempts"],
+        "reference_unresolved_counted":
+            cost["reference"]["unresolved_counted_as_executions"],
         "cost_record_complete": cost["cost_record_complete"],
         "inference_executions": cost["counts"]["inference"],
         "training_callbacks": cost["counts"]["training"],

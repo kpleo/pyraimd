@@ -802,7 +802,10 @@ class QeEngine:
         closes the same identity (``request_id`` + ``attempt`` +
         ``directory``).  A crash between receipts leaves exactly the
         evidence that existed — the ledger marks the attempt unresolved
-        rather than guessing an outcome.  Receipts are never billed."""
+        rather than guessing an outcome (a confirmed ``started`` receipt
+        still counts as one actual execution; a ``prepared``-only attempt
+        counts zero).  Receipts carry no timing and are never billed as
+        spans."""
         if self._event_log is None:
             return
         self._event_log.append(

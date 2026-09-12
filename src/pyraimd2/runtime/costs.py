@@ -46,11 +46,23 @@ from pyraimd2.runtime.events import (
 REFERENCE_PURPOSES = ("anchor", "refusal", "probe", "verification", "diagnostic")
 
 
-def _attempt_identity(event: dict) -> tuple[str, int]:
+def _attempt_identity(event: dict) -> tuple[str, int, str | None]:
     """The stable attempt identity shared by launch receipts and the
-    terminal attempt event (C2): the parent logical request plus the
-    attempt number within it."""
-    return (str(event.get("request_id")), int(event.get("attempt") or 0))
+    terminal attempt event (C2): the parent logical request, the attempt
+    number within it, and the physical staging directory.
+
+    All three are required: a fresh engine process legitimately reuses the
+    same automatic ``request_id``/``attempt`` pair while the directory
+    allocation gives each launch its own directory, so a terminal event in
+    one directory must never resolve a started-but-unterminated attempt in
+    another.  The directory is compared as the recorded string — never
+    resolved against the reader's cwd, the filesystem, or a moved run
+    tree.  Records without a directory (older or in-process writers)
+    compare equal on ``None``, preserving the legacy behavior."""
+    directory = event.get("directory")
+    return (str(event.get("request_id")),
+            int(event.get("attempt") or 0),
+            None if directory is None else str(directory))
 
 
 def summarize_tasks(events: Iterable[dict]) -> dict:
@@ -65,12 +77,19 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
     attempts, plus tasks that are neither spans nor nested physical I/O.
 
     Launch receipts (C2) are deduplicated against terminal attempt events
-    by the shared attempt identity: a receipt identity with no terminal
-    record and no ``not_launched`` phase is ONE unresolved attempt
-    (``launched`` True when a ``started`` receipt survives, None when only
-    ``prepared`` does) — listed under ``unresolved_attempts`` with its
-    evidence and counted in ``reference['unresolved_attempts']``, never
-    billed as an execution and never guessed a success.
+    by the shared FULL attempt identity (``request_id`` + ``attempt`` +
+    ``directory`` — a terminal in one directory never resolves a started
+    attempt in another): a receipt identity with no terminal record and no
+    ``not_launched`` phase is ONE unresolved attempt, listed under
+    ``unresolved_attempts`` with its evidence and counted in
+    ``reference['unresolved_attempts']``.  A confirmed ``started`` receipt
+    additionally counts once in ``actual_executions`` — process creation
+    is confirmed even though the outcome never reached the ledger
+    (successful/failed stay terminal-evidence-only); that overlap is
+    explicit in ``reference['unresolved_counted_as_executions']`` and the
+    entry's ``counted_as_execution`` flag, so ``actual_executions`` plus
+    all unresolved is never a disjoint total.  A ``prepared``-only
+    identity is launch-unknown and counts zero executions.
     ``cost_record_complete`` is False when any unresolved attempt exists,
     None (unknown) for logs whose external-launch (QE) attempts predate
     the receipt protocol; in-process attempts carry no launch window, so
@@ -78,8 +97,8 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
     """
     events = list(events)
     attempts_by_parent: dict[str, list[dict]] = {}
-    terminal_identities: set[tuple[str, int]] = set()
-    receipts: dict[tuple[str, int], dict[str, dict]] = {}
+    terminal_identities: set[tuple[str, int, str | None]] = set()
+    receipts: dict[tuple[str, int, str | None], dict[str, dict]] = {}
     for event in events:
         if event.get("type") == ATTEMPT and \
                 event.get("record", PHYSICAL_ATTEMPT) == PHYSICAL_ATTEMPT:
@@ -109,6 +128,7 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
         "failed_attempts": 0,
         "cache_hits": 0,
         "unresolved_attempts": 0,
+        "unresolved_counted_as_executions": 0,
     }
     counts = {"inference": 0, "training": 0, "io": 0}
     total_elapsed = 0.0
@@ -174,31 +194,48 @@ def summarize_tasks(events: Iterable[dict]) -> dict:
                     child.get("status") == "success")
                 reference["failed_attempts"] += int(
                     child.get("status") in ATTEMPT_FAILED_STATUSES)
-    # Launch receipts without their terminal record (C2): each identity is
-    # ONE unresolved attempt — a confirmed start (``started`` receipt) or a
-    # prepare whose launch state is unknowable — deduplicated against the
-    # terminal event of the same identity, so begin/end never double count.
-    # ``not_launched`` receipts resolve to zero launches: neither an
-    # execution nor unresolved.
+    # Launch receipts without their terminal record (C2): each unmatched
+    # identity is ONE unresolved attempt, deduplicated against the terminal
+    # event of the same FULL identity (request id + attempt + directory),
+    # so a terminal record in a second directory never erases a started
+    # attempt in the first.  Launch certainty and outcome certainty are
+    # separate facts: a confirmed ``started`` receipt counts as one actual
+    # execution even with its outcome lost (successful/failed stay decided
+    # by terminal evidence only — never guessed); a ``prepared``-only
+    # identity is launch-unknown and counts zero executions;
+    # ``not_launched`` is the engine's own knowledge of no launch: zero
+    # executions, zero unresolved.  A terminal event arriving later for the
+    # same full identity resolves the outcome without adding another
+    # execution.  Unresolved therefore OVERLAPS actual_executions — never
+    # read actual + unresolved as a disjoint total; a conservative upper
+    # bound adds only the launch-unknown (``launched`` None) identities.
     unresolved: list[dict] = []
     for identity, phases in sorted(receipts.items()):
         if identity in terminal_identities or "not_launched" in phases:
             continue
         evidence = phases.get("started") or phases.get("prepared") or {}
         started = "started" in phases
+        if started and str(evidence.get("operation")) == "reference":
+            reference["actual_executions"] += 1
         unresolved.append({
             "request_id": identity[0],
             "attempt": identity[1],
-            "directory": evidence.get("directory"),
+            "directory": identity[2],
             "launched": True if started else None,
+            "counted_as_execution": started,
             "evidence": ("process creation confirmed by the started "
-                         "receipt; no terminal record exists"
+                         "receipt; counted as one execution, but no "
+                         "terminal record exists — outcome, timing and "
+                         "return code unknown"
                          if started else
                          "staging/input prepared but no start confirmation "
                          "survived; whether the process launched is "
-                         "unknowable from the record"),
+                         "unknowable from the record — zero confirmed "
+                         "executions for this identity"),
         })
     reference["unresolved_attempts"] = len(unresolved)
+    reference["unresolved_counted_as_executions"] = sum(
+        1 for u in unresolved if u["launched"] is True)
     # The ledger's completeness: False when unresolved attempts exist;
     # None ("unknown") when EXTERNAL-launch attempts (the QE engines'
     # subprocess protocol) predate launch receipts — such a log alone

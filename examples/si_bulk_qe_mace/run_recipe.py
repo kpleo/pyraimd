@@ -91,14 +91,16 @@ def main() -> None:
         costs = result.get("reference_by_purpose") or {}
         steps = result.get("complete_steps", result.get("optimizer_steps"))
         unresolved = result.get("reference_unresolved") or 0
+        counted = result.get("reference_unresolved_counted") or 0
         print(f"{stage['name']:>5}: {stage['status']} — run "
               f"{stage['run_id']}, steps {steps}, "
               f"physical time {result.get('physical_time_fs', 0.0)} fs, "
               f"reference executions {result.get('reference_executions')} "
               f"({costs}), inference {result.get('inference_executions')}, "
               f"source {((stage.get('source') or {}).get('source_run_id'))}"
-              + (f", UNRESOLVED attempts {unresolved} (cost record "
-                 "incomplete)" if unresolved else ""))
+              + (f", UNRESOLVED attempts {unresolved} ({counted} already "
+                 "counted in executions; cost record incomplete)"
+                 if unresolved else ""))
     if manifest.get("stopped_early"):
         stop = manifest.get("stop") or {}
         print(f"stopped: stage {stop.get('stage')!r} at "

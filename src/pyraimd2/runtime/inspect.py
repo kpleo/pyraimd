@@ -294,8 +294,14 @@ def format_inspection(info: dict) -> str:
          f"{reference['failed_attempts']} failed)"),
         (f"  reference (logical)   : {reference['logical_requests']} requests, "
          f"{reference['cache_hits']} cache hits"),
+        # Unresolved attempts OVERLAP the confirmed executions: a confirmed
+        # start with a lost outcome is already counted in actual above, so
+        # actual + unresolved is never a disjoint total.
         (f"  unresolved attempts   : {reference['unresolved_attempts']} "
-         f"(cost record complete: {info['cost']['cost_record_complete']})"),
+         + (f"({reference['unresolved_counted_as_executions']} of them are "
+            "confirmed launches already counted in actual above; "
+            if reference["unresolved_counted_as_executions"] else "(")
+         + f"cost record complete: {info['cost']['cost_record_complete']})"),
         (f"  independent checks    : {checks['independent_checks']} "
          f"(accepted {checks['accepted_count']}, "
          f"detected {checks['detected_count']}, bound {checks['bound']})"),

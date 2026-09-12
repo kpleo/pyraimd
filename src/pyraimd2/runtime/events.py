@@ -59,10 +59,12 @@ PHYSICAL_IO = "physical_io"
 # ``started`` (written only from the actual process-creation fact), or
 # ``not_launched`` (the engine knows the process never started, e.g. a
 # missing executable).  The terminal ``attempt`` event closes the same
-# identity.  Receipts are execution evidence, not executions: the ledger
-# never bills them, but a receipt without its terminal record marks one
-# UNRESOLVED attempt (launched when ``started`` exists, unknown
-# otherwise) — reported, never guessed.
+# identity.  Receipts carry no timing and are never billed as spans; a
+# crash between receipts leaves exactly the evidence that existed — the
+# ledger marks the attempt unresolved rather than guessing an outcome, and
+# a confirmed ``started`` receipt without a terminal record still counts
+# as ONE actual execution (launch certainty), while successful/failed
+# stay decided by terminal evidence only (outcome certainty).
 ATTEMPT_RECEIPT = "attempt_receipt"
 PHYSICAL_ATTEMPT_RECEIPT = "physical_attempt_receipt"
 
