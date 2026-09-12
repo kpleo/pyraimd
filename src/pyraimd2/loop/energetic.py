@@ -1720,7 +1720,13 @@ class EnergeticCalculator(Calculator):
                 None if pending.pacing_decision is None else {
                     "decision": pending.pacing_decision["decision"],
                     "reason": pending.pacing_decision["reason"],
-                    "wait_remaining": pending.pacing_decision["wait_remaining"]})
+                    "wait_remaining": pending.pacing_decision["wait_remaining"],
+                    # the outcome at this commit: a calibrate decision whose
+                    # calibration found no usable direction is unavailable,
+                    # not a completed calibration
+                    "outcome": ("deferred" if pacing_defer else
+                                "calibrated" if new_anchor is not None
+                                else "unavailable")})
             metadata["retained_anchor"] = retained_record
         io_task_id = self._new_task_id()
         io_started = time.time()
