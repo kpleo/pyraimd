@@ -215,11 +215,15 @@ run requires a stateful updater.
 Cost-aware calibration pacing: after `failure_streak_limit` consecutive
 calibrations each failed to produce an accept, the probe investment of
 the next recalibrations is deferred and those steps drive
-reference-direct — the existing refusal path, with unchanged driving
-forces and an unchanged gate.  Off by default; an absent section (or
-`enabled = false`) is exactly the pre-0.6 behavior, and setting tuning
-fields while disabled is an error.  It composes with neither online model
-updates nor explicit direction callbacks (both are refused up front).
+reference-direct — the existing refusal path, with the gate unchanged.
+While a wait is active the current step's reference driving force is the
+ordinary refusal formula, but future anchors and routes may differ from a
+non-pacing run: pacing can change the trajectory within the same error
+governance and does not promise an identical one.  Off by default; an
+absent section (or `enabled = false`) is exactly the pre-0.6 behavior,
+and setting tuning fields while disabled is an error.  It composes with
+neither online model updates nor explicit direction callbacks (both are
+refused up front).
 
 - `enabled` (boolean, default false).
 - `failure_streak_limit` (integer >= 1, default 3): consecutive sterile

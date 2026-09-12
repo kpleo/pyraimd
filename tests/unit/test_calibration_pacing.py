@@ -285,7 +285,17 @@ _AMPL = 0.70
 class RegionSurrogate:
     """Fixed analytic predictor whose error is large in the fast central
     region and small near the turning points — a fixed physical
-    construction, fixed seeds, no tuning per outcome."""
+    construction, fixed seeds, no tuning per outcome.
+
+    TEST ROLE: a control-flow STRESS test with a deliberately
+    discontinuous scale jump at |dr| = 0.30 (energy and forces jump
+    together).  It exercises the pacing state machine (waits, bounded
+    retries, safety exits) and is NOT a smooth physical potential: the
+    reviewer's offline recomputation of its accepted steps found 4
+    over-budget driving errors in each of the on/off groups (max
+    0.830/0.822 eV/Å, two of them check-sampled) — violations this
+    construction produces by design.  Accuracy-at-budget evidence lives in
+    the smooth-potential control (see the 0.6 validation report)."""
 
     name = "region-surrogate"
     fingerprint = "region-surrogate-v1"
@@ -497,6 +507,62 @@ def test_inspect_marks_an_uncommitted_frozen_decision_pending(
         info["pacing"]
     assert before == {p: p.read_bytes()
                       for p in (crash_root / "nvt").rglob("*") if p.is_file()}
+
+
+# --- the public example stays honest ------------------------------------------
+
+
+def test_public_example_counts_match_actual_runs(tmp_path):
+    """examples/calibration_pacing runs with core only: the printed counts
+    come from the actual runs; pacing shows real defers/retries; the
+    resume continues the same decision log; the oracle errors stay under
+    the budget in both groups."""
+    import importlib.util
+    import re
+
+    spec = importlib.util.spec_from_file_location(
+        "pacing_demo",
+        Path(__file__).parents[2] / "examples" / "calibration_pacing"
+        / "run_demo.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def invoke(*argv):
+        import io
+        from contextlib import redirect_stdout
+
+        buffer = io.StringIO()
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(sys, "argv", ["run_demo.py", *argv])
+        try:
+            with redirect_stdout(buffer):
+                module.main()
+        finally:
+            monkey.undo()
+        return buffer.getvalue()
+
+    out_off = invoke("--output", str(tmp_path / "off"))
+    on_dir = tmp_path / "on"
+    out_on = invoke("--output", str(on_dir), "--pacing")
+    out_resume = invoke("--output", str(on_dir), "--pacing", "--resume",
+                        "--extra-steps", "20")
+    # counts come from actual runs: on defers probes vs off, and the
+    # resume's cumulative totals continue the same run
+    def printed_int(text, pattern):
+        return int(re.search(pattern, text).group(1))
+
+    n_off = printed_int(out_off, r"reference evaluations: (\d+)")
+    n_on = printed_int(out_on, r"reference evaluations: (\d+)")
+    n_after_resume = printed_int(out_resume, r"reference evaluations: (\d+)")
+    assert n_on < n_off
+    assert n_after_resume > n_on
+    assert "defer" in out_on and "forced_retry" in out_on
+    assert "over budget" in out_on
+    assert " 0 of " in out_on and " 0 of " in out_off  # zero over-budget
+    # the pacing state survives the process boundary: no re-decided
+    # decisions, the log only grows
+    assert out_resume.count("calibrate") + out_resume.count("defer") > 0
+    assert "pacing this call: 0 deferred" in out_resume
 
 
 # --- 5. recovery windows --------------------------------------------------------
