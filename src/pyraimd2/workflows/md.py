@@ -36,7 +36,11 @@ from ase.md.velocitydistribution import thermalize_momenta
 from pyraimd2 import __version__
 from pyraimd2.config import PyramidConfig, load_resolved_config
 from pyraimd2.engines.ase_resources import (
+    append_resource_binding,
+    check_rebuilt_adapter_resources,
     file_resource_baseline_sha256,
+    resolve_resource_paths,
+    verify_current_resources,
     verify_file_resource_baseline,
 )
 from pyraimd2.engines.base import EngineError, EngineResult
@@ -1293,7 +1297,9 @@ def run_workflow(config: PyramidConfig, *, verbose: bool = True,
 def resume_workflow(run_dir: str | Path, extra_steps: int, *,
                     force_unlock: bool = False, verbose: bool = True,
                     handle_sigint: bool = True,
-                    updater: object | None = None) -> WorkflowResult:
+                    updater: object | None = None,
+                    resource_paths: dict[str, str | Path] | None = None
+                    ) -> WorkflowResult:
     """Continue a run for ``extra_steps`` additional steps.
 
     Settings come from the run's ``resolved_config.json`` — the same physics,
@@ -1302,6 +1308,16 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
     reference/surrogate runs resume from their complete-step checkpoints
     (WP07); adaptive runs resume through the WP03 protocol, with an optional
     stateful updater passed through (WP06).
+
+    ``resource_paths`` (T3, opt-in relocation): a mapping of declared
+    ``<section>.<role>`` resource keys to new absolute regular-file paths
+    for a run directory that was moved together with its resource files.
+    Every current file is re-read and compared to the baseline by full
+    SHA-256 before any backend factory call; only the approved option
+    slots are rebound, in memory only — the original config, manifest,
+    baseline and history are never rewritten.  It composes with neither an
+    online updater nor a run without a file-resource baseline; both refuse
+    clearly.
     """
     run_dir = Path(run_dir)
     if not run_dir.is_dir():
@@ -1317,34 +1333,61 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
     # steps): a plain run binds a committed tail evaluation as its step
     # record without adding dynamics; an adaptive run re-verifies its
     # boundary.  Both flow through the normal paths with zero new steps.
+    if resource_paths is not None and updater is not None:
+        raise WorkflowError(
+            "resource_paths relocation does not compose with an online "
+            "updater in this version; resume without the mapping or without "
+            "the updater")
     config = load_resolved_config(run_dir)
     if config.task.kind != "md":
         raise WorkflowError(
             f"this run used task.kind {config.task.kind!r}; resume is "
             "implemented for md runs (singlepoint has nothing to continue, "
             "relax runs reach their target or stop)")
-    # Resource-baseline gate (T2): a run whose valid checkpoint carries a
-    # resource association is verified against the CURRENT baseline file
-    # before any backend factory, evaluation or new step — missing,
-    # unreadable, corrupt or mismatched baselines refuse with the expected
-    # and actual values named.  Runs whose checkpoint carries no
-    # association (old records) keep their exact old behavior: a baseline
-    # file never upgrades them, and the association is inherited only from
-    # the checkpoint — never recomputed from the current side file.
-    # Checkpoint selection itself is untouched (read_latest_valid).
+    # Resource-baseline gate (T2) plus the constrained relocation mapping
+    # (T3): a run whose valid checkpoint carries a resource association is
+    # verified against the CURRENT baseline file before any backend factory,
+    # evaluation or new step — missing, unreadable, corrupt or mismatched
+    # baselines refuse with the expected and actual values named.  Runs
+    # whose checkpoint carries no association (old records) keep their exact
+    # old behavior: a baseline file never upgrades them, and the association
+    # is inherited only from the checkpoint — never recomputed from the
+    # current side file.  Checkpoint selection itself is untouched
+    # (read_latest_valid).
     checkpoint = CheckpointManager(run_dir).read_latest_valid()
-    if checkpoint is not None:
-        recorded = checkpoint.state.get("file_resource_baseline_sha256")
-        if recorded is not None:
-            try:
-                verify_file_resource_baseline(
-                    run_dir, expected_sha256=recorded, run_id=config.run.id)
-            except ValueError as error:
-                raise WorkflowError(str(error)) from error
+    resource_binding = None
+    recorded = (checkpoint.state.get("file_resource_baseline_sha256")
+                if checkpoint is not None else None)
+    if recorded is not None:
+        try:
+            verify_file_resource_baseline(
+                run_dir, expected_sha256=recorded, run_id=config.run.id)
+            baseline = json.loads(
+                (run_dir / "file_resources.json").read_text(
+                    encoding="utf-8"))
+            mapping = resolve_resource_paths(baseline, resource_paths)
+            # every declared resource's CURRENT bytes are re-read and
+            # compared by full SHA-256 before any backend factory call —
+            # never located by path, mtime or size
+            current = verify_current_resources(baseline, mapping)
+        except (TypeError, ValueError) as error:
+            raise WorkflowError(str(error)) from error
+        if mapping:
+            config = _rebind_config(config, run_dir, current, baseline)
+            resource_binding = {"baseline_sha256": recorded,
+                                "generation": checkpoint.generation,
+                                "current": current, "baseline": baseline}
+    elif resource_paths is not None:
+        raise WorkflowError(
+            "resource_paths was given, but this run has no file-resource "
+            "baseline association in its checkpoint (an old record); "
+            "relocation mapping is supported only for runs created with "
+            "declared file resources — the run is preserved unchanged")
     if config.task.mode != "adaptive":
         return _resume_plain(config, run_dir, extra_steps,
                              force_unlock=force_unlock, verbose=verbose,
-                             handle_sigint=handle_sigint)
+                             handle_sigint=handle_sigint,
+                             resource_binding=resource_binding)
     current = _complete_steps(run_dir, config.run.id)
     target = current + extra_steps
     if verbose:
@@ -1358,11 +1401,31 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
         # ledger instead of going silent after the restart.
         engine, surrogate = build_backends(config, run_dir=run_dir,
                                            event_log=event_log)
+        if resource_binding is not None:
+            try:
+                check_rebuilt_adapter_resources(
+                    engine, surrogate,
+                    baseline=resource_binding["baseline"],
+                    current=resource_binding["current"])
+            except ValueError as error:
+                event_log.close()
+                raise WorkflowError(str(error)) from error
         with _SigintGuard(handle_sigint):
             runner = EnergeticRunner.resume(
                 run_dir, surrogate, engine, updater=updater,
                 checkpoint_interval_steps=config.checkpoint.interval_steps,
                 handle_sigint=handle_sigint, event_log=event_log)
+            if resource_binding is not None:
+                # the binding receipt is written after every identity check
+                # (baseline, rebuilt declarations, full state verification
+                # in resume) and before any progression — under the run's
+                # single-writer lock; it is not a progress claim
+                append_resource_binding(
+                    run_dir,
+                    baseline_sha256=resource_binding["baseline_sha256"],
+                    checkpoint_generation=resource_binding["generation"],
+                    current=resource_binding["current"],
+                    baseline=resource_binding["baseline"])
             outputs = RunOutputs(
                 run_dir, config.run.id,
                 trajectory_interval_steps=config.output.trajectory_interval_steps,
@@ -1398,9 +1461,37 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
                           stopped_early=stopped, summary=summary)
 
 
+def _rebind_config(config: PyramidConfig, run_dir: Path,
+                   current: dict[str, str], baseline: dict) -> PyramidConfig:
+    """In-memory-only config copy for a relocated resume: the approved
+    backend option slots set to the verified current paths (never another
+    equal string), and the run root set to the caller's relocated run_dir.
+    The original resolved_config.json / manifest / baseline / history are
+    never rewritten."""
+    by_section: dict[str, dict[str, str]] = {"reference": {},
+                                             "surrogate": {}}
+    for key, path in current.items():
+        section = key.split(".", 1)[0]
+        option = baseline["resources"][key]["option"]
+        by_section[section][option] = path
+    reference, surrogate = config.reference, config.surrogate
+    if by_section["reference"] and reference is not None:
+        reference = dataclasses.replace(
+            reference,
+            options={**reference.options, **by_section["reference"]})
+    if by_section["surrogate"] and surrogate is not None:
+        surrogate = dataclasses.replace(
+            surrogate,
+            options={**surrogate.options, **by_section["surrogate"]})
+    run = dataclasses.replace(config.run, directory=Path(run_dir))
+    return dataclasses.replace(config, run=run, reference=reference,
+                               surrogate=surrogate)
+
+
 def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                   force_unlock: bool, verbose: bool,
-                  handle_sigint: bool) -> WorkflowResult:
+                  handle_sigint: bool,
+                  resource_binding: dict | None = None) -> WorkflowResult:
     """Resume a plain reference/surrogate MD run from its last valid
     complete-step checkpoint (same CheckpointManager schema as adaptive)."""
     manager = CheckpointManager(run_dir)
@@ -1440,6 +1531,15 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
     event_log = EventLog(run_dir, force=force_unlock)
     try:
         backend = _plain_backend(config, run_dir, event_log=event_log)
+        if resource_binding is not None:
+            try:
+                check_rebuilt_adapter_resources(
+                    backend if config.task.mode == "reference" else None,
+                    backend if config.task.mode == "surrogate" else None,
+                    baseline=resource_binding["baseline"],
+                    current=resource_binding["current"])
+            except ValueError as error:
+                raise WorkflowError(str(error)) from error
         if config.task.mode == "reference" and \
                 fingerprint_of(backend) != state.get("engine_fingerprint"):
             raise WorkflowError(
@@ -1461,6 +1561,17 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                     f"timestep_fs changed from {state.get('timestep_fs')} to "
                     f"{config.dynamics.timestep_fs} fs; resume continues the same "
                     "integration settings — start a new run, or fork")
+        if resource_binding is not None:
+            # every identity check passed (baseline, rebuilt declaration,
+            # full physical identity): record the verified binding under the
+            # run's single-writer lock before any healing or progression;
+            # it is not a progress claim
+            append_resource_binding(
+                run_dir,
+                baseline_sha256=resource_binding["baseline_sha256"],
+                checkpoint_generation=resource_binding["generation"],
+                current=resource_binding["current"],
+                baseline=resource_binding["baseline"])
     except Exception:
         event_log.close()
         raise
