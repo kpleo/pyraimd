@@ -31,6 +31,9 @@ command line.
   re-verified byte-for-byte against the run's baseline before any
   computation — see
   [examples/file_model_relocation](../examples/file_model_relocation/).
+  The CLI exposes the same mapping as `pyramid resume RUN_DIR --steps N
+  --resource BACKEND.ROLE=PATH` (repeatable; a relative PATH resolves
+  against the caller's working directory).
 - `load_completed_state(run_dir, *, require_finished=True) -> CompletedState`
   (`pyraimd2.workflows.stages`) — the authoritative completed boundary of an
   MD or relax run plus its provenance (parent run id, step/evaluation id,

@@ -58,6 +58,28 @@ original or map a valid replacement through resource_paths=...`. Step 2b
 prints `"steps_completed": 5` and exports 6 frames (the initial evaluation
 plus five complete steps).
 
+## The same resume on the CLI
+
+The same mapping is exposed by the `pyramid resume` command (repeatable
+`--resource BACKEND.ROLE=PATH`):
+
+```sh
+# from any working directory; a relative PATH resolves against THAT
+# directory (the shell's cwd), never against the run directory
+cd demo
+pyramid resume "moved run" --steps 2 \
+    --resource 'reference.potential=moved run/inputs/model.dat'
+pyramid inspect "moved run"
+pyramid export "moved run" --force-source driving
+```
+
+Usage errors are refused before anything runs: a missing `=` separator,
+an empty role key, an empty path, or the same role given twice (even with
+the same path) all exit with code 2 and never touch the run. A mapped
+file that is missing or whose bytes differ from the baseline is refused
+with the resource named; fix the mapping and rerun the same command.
+Without `--resource` the command keeps its original resume semantics.
+
 ## The mapping rules
 
 - Keys are the baseline's declared `<section>.<role>` names — this example
@@ -81,9 +103,10 @@ location), in the **same environment** (same pyraimd2 and backend code —
 the physical identity checks still apply), for **runs created with
 declared file resources** (the opt-in `file_parameters` declaration of the
 backend; older runs without a baseline are never upgraded). It does not
-compose with an online updater. There is no CLI for relocation yet: the
-two scripts' arguments are example plumbing around
-`resume_workflow(..., resource_paths=...)`, not a product command.
+compose with an online updater. The CLI surface is exactly the one
+`--resource` option of `pyramid resume` — there is no separate relocation
+command; the two scripts' `--run`/`--model` arguments remain example
+plumbing around `resume_workflow(..., resource_paths=...)`.
 
 To write your own backend with a declared file resource, see the plugin's
 [source](../backends/pyraimd2_filemodel/src/pyraimd2_filemodel/__init__.py)
