@@ -11,13 +11,16 @@ names the missing resource; passing ``--model`` maps the declared
 ``reference.potential`` role to the file's new location.  The file's bytes
 are re-verified against the run's baseline before any computation — the
 mapping is never remembered, so every later restart after a move needs it
-again.  On success the committed trajectory is exported (driving forces).
+again.  On success the committed trajectory is exported (driving forces);
+an existing export target is never overwritten — the conflict is refused
+before any resume happens, so retrying never adds a second batch of steps.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -36,9 +39,23 @@ def main() -> None:
                         help="current location of the declared model file "
                              "after a relocation (absolute path)")
     parser.add_argument("--export", type=Path, default=None,
-                        help="extxyz output (default: inside the run "
-                             "directory)")
+                        help="extxyz output (default: export-driving.extxyz "
+                             "inside the run directory); an existing target "
+                             "is never overwritten")
     args = parser.parse_args()
+
+    # Resolve the real export target and refuse a conflict BEFORE resuming:
+    # an existing file (or a link pointing at one) keeps its content, and a
+    # late export failure must never push the user into retrying with a
+    # second batch of steps.  The export API's own no-overwrite default
+    # stays as the last line of defense.
+    output = (args.export if args.export is not None
+              else args.run / "export-driving.extxyz")
+    if os.path.lexists(output):
+        print(f"export target exists: {output}; nothing was resumed or "
+              "written — pass --export with a different path (or move the "
+              "existing file aside)", file=sys.stderr)
+        raise SystemExit(2)
 
     resource_paths = None
     if args.model is not None:
@@ -51,8 +68,7 @@ def main() -> None:
     except WorkflowError as error:
         print(f"resume refused: {error}", file=sys.stderr)
         raise SystemExit(2) from None
-    report = export_run(args.run, force_source="driving",
-                        output=args.export, force=True)
+    report = export_run(args.run, force_source="driving", output=output)
     print(json.dumps({
         "steps_completed": result.steps_completed,
         "export": {"output": str(report["output"]),

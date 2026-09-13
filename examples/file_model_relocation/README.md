@@ -8,7 +8,7 @@ file is a declared, content-verified resource of the run. You will:
 
 1. create a short NVE run (process 1) and exit;
 2. move the run directory together with the model file — a directory name
-   with a space works, and non-ASCII names work the same;
+   with a space or non-ASCII characters (including emoji) works the same;
 3. watch the resume refuse clearly because the recorded model path is gone;
 4. resume with an explicit `resource_paths` mapping (process 2) and export
    the committed trajectory.
@@ -23,7 +23,8 @@ uv pip install ./examples/backends/pyraimd2_filemodel   # the example plugin
 ```
 
 Run the commands from the repository root; the demo directory is yours to
-choose.
+choose. `--output` accepts a path that does not exist yet or a completely
+empty directory; anything else is refused with nothing written.
 
 ## Walkthrough
 
@@ -42,6 +43,12 @@ python examples/file_model_relocation/resume_run.py --run "demo/moved run" --ext
 python examples/file_model_relocation/resume_run.py --run "demo/moved run" --extra-steps 2 \
     --model "$PWD/demo/moved run/inputs/model.dat"
 ```
+
+The export never overwrites: if the target (the default
+`export-driving.extxyz` in the run directory, or your `--export` path)
+already exists, the script refuses before resuming and names the conflict,
+so a retry never adds a second batch of steps; pass a different `--export`
+path or move the existing file aside.
 
 Expected: `new_run.py` prints `"steps_completed": 3` and the declared
 resource `reference.potential` with the model's original path. Step 2a
