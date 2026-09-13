@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -60,7 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.set_defaults(func=_cmd_run)
 
     resume = commands.add_parser(
-        "resume", help="continue an adaptive run by N additional steps")
+        "resume", help="continue a run by N additional steps (plain "
+                       "reference/surrogate and fixed-model adaptive runs)")
     resume.add_argument("run_dir", help="the run directory (contains "
                                         "resolved_config.json)")
     resume.add_argument("--steps", type=int, required=True,
@@ -69,6 +71,15 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--force-unlock", action="store_true",
                         help="reclaim the event-log writer lock left by a "
                              "crashed process (only when no live writer exists)")
+    resume.add_argument(
+        "--resource", action="append", default=None,
+        metavar="BACKEND.ROLE=PATH",
+        help="rebind a declared file resource after the run was relocated "
+             "with its resource files (repeatable, e.g. "
+             "'reference.potential=./models/ref.dat'); each file is "
+             "re-verified byte-for-byte against the run's baseline before "
+             "any computation. A relative PATH resolves against the "
+             "current working directory, never the run directory")
     resume.set_defaults(func=_cmd_resume)
 
     inspect_cmd = commands.add_parser(
@@ -176,10 +187,49 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _parse_resources(values: list[str] | None) -> dict[str, str] | None:
+    """Parse the repeatable ``--resource BACKEND.ROLE=PATH`` options.
+
+    Split on the FIRST '='; a missing '=', an empty key, an empty path or
+    a repeated role (even with the same value) is a usage error raised
+    before any workflow call.  Everything after the first '=' is the path
+    verbatim — later '=' signs, spaces and non-ASCII characters are kept.
+    A relative path resolves against the caller's current working
+    directory and is handed to the API absolute; no symlink resolution,
+    environment-variable or glob expansion happens here — the declared
+    baseline checks judge the file itself.  Unknown roles are refused by
+    the shared resolver downstream.  Without ``--resource`` the resume
+    keeps its original semantics (``None``).
+    """
+    if values is None:
+        return None
+    mapping: dict[str, str] = {}
+    for value in values:
+        key, separator, path = value.partition("=")
+        if not separator:
+            raise ConfigError(
+                f"--resource expects BACKEND.ROLE=PATH, got {value!r} "
+                "(no '=' separator)")
+        if not key:
+            raise ConfigError(
+                f"--resource has an empty BACKEND.ROLE key: {value!r}")
+        if not path:
+            raise ConfigError(
+                f"--resource has an empty PATH for role {key!r}")
+        if key in mapping:
+            raise ConfigError(
+                f"--resource role {key!r} is given twice; map each role "
+                "exactly once")
+        mapping[key] = os.path.abspath(path)
+    return mapping
+
+
 def _cmd_resume(args: argparse.Namespace) -> int:
+    resource_paths = _parse_resources(args.resource)
     from pyraimd2.workflows import resume_workflow
 
     resume_workflow(args.run_dir, args.steps, force_unlock=args.force_unlock,
+                    resource_paths=resource_paths,
                     verbose=True, handle_sigint=True)
     return EXIT_OK
 
