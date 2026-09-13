@@ -7,7 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=1.26",
     "ase>=3.29.0",
-    "pyraimd2",
+    # The declared file-resource API (AseEngine file_parameters) is new in
+    # 0.7.0 — older pyraimd2 cannot construct this backend.
+    "pyraimd2>=0.7.0",
 ]
 
 [build-system]

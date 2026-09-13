@@ -63,12 +63,14 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
 - `pyramid run CONFIG`: validate, then execute. Refuses an already-used run
   directory (one directory per run; continue with `resume`, never by
   appending).
-- `pyramid resume RUN_DIR --steps N [--force-unlock]`: continue an adaptive
-  or plain MD run for N *additional* steps; the current and target step numbers are
+- `pyramid resume RUN_DIR --steps N [--force-unlock]
+  [--resource BACKEND.ROLE=PATH]`: continue an adaptive or plain MD run
+  for N *additional* steps; the current and target step numbers are
   printed. Settings come from the run's `resolved_config.json` — same
   physics, model chain and check stream. `--force-unlock` reclaims the
   writer lock left behind by a crashed process (use only when no live
-  writer exists).
+  writer exists). `--resource` (repeatable) rebinds a declared file
+  resource after the run was relocated; see "Resume semantics".
 - `pyramid inspect RUN_DIR [--json]`: status, costs and checks. The JSON
   rendering and the human rendering come from the same structured source.
 - `pyramid export RUN_DIR [--force-source driving|reference|base]
@@ -299,6 +301,40 @@ evaluation — they are the recovery record and are never thinned.
   checkpoints: the plain driver checkpoints at every
   `checkpoint.interval_steps` and on a stop request, and resume rebuilds
   the boundary from the last committed step. `export` works on them too.
+
+### Relocating a run with declared file resources
+
+A run whose backends declare file resources (the backend factory's
+`file_parameters={"<option>": "<role>"}` declaration) can be **relocated**
+— moved together with those resource files and resumed at the new
+location:
+
+```sh
+pyramid resume "moved run" --steps 2 \
+    --resource 'reference.potential=moved run/inputs/model.dat'
+```
+
+- `--resource BACKEND.ROLE=PATH` is repeatable and maps a baseline-declared
+  `<section>.<role>` key to the file's new location; a missing `=`
+  separator, an empty key, an empty path or a duplicated role is a usage
+  error before anything runs.
+- A relative PATH resolves against the **calling working directory**,
+  never the run directory; the Python API
+  (`resume_workflow(..., resource_paths=...)`) takes absolute paths.
+- Every current file is re-read and compared byte-for-byte (SHA-256)
+  against the run's baseline before any backend is built — a same-named
+  file with different content is refused, as are unknown roles. Only the
+  declared option slots are rebound, in memory: the run's config copy,
+  manifest, baseline and history are never rewritten; each verified
+  binding appends one receipt under `resource_bindings/` (a record, not a
+  new trust baseline). The mapping is never remembered — every later
+  restart while the recorded path is stale needs it again.
+- Supported for a fixed model (byte-identical file at a new location) in
+  the same environment (same pyraimd2 and backend code), for runs created
+  with declared file resources; older runs without a baseline are never
+  upgraded, and relocation does not compose with an online updater.
+  The full walkthrough is
+  [../examples/file_model_relocation/](../examples/file_model_relocation/).
 
 ## Export and missing data
 

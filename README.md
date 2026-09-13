@@ -24,6 +24,27 @@ pip install .            # user install
 pip install -e '.[dev]'  # development: adds pytest and ruff
 ```
 
+Or install a release wheel into a clean virtual environment (the wheel and
+sdist are attached to the GitHub Release of the same tag; the examples and
+the example plugins below come from that tag's source tree):
+
+```sh
+python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
+pip install pyraimd2-0.7.0-py3-none-any.whl
+```
+
+A first run in five commands — the analytic harmonic demo needs no backend
+installation and finishes in seconds:
+
+```sh
+pyramid init --template harmonic --output my_run
+pyramid validate my_run/run.toml
+pyramid run my_run/run.toml
+pyramid inspect my_run/runs/harmonic-demo
+pyramid resume my_run/runs/harmonic-demo --steps 5
+pyramid export my_run/runs/harmonic-demo --force-source driving
+```
+
 Optional backends install separately and are only imported when selected:
 
 ```sh
@@ -176,7 +197,7 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   use either a reference engine or a surrogate. MD supports reference-only,
   surrogate-only and adaptive modes, with checkpoints, resume and export.
   Adaptive mode applies only to MD.
-- **Dynamics.** The current release (0.6.0) supports fixed-cell NVE and NVT
+- **Dynamics.** The current release (0.7.0) supports fixed-cell NVE and NVT
   (ASE Langevin, `fixcm=False`) with `FixAtoms`: plain
   reference/surrogate modes, and adaptive MD in both ensembles — with a
   fixed base model via TOML/CLI, or with guarded online updates through
