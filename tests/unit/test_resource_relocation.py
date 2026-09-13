@@ -776,11 +776,11 @@ def _run_child_expect_failure(tmp_path, run_dir, mapping):
 
 def test_non_file_parameter_identity_refusal_short_regression(
         tmp_path, monkeypatch):
-    """Short regression of the reviewer's independent three-mode check
-    (reviews/N003_identity_check/evidence.json): a non-file parameter
-    changed after relocation refuses on physical identity before any
-    compute; the restored configuration then resumes and keeps the
-    association.  Reference mode, reusing the shared fixtures."""
+    """A non-file physical parameter changed after relocation must refuse
+    on identity before any compute — zero new factory-side computation, no
+    new records, no binding receipt; the restored configuration then
+    resumes and keeps the baseline association.  Reference mode, reusing
+    the shared fixtures."""
     from test_file_resource_baseline import FileBacked as BaselineFileBacked
 
     counts = {"factory": 0, "compute": 0}
