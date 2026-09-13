@@ -33,8 +33,8 @@ python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
 pip install pyraimd2-0.7.0-py3-none-any.whl
 ```
 
-A first run in five commands — the analytic harmonic demo needs no backend
-installation and finishes in seconds:
+A first run with the built-in harmonic model — the analytic demo needs no
+backend installation and finishes in seconds:
 
 ```sh
 pyramid init --template harmonic --output my_run
