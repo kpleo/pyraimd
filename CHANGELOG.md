@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.7.0
+
+Declared, content-verified file resources for ASE backends, and safe
+relocation of runs that use them — resume a run that was moved together
+with its resource files, from Python or the CLI.  No defaults change: a
+run without declared file resources behaves exactly as 0.6.0.
+
+### Added
+
+- Declared file resources (`AseEngine`/`AseSurrogate`
+  `file_parameters={"<option>": "<role>"}`): the content of a declared
+  file parameter joins the backend's physical identity (full SHA-256,
+  re-read at construction and at every fingerprint), so a changed file
+  is a different backend rather than a silently different force field.
+  Each run records an immutable `file_resources.json` baseline (schema,
+  per-resource role/parameter/original path/content digest) and every
+  checkpoint carries the baseline's digest; a resume verifies the
+  baseline before any backend is rebuilt — missing, corrupt or
+  mismatched baselines refuse.
+- Relocation resume: `resume_workflow(..., resource_paths=...)` (Python)
+  and `pyramid resume RUN_DIR --steps N --resource BACKEND.ROLE=PATH`
+  (repeatable; a relative PATH resolves against the caller's working
+  directory) rebind declared resources after the run was moved together
+  with those files.  Only baseline-declared keys are accepted; every
+  current file is re-verified byte-for-byte before any computation;
+  only the declared option slots are rebound, in memory, without
+  rewriting the run's history; each verified binding appends a receipt
+  under `resource_bindings/`.  Supported for a fixed model
+  (byte-identical file) in the same environment for runs created with
+  declared resources; older runs are never upgraded and relocation does
+  not compose with an online updater.  New example:
+  `examples/file_model_relocation` (plus the
+  `examples/backends/pyraimd2_filemodel` plugin) walks through fresh run
+  → relocate → refused resume → mapped resume → export in two processes.
+- `Path`-valued declared file parameters are accepted without
+  conversion (identity and computation read the path as-is).
+
+### Fixed
+
+- The resume help and API reference now state the actual plain
+  reference/surrogate and fixed-model adaptive resume support.
+
 ## 0.6.0
 
 Opt-in calibration pacing for adaptive MD, with resumable rule state and
