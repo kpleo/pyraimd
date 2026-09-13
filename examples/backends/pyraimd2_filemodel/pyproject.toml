@@ -1,0 +1,21 @@
+[project]
+name = "pyraimd2-filemodel"
+version = "0.1.0"
+description = "Example pyraimd2 backend plugin: analytic potential read from a declared model file"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+    "ase>=3.29.0",
+    "pyraimd2",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+# Third-party backends plug into pyraimd2 without touching the core: the
+# registry discovers these entry points and the factories below build the
+# backend objects. Kind is declared on each factory (backend_kind).
+[project.entry-points."pyraimd2.backends"]
+file_model_reference = "pyraimd2_filemodel:reference_factory"

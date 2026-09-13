@@ -25,7 +25,12 @@ command line.
   — continue a run for *additional* steps from its persisted state; adaptive
   and plain reference/surrogate runs are both resumable.  `extra_steps = 0`
   (library only) binds a committed tail evaluation as its step record or
-  re-verifies the boundary without adding dynamics.
+  re-verifies the boundary without adding dynamics.  `resource_paths=None`
+  (library only) relocates a run whose backends declared file resources:
+  `{"<section>.<role>": "/absolute/new/path"}` for moved files, each
+  re-verified byte-for-byte against the run's baseline before any
+  computation — see
+  [examples/file_model_relocation](../examples/file_model_relocation/).
 - `load_completed_state(run_dir, *, require_finished=True) -> CompletedState`
   (`pyraimd2.workflows.stages`) — the authoritative completed boundary of an
   MD or relax run plus its provenance (parent run id, step/evaluation id,

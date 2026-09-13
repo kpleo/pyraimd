@@ -120,6 +120,12 @@ each backend before committing to a run.
 - If a crashed process left the event-log writer lock behind,
   `pyramid resume RUN_DIR --steps N --force-unlock` reclaims it (only when no
   live writer exists).
+- Runs whose backends declare file resources (`file_parameters`) can be
+  **relocated** — moved together with those files and resumed at the new
+  location through `resume_workflow(..., resource_paths=...)`, with the
+  files re-verified byte-for-byte first. The offline walkthrough
+  [examples/file_model_relocation/](examples/file_model_relocation/) shows
+  the full loop in two processes (a relocation CLI is not provided yet).
 - Changing settings means a new run, or a library-level `fork` that inherits
   the physical state and model chain under a new check stream.
 
