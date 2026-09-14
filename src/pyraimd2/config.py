@@ -168,6 +168,13 @@ class OutputConfig:
 
 
 @dataclass(frozen=True)
+class ScratchConfig:
+    """The unified managed tmp root ([scratch] section, opt-in)."""
+    root: Path
+    retention: str  # "all" (keep) or "results" (archive, then reclaim)
+
+
+@dataclass(frozen=True)
 class PyramidConfig:
     """Fully parsed and validated run configuration."""
 
@@ -184,6 +191,7 @@ class PyramidConfig:
     output: OutputConfig
     relax: RelaxConfig
     constraints: ConstraintsConfig
+    scratch: ScratchConfig | None
     source_path: Path | None  # the file this configuration was loaded from
 
     def resolved_dict(self) -> dict[str, Any]:
@@ -250,6 +258,12 @@ class PyramidConfig:
                       "fmax_eV_A": self.relax.fmax_eV_A,
                       "steps": self.relax.steps},
             "constraints": {"fix_atoms_indices": list(self.constraints.fix_atoms_indices)},
+            # the scratch block appears only when the user configured the
+            # section — an absent section keeps the resolved identity
+            # byte-identical to pre-scratch versions
+            **({} if self.scratch is None else {
+                "scratch": {"root": str(self.scratch.root),
+                            "retention": self.scratch.retention}}),
         }
 
 
@@ -320,6 +334,7 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
             f"(reads {CONFIG_SCHEMA_VERSION}); do not edit the file to bypass "
             "this — follow the migration notes in docs/configuration.md")
     _reject_unknown(document, _SECTIONS, "", "section")
+    scratch = _parse_scratch(_section(document, "scratch"), base_dir)
 
     run = _parse_run(_section(document, "run", required=True), base_dir)
     task = _parse_task(_section(document, "task", required=True))
@@ -346,7 +361,21 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
         dynamics=dynamics, reference=reference, surrogate=surrogate,
         policy=policy, verification=verification, checkpoint=checkpoint,
         output=output, relax=relax, constraints=constraints,
-        source_path=source_path)
+        scratch=scratch, source_path=source_path)
+
+
+# ---------------------------------------------------------------------------
+def _parse_scratch(table: dict | None, base_dir: Path) -> ScratchConfig | None:
+    if table is None:
+        return None
+    _reject_unknown(table, ("root", "retention"), "scratch", "field")
+    root = _path_field(table, "root", "scratch", base_dir)
+    retention = table.pop("retention", "all")
+    if retention not in ("all", "results"):
+        raise ConfigError(
+            f"scratch.retention must be one of ('all', 'results'), got "
+            f"{retention!r}")
+    return ScratchConfig(root=root, retention=retention)
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +384,7 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
 
 _SECTIONS = ("run", "task", "structure", "dynamics", "reference", "surrogate",
              "policy", "verification", "checkpoint", "output", "relax",
-             "constraints")
+             "constraints", "scratch")
 
 
 def _reject_unknown(table: dict, known: tuple[str, ...] | list[str], prefix: str,

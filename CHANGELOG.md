@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.7.1
+
+A unified, managed temporary root for solver scratch with a
+durably-archived-then-reclaimed lifecycle — labels no longer leave
+wavefunction scratch accumulating behind them.  Everything is opt-in:
+a configuration or engine without the new options behaves exactly as
+0.7.0.
+
+### Added
+
+- `[scratch] root = "...", retention = "..."` (workflow) and
+  `QeConfig(scratch_root=..., retention=...)`: one unified temporary
+  root (a relative root resolves against the configuration file's
+  directory), with every adapted attempt running in its exclusive
+  `tmp/<run-uuid>/<backend-role>/<request-uuid>/<attempt-id>/`
+  directory.  `retention = "all"` (default) keeps the attempt's
+  scratch; `retention = "results"` archives the verified result out of
+  scratch and reclaims the attempt's subtree immediately — currently
+  supported for standalone SCF and refused up front in combination with
+  `startpot_file` / `density_source`.  Both QE adapters (subprocess
+  QeEngine and ASE-QE) share the one lifecycle; other backends keep
+  their existing behavior.
+- `pyraimd2.runtime.scratch`: the small lifecycle manager — allocation,
+  durable archival (fsynced copies out of the scratch root), atomic
+  state records outside the root (`scratch_records/`), idempotent
+  reclaim with ownership and symlink guards, and `inspect_root` /
+  `clean_pending` (dry-run first) for one view and safe retries.  The
+  shared root is never recursively deleted; failed or unarchived
+  attempts are always kept.
+- `pyramid scratch inspect --root PATH` and
+  `pyramid scratch clean --root PATH [--dry-run]`: the same manager
+  from the CLI.
+- The standalone QE label template (`examples/standalone_qe_label/`)
+  now runs on the lifecycle: archived result files in the persistent
+  run root, the attempt's scratch reclaimed, and the state printed.
+
 ## 0.7.0
 
 Declared, content-verified file resources for ASE backends, and safe

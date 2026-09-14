@@ -93,6 +93,7 @@ import shutil
 import signal
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -106,6 +107,7 @@ from pyraimd2.engines.base import (
     EngineError,
     EngineResult,
 )
+from pyraimd2.runtime import scratch as scratch_mod
 
 RY_EV = units.Hartree / 2.0  # QE reports Rydbergs
 RY_BOHR3_TO_EV_A3 = RY_EV / units.Bohr**3
@@ -208,6 +210,8 @@ class QeConfig:
     density_source: str | None = None  # directory with a density manifest (known origin)
     max_retries: int = 1  # retries after the first attempt (bounded, classified)
     timeout_s: float = 3600.0
+    scratch_root: str | None = None  # unified managed tmp root (absolute)
+    retention: str = "all"  # or "results": archive the label, reclaim scratch
     pseudos: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_PSEUDOS))
 
 
@@ -487,7 +491,8 @@ def pseudo_identities(config: QeConfig) -> dict[str, dict[str, str | None]]:
 # not change the physical label a converged SCF produces. Scientific
 # parameters and platform profiles stay separate.
 _EXECUTION_FIELDS = frozenset(
-    {"pw_cmd", "timeout_s", "max_retries", "density_source", "startpot_file"}
+    {"pw_cmd", "timeout_s", "max_retries", "density_source", "startpot_file",
+     "scratch_root", "retention"}
 )
 
 
@@ -526,6 +531,10 @@ def normalize_config_paths(config: QeConfig) -> QeConfig:
     if config.density_source is not None:
         updates["density_source"] = str(
             Path(config.density_source).expanduser().resolve()
+        )
+    if config.scratch_root is not None:
+        updates["scratch_root"] = str(
+            Path(config.scratch_root).expanduser().resolve()
         )
     return dataclasses.replace(config, **updates)
 
@@ -619,7 +628,7 @@ class DensitySource:
 
 
 def write_density_manifest(attempt_dir: Path, *, engine: QeEngine, atoms: Atoms,
-                           source: dict) -> Path:
+                           source: dict, save_dir: str | None = None) -> Path:
     """Record what a successful attempt produced, so a later computation can
     verify origin and reference-settings compatibility before reusing it."""
     manifest = {
@@ -628,7 +637,8 @@ def write_density_manifest(attempt_dir: Path, *, engine: QeEngine, atoms: Atoms,
         "reference_fingerprint": engine.fingerprint,
         "nat": len(atoms),
         "species": sorted(_species(atoms)),
-        "save_dir": f"tmp/{QE_PREFIX}.save",
+        "save_dir": save_dir if save_dir is not None
+        else f"tmp/{QE_PREFIX}.save",
         "source": source,
         "created_unix": time.time(),
     }
@@ -657,6 +667,41 @@ def load_density_source(origin_dir: Path, *, engine: QeEngine,
     if not save_dir.is_dir():
         return None, "density files are missing"
     return DensitySource(origin_dir=origin_dir, save_dir=save_dir, manifest=manifest), ""
+
+
+def check_scratch_options(config: QeConfig, *, engine_name: str) -> None:
+    """The scratch options and the combinations refused up front.
+
+    ``retention="all"`` (default) keeps the attempt's scratch;
+    ``"results"`` archives the verified label outside the scratch root
+    and reclaims the attempt's subtree — it composes with nothing that
+    reuses densities, because a chained start would read the scratch it
+    deletes.  Reference counting across runs is out of scope.  An empty
+    scratch_root means the legacy per-run-root behavior (unchanged)."""
+    if config.retention not in scratch_mod.RETENTION_MODES:
+        raise ValueError(
+            f"retention must be one of {scratch_mod.RETENTION_MODES}, got "
+            f"{config.retention!r}: {engine_name}")
+    if config.retention == "results" and (
+            config.startpot_file or config.density_source is not None):
+        raise ValueError(
+            "retention='results' does not compose with startpot_file or "
+            "density_source (a chained density lives in the scratch it "
+            f"would reclaim): {engine_name}")
+
+
+def _mark_manifest_scratch_removed(archive_dir: Path) -> None:
+    """Mark the archived density manifest once its scratch was reclaimed:
+    provenance is kept, but the manifest never claims the .save survives.
+    Best-effort provenance only — a read/write failure never blocks a
+    delivered label; the caller marks it only after a confirmed reclaim."""
+    try:
+        path = archive_dir / DENSITY_MANIFEST
+        manifest = json.loads(path.read_text())
+        manifest["scratch_removed"] = True
+        path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    except Exception:  # noqa: BLE001, S110 — provenance must never fail a delivered label
+        pass
 
 
 def _stage_density_into(density: DensitySource, attempt_dir: Path, *,
@@ -733,9 +778,11 @@ class QeEngine:
         # Path inputs are fixed against the construction-time cwd: the
         # fingerprint and the subprocess must resolve the same files.
         self.config = normalize_config_paths(config)
+        check_scratch_options(self.config, engine_name=recipe_name(self.config))
         self.run_root = Path(run_root)
         self.run_root.mkdir(parents=True, exist_ok=True)
         self._event_log = event_log
+        self._scratch_run_uuid = uuid.uuid4().hex[:12]
         self._last_density_dir: Path | None = None
         self._io_counter = 0
         self._request_counter = 0
@@ -860,13 +907,31 @@ class QeEngine:
                 # write an explicit atomic-start input instead of launching a
                 # startpot='file' run that is known to have nothing to read.
                 attempt_config = dataclasses.replace(self.config, startpot_file=False)
+            archive_dir = run_dir / f"attempt-{attempt}"
+            handle = None
+            if self.config.scratch_root is not None:
+                handle = scratch_mod.allocate(
+                    run_root=self.run_root,
+                    scratch_root=self.config.scratch_root,
+                    run_uuid=self._scratch_run_uuid,
+                    backend_role="reference",
+                    request_id=request_id,
+                    attempt_id=f"attempt-{attempt}",
+                    archive_dir=archive_dir,
+                    retention=self.config.retention)
+            self._last_scratch_handle = handle
             try:
                 result = self._attempt(
-                    atoms, run_dir / f"attempt-{attempt}", attempt_config,
+                    atoms, archive_dir, attempt_config,
                     density=density if use_density else None,
-                    request_id=request_id,
+                    request_id=request_id, scratch_handle=handle,
                 )
             except QeEngineError as error:
+                if handle is not None:
+                    try:
+                        scratch_mod.mark_failed(handle, str(error))
+                    except Exception:  # noqa: BLE001, S110 — the real error must win
+                        pass
                 record = self.last_attempt_records[-1]
                 if record["status"] == "running":
                     # Pre-launch failure (staging, input write): terminated
@@ -901,6 +966,11 @@ class QeEngine:
                 continue
             except Exception:
                 # Never leave an attempt record "running", whatever failed.
+                if handle is not None:
+                    try:
+                        scratch_mod.mark_failed(handle, "unexpected error")
+                    except Exception:  # noqa: BLE001, S110 — the real error must win
+                        pass
                 record = self.last_attempt_records[-1]
                 if record["status"] == "running":
                     record["status"] = "failed"
@@ -908,7 +978,19 @@ class QeEngine:
                 raise
             record = self.last_attempt_records[-1]
             record.update(status="success", error=None, retryable=None)
-            self._last_density_dir = run_dir / f"attempt-{attempt}"
+            if handle is not None and self.config.retention == "results":
+                receipt = scratch_mod.cleanup(handle)
+                record["scratch_cleanup"] = receipt  # the complete receipt
+                if receipt["status"] == "cleaned":
+                    _mark_manifest_scratch_removed(archive_dir)
+                # the reclaimed density no longer exists — never claim it
+                # as a source for a later chained start
+                self._last_density_dir = None
+            elif handle is not None:
+                record["scratch_cleanup"] = scratch_mod.mark_kept(handle)
+                self._last_density_dir = archive_dir
+            else:
+                self._last_density_dir = archive_dir
             # wall_time_s is the physical total of this call: every attempt
             # span (staging + process + validation), not only the last
             # successful process.
@@ -947,11 +1029,18 @@ class QeEngine:
 
     def _attempt(self, atoms: Atoms, attempt_dir: Path, config: QeConfig, *,
                  density: DensitySource | None = None,
-                 request_id: str) -> EngineResult:
-        attempt_dir.mkdir(parents=True, exist_ok=False)
+                 request_id: str,
+                 scratch_handle: scratch_mod.AttemptScratch | None = None
+                 ) -> EngineResult:
+        work_dir = (scratch_handle.scratch_dir
+                    if scratch_handle is not None else attempt_dir)
+        if scratch_handle is None:
+            attempt_dir.mkdir(parents=True, exist_ok=False)
+        else:
+            attempt_dir.mkdir(parents=True, exist_ok=True)
         record: dict = {
             "attempt": len(self.last_attempt_records) + 1,
-            "directory": str(attempt_dir),
+            "directory": str(work_dir),
             "start": "density" if density is not None else "atomic",
             "status": "running",
             "failure_kind": None,
@@ -971,22 +1060,22 @@ class QeEngine:
         try:
             if density is not None:
                 copy_elapsed_s, copy_bytes = self._stage_density(
-                    density, attempt_dir, request_id=request_id
+                    density, work_dir, request_id=request_id
                 )
                 record["density_from"] = str(density.origin_dir)
                 record["density_copy_s"] = copy_elapsed_s
                 record["density_copy_bytes"] = copy_bytes
 
-            # Absolute paths: the subprocess runs with cwd=attempt_dir, so a
+            # Absolute paths: the subprocess runs with cwd=work_dir, so a
             # relative run_root would otherwise stop resolving.
-            in_path = (attempt_dir / "pw.in").resolve()
-            out_path = (attempt_dir / "pw.out").resolve()
+            in_path = (work_dir / "pw.in").resolve()
+            out_path = (work_dir / "pw.out").resolve()
             write_qe_input(in_path, atoms, config)
         except QeEngineError:
             raise  # pre-launch input rejection; compute() terminates the record
         except Exception as error:
             raise QeEngineError(
-                f"attempt setup failed before any launch in {attempt_dir}: {error}"
+                f"attempt setup failed before any launch in {work_dir}: {error}"
             ) from error
 
         # The durable receipt trail of the launch boundary (C2): prepared
@@ -1000,7 +1089,7 @@ class QeEngine:
             with out_path.open("w") as fh:
                 proc = subprocess.Popen(
                     [*config.pw_cmd, "-in", str(in_path)],
-                    cwd=attempt_dir,
+                    cwd=work_dir,
                     stdout=fh,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,  # own process group: killable as a unit
@@ -1073,13 +1162,15 @@ class QeEngine:
             record.update(status="failed", failure_kind=phase, error=repr(error))
             self._emit_attempt(record, request_id=request_id)
             raise QeEngineError(
-                f"output {phase} failed in {attempt_dir}: {error}",
+                f"output {phase} failed in {work_dir}: {error}",
                 retryable=True,
             ) from error
 
         try:
             write_density_manifest(
                 attempt_dir, engine=self, atoms=atoms,
+                save_dir=(None if scratch_handle is None else
+                          str(work_dir / "tmp" / f"{QE_PREFIX}.save")),
                 source=(
                     {"kind": "atomic"} if density is None else {
                         "kind": "copied",
@@ -1101,6 +1192,22 @@ class QeEngine:
             raise QeEngineError(
                 f"density manifest could not be written in {attempt_dir}: {error}"
             ) from error
+        if scratch_handle is not None:
+            # the durable result must be archived OUT of the scratch root
+            # before any reclaim — the manifest above is necessary but the
+            # raw input/output are part of the result too
+            try:
+                scratch_mod.archive(scratch_handle, ["pw.in", "pw.out"])
+            except Exception as error:
+                record["wall_time_s"] = time.perf_counter() - t0
+                record.update(status="post_processing_failed",
+                              failure_kind="post_processing",
+                              error=repr(error))
+                self._emit_attempt(record, request_id=request_id)
+                raise QeEngineError(
+                    "scratch archive failed in "
+                    f"{scratch_handle.scratch_dir}: {error}"
+                ) from error
         record["wall_time_s"] = time.perf_counter() - t0
         record.update(status="success", error=None)
         self._emit_attempt(record, request_id=request_id)

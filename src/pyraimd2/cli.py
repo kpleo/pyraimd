@@ -108,6 +108,20 @@ def build_parser() -> argparse.ArgumentParser:
     backends = commands.add_parser(
         "backends", help="list registered backend factories")
     backends.set_defaults(func=_cmd_backends)
+
+    scratch_cmd = commands.add_parser(
+        "scratch", help="inspect or reclaim a unified managed tmp root")
+    scratch_cmd.add_argument(
+        "action", choices=("inspect", "clean"),
+        help="inspect lists managed tasks with states, retention reasons and "
+             "sizes; clean retries archived cleanup-pending attempts "
+             "(unknown, failed or active entries are always kept)")
+    scratch_cmd.add_argument("--root", required=True,
+                             help="the scratch root to inspect or clean")
+    scratch_cmd.add_argument("--dry-run", action="store_true",
+                             help="with clean: only report what would be "
+                                  "reclaimed")
+    scratch_cmd.set_defaults(func=_cmd_scratch)
     return parser
 
 
@@ -265,6 +279,22 @@ def _cmd_backends(args: argparse.Namespace) -> int:
     print("registered backends:")
     for name, info in available_backends().items():
         print(f"  {name:20s} {info['kind'] or '-':10s} {info['origin']}")
+    return EXIT_OK
+
+
+def _cmd_scratch(args: argparse.Namespace) -> int:
+    from pyraimd2.runtime import scratch as scratch_mod
+
+    root = Path(args.root).expanduser()
+    if not root.is_absolute():
+        root = Path.cwd() / root
+    root = root.resolve()
+    if args.action == "inspect":
+        print(json.dumps(scratch_mod.inspect_root(root), indent=2,
+                         default=str))
+        return EXIT_OK
+    result = scratch_mod.clean_pending(root, dry_run=args.dry_run)
+    print(json.dumps(result, indent=2, default=str))
     return EXIT_OK
 
 

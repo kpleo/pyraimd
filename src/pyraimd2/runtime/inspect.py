@@ -16,9 +16,13 @@ import io
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from ase import units
+
+if TYPE_CHECKING:
+    from pyraimd2.store.store import Store
 
 from pyraimd2.runtime.costs import orphan_attempt_directories, summarize_tasks
 from pyraimd2.runtime.events import (
@@ -30,7 +34,6 @@ from pyraimd2.runtime.events import (
     STEP_COMPLETED,
     EventLogError,
 )
-from pyraimd2.store.store import Store
 
 
 def _read_events(path: Path) -> list[dict]:
@@ -93,6 +96,8 @@ def _last_checkpoint(run_dir: Path) -> dict | None:
 
 
 def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
+    from pyraimd2.store.store import Store  # lazy: breaks a store→engines→runtime cycle
+
     """Structured run status from the run directory (events + trajectory db).
 
     Cost numbers come from the authoritative task events: actual physical

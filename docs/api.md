@@ -150,6 +150,13 @@ Persistence, identity and accounting behind resumable runs.
 - Models and labels: `ModelRegistry` (immutable per-model artifacts) /
   `ModelRegistryError`, `StatefulUpdater` (the resumable updater protocol),
   `LabelCache` / `label_key` (exact-match verification cache).
+- Scratch lifecycle (0.7.1): `runtime.scratch` — one unified managed tmp
+  root with exclusive per-attempt directories; `allocate` → `archive` →
+  `cleanup` with atomic records outside the root, `inspect_root` and
+  `clean_pending` (dry-run first) for one view and idempotent retries.
+  Opt-in via `[scratch]` in configuration or
+  `QeConfig(scratch_root=..., retention=...)`; the shared root is never
+  recursively deleted and failed/unarchived attempts are always kept.
 
 ## `pyraimd2.energetics` — pure numerics
 

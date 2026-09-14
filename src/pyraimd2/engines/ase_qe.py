@@ -50,6 +50,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -69,17 +70,20 @@ from pyraimd2.engines.qe_engine import (
     QeConfig,
     QeEngineError,
     _initial_magmoms,
+    _mark_manifest_scratch_removed,
     _settings_digest,
     _stage_density_into,
     _total_charge,
     allocate_run_dir,
     check_qe_run_text,
+    check_scratch_options,
     classify_qe_failure_text,
     load_density_source,
     normalize_config_paths,
     recipe_name,
     write_density_manifest,
 )
+from pyraimd2.runtime import scratch as scratch_mod
 
 _TIMEOUT_DEFAULT = QeConfig.timeout_s  # dataclass field default
 
@@ -168,6 +172,7 @@ class AseQeEngine(AseEngine):
                  command: str | None = None,
                  event_log: object | None = None) -> None:
         config = normalize_config_paths(config)
+        check_scratch_options(config, engine_name=recipe_name(config))
         if config.timeout_s != _TIMEOUT_DEFAULT:
             raise EngineError(
                 "AseQeEngine cannot enforce timeout_s through ASE's FileIO "
@@ -179,6 +184,8 @@ class AseQeEngine(AseEngine):
         self.run_root.mkdir(parents=True, exist_ok=True)
         self._command = command
         self._event_log = event_log
+        self._scratch_run_uuid = uuid.uuid4().hex[:12]
+        self._last_scratch_handle = None
         self._io_counter = 0
         self._request_counter = 0
         self._last_density_dir: Path | None = None
@@ -346,7 +353,23 @@ class AseQeEngine(AseEngine):
                 retries_done += 1
                 attempt += 1
                 continue
-            self._last_density_dir = Path(self.last_attempt_records[-1]["directory"])
+            record = self.last_attempt_records[-1]
+            handle = self._last_scratch_handle
+            archive_dir = (handle.archive_dir if handle is not None
+                           else Path(record["directory"]))
+            if handle is not None and self.config.retention == "results":
+                receipt = scratch_mod.cleanup(handle)
+                record["scratch_cleanup"] = receipt  # the complete receipt
+                if receipt["status"] == "cleaned":
+                    _mark_manifest_scratch_removed(handle.archive_dir)
+                # the reclaimed density no longer exists — never claim it
+                # as a source for a later chained start
+                self._last_density_dir = None
+            elif handle is not None:
+                record["scratch_cleanup"] = scratch_mod.mark_kept(handle)
+                self._last_density_dir = archive_dir
+            else:
+                self._last_density_dir = archive_dir
             total_wall = sum(r.get("wall_time_s", 0.0)
                              for r in self.last_attempt_records)
             return EngineResult(
@@ -370,10 +393,19 @@ class AseQeEngine(AseEngine):
         never used for reading — they let ASE silently re-execute when a
         property is missing.
         """
-        directory = allocate_run_dir(self.run_root, base)
+        archive_dir = allocate_run_dir(self.run_root, base)
+        handle = None
+        if self.config.scratch_root is not None:
+            handle = scratch_mod.allocate(
+                run_root=self.run_root, scratch_root=self.config.scratch_root,
+                run_uuid=self._scratch_run_uuid, backend_role="reference",
+                request_id=request_id, attempt_id=f"attempt-{attempt}",
+                archive_dir=archive_dir, retention=self.config.retention)
+        self._last_scratch_handle = handle
+        work_dir = handle.scratch_dir if handle is not None else archive_dir
         record: dict = {
             "attempt": attempt,
-            "directory": str(directory),
+            "directory": str(work_dir),
             "start": "density" if density is not None else "atomic",
             "status": "running",
             "failure_kind": None,
@@ -390,13 +422,13 @@ class AseQeEngine(AseEngine):
             if density is not None:
                 self._io_counter += 1
                 copy_s, copy_bytes = _stage_density_into(
-                    density, directory, event_log=self._event_log,
+                    density, work_dir, event_log=self._event_log,
                     request_id=request_id, io_counter=self._io_counter,
                 )
                 record["density_from"] = str(density.origin_dir)
                 record["density_copy_s"] = copy_s
                 record["density_copy_bytes"] = copy_bytes
-            self.calculator.directory = directory
+            self.calculator.directory = work_dir
             self._apply_electronic_state(atoms, startpot=density is not None)
             # Every compute is a real execution: an external SCF must never be
             # served from ASE's geometry cache (reference executions are
@@ -409,21 +441,23 @@ class AseQeEngine(AseEngine):
         except Exception as error:
             record.update(status="failed", failure_kind="input_write",
                           error=repr(error))
+            self._mark_scratch_failed(handle, repr(error))
             raise QeEngineError(
-                f"espresso input could not be written in {directory}: {error}"
+                f"espresso input could not be written in {work_dir}: {error}"
             ) from error
 
         # Durable prepared receipt before ASE's execute boundary (C2).
         self._emit_receipt("prepared", record, request_id=request_id)
         process_t0 = time.perf_counter()
         try:
-            self.calculator.template.execute(directory, self.calculator.profile)
+            self.calculator.template.execute(work_dir, self.calculator.profile)
         except FileNotFoundError as error:
             # The executable never started: zero launches, no attempt event.
             self._emit_receipt("not_launched", record,
                                request_id=request_id, error=str(error))
             record.update(status="failed", failure_kind="executable_missing",
                           error=str(error))
+            self._mark_scratch_failed(handle, str(error))
             raise QeEngineError(
                 f"pw.x executable not found ({self.calculator.profile.command!r}): "
                 f"{error}"
@@ -434,34 +468,39 @@ class AseQeEngine(AseEngine):
             record["returncode"] = error.returncode
             failure = self._classified(
                 EngineError(f"pw.x exited with code {error.returncode}"),
-                directory)
+                work_dir)
             record.update(status="failed", failure_kind="process",
                           error=str(failure))
             self._emit_attempt(record, request_id=request_id)
+            self._mark_scratch_failed(handle, str(failure))
             raise failure from error
         record["process_s"] = time.perf_counter() - process_t0
         try:
-            results = dict(self.calculator.template.read_results(directory))
+            results = dict(self.calculator.template.read_results(work_dir))
             self.calculator.results = results
             self.calculator.atoms = atoms.copy()
             result = self._validated_result(results, len(atoms))
-            check_qe_run_text(self._read_output(directory), len(atoms))
+            check_qe_run_text(self._read_output(work_dir), len(atoms))
         except QeEngineError as error:
             record["wall_time_s"] = time.perf_counter() - t0
             record.update(status="failed", failure_kind="parse", error=str(error))
             self._emit_attempt(record, request_id=request_id)
+            self._mark_scratch_failed(handle, str(error))
             raise
         except Exception as error:
             record["wall_time_s"] = time.perf_counter() - t0
             record.update(status="failed", failure_kind="parse", error=repr(error))
             self._emit_attempt(record, request_id=request_id)
+            self._mark_scratch_failed(handle, repr(error))
             raise QeEngineError(
-                f"espresso output processing failed in {directory}: {error}",
+                f"espresso output processing failed in {work_dir}: {error}",
                 retryable=True,
             ) from error
         try:
             write_density_manifest(
-                directory, engine=self, atoms=atoms,
+                archive_dir, engine=self, atoms=atoms,
+                save_dir=(None if handle is None else
+                          str(work_dir / "tmp" / "pyraimd2.save")),
                 source=(
                     {"kind": "atomic"} if density is None else {
                         "kind": "copied",
@@ -482,14 +521,42 @@ class AseQeEngine(AseEngine):
                           failure_kind="post_processing", error=repr(error))
             self._emit_attempt(record, request_id=request_id)
             raise QeEngineError(
-                f"density manifest could not be written in {directory}: {error}"
+                "density manifest could not be written in "
+                f"{archive_dir}: {error}"
             ) from error
+        if handle is not None:
+            # the durable result must be archived OUT of the scratch root
+            # before any reclaim
+            try:
+                scratch_mod.archive(handle, ["espresso.pwi", "espresso.pwo"])
+            except Exception as error:
+                record["wall_time_s"] = time.perf_counter() - t0
+                record.update(status="post_processing_failed",
+                              failure_kind="post_processing",
+                              error=repr(error))
+                self._emit_attempt(record, request_id=request_id)
+                raise QeEngineError(
+                    f"scratch archive failed in {work_dir}: {error}"
+                ) from error
         record["wall_time_s"] = time.perf_counter() - t0
         record.update(status="success", error=None)
         self._emit_attempt(record, request_id=request_id)
         return result
 
+    @staticmethod
+    def _mark_scratch_failed(handle, error_text: str) -> None:
+        """Best-effort failed_kept marking; the real error always wins."""
+        if handle is None:
+            return
+        try:
+            scratch_mod.mark_failed(handle, error_text)
+        except Exception:  # noqa: BLE001, S110 — the real error must win
+            pass
+
     def _validated_result(self, results: dict, nat: int) -> EngineResult:
+        """Numeric completeness of one executed run's results (units and
+        signs are ASE's espresso reader's; the text contract is checked
+        separately by check_qe_run_text)."""
         """Numeric completeness of one executed run's results (units and
         signs are ASE's espresso reader's; the text contract is checked
         separately by check_qe_run_text)."""

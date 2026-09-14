@@ -260,6 +260,31 @@ fixed for the run (change them with a fork, not a resume).
 - `keep_generations`: only 2 is accepted; the runtime keeps exactly two
   generations.
 
+### [scratch] (opt-in unified temporary root, 0.7.1)
+
+One unified managed tmp root for solver scratch, with a
+durably-archived-then-reclaimed lifecycle.  Absent this section every
+attempt behaves exactly as before (per-run `calculations/` scratch).
+
+- `root` (path, required when the section is present): the unified tmp
+  root; a relative path resolves against the configuration file's
+  directory.  Every adapted attempt runs in its exclusive
+  `tmp/<run-uuid>/<backend-role>/<request-uuid>/<attempt-id>/`
+  directory underneath; the shared root is never recursively deleted.
+- `retention` (`all` default, or `results`): `all` keeps the attempt's
+  scratch on the unified root; `results` archives the verified result
+  out of scratch and reclaims the attempt's subtree immediately — in
+  this stage for standalone SCF; `results` with
+  `startpot_file`/`density_source` is refused up front (a chained
+  density lives in the scratch it would reclaim).
+- Lifecycle records live outside the root in `scratch_records/`
+  (authoritative, atomically updated); results and `pw.in`/`pw.out`
+  stay in the run's persistent directories, so `inspect`/`export` never
+  depend on reclaimed scratch.  Currently adapted backends: `qe` and
+  `qe-ase`; others keep their existing behavior.  Inspect or retry a
+  root with `pyramid scratch inspect --root PATH` and
+  `pyramid scratch clean --root PATH [--dry-run]`.
+
 ### [output]
 
 Derived, regenerable views over the authoritative store:

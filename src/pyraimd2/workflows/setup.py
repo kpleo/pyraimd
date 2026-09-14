@@ -42,7 +42,7 @@ from ase.io import read as ase_read
 from pyraimd2 import __version__
 from pyraimd2.backends import available_backends, create_backend
 from pyraimd2.backends.registry import ENGINE, SURROGATE, backend_capabilities
-from pyraimd2.config import BackendConfig, PyramidConfig
+from pyraimd2.config import BackendConfig, PyramidConfig, ScratchConfig
 from pyraimd2.engines.base import CapabilityMismatchError
 from pyraimd2.runtime.inspect import _read_events, inspect_run
 from pyraimd2.runtime.inspect import summary_csv as _summary_csv
@@ -252,15 +252,43 @@ def _resolved_pseudo_problems(engine: object | None, atoms: Atoms) -> list[str]:
 
 def build_backends(config: PyramidConfig, *, run_dir: Path | None = None,
                    event_log: Any = None) -> tuple[object | None, object | None]:
-    """(reference engine, surrogate) per the configured mode."""
+    """(reference engine, surrogate) per the configured mode.
+
+    A configured [scratch] section is merged into the options of factories
+    that declare scratch support (``scratch_root`` in the signature) —
+    backend-section options always win over the section defaults, and no
+    factory without the declaration is offered the new parameters.
+    """
     engine = surrogate = None
-    if config.reference is not None:
-        engine = create_configured_backend("reference", config.reference,
+    reference, surrogate_config = config.reference, config.surrogate
+    if config.scratch is not None:
+        reference = _with_scratch("reference", reference, config.scratch)
+        surrogate_config = _with_scratch("surrogate", surrogate_config,
+                                         config.scratch)
+    if reference is not None:
+        engine = create_configured_backend("reference", reference,
                                            run_dir=run_dir, event_log=event_log)
-    if config.surrogate is not None:
-        surrogate = create_configured_backend("surrogate", config.surrogate,
+    if surrogate_config is not None:
+        surrogate = create_configured_backend("surrogate", surrogate_config,
                                               run_dir=run_dir)
     return engine, surrogate
+
+
+def _with_scratch(section: str, backend: BackendConfig | None,
+                  scratch: ScratchConfig) -> BackendConfig | None:
+    """Merge the [scratch] section into a scratch-aware factory's options.
+
+    Only the two QE adapters support the managed lifecycle in this stage —
+    no other factory is offered the new parameters (a ``**kwargs`` factory
+    is not proof of support).  Backend-section options win over the
+    section defaults."""
+    if backend is None or backend.name not in ("qe", "qe-ase"):
+        return backend
+    options = {"scratch_root": str(scratch.root),
+               "retention": scratch.retention, **backend.options}
+    if options == dict(backend.options):
+        return backend
+    return BackendConfig(name=backend.name, options=options)
 
 
 # ---------------------------------------------------------------------------

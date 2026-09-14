@@ -30,7 +30,7 @@ the example plugins below come from that tag's source tree):
 
 ```sh
 python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
-pip install pyraimd2-0.7.0-py3-none-any.whl
+pip install pyraimd2-0.7.1-py3-none-any.whl
 ```
 
 A first run with the built-in harmonic model — the analytic demo needs no
@@ -150,6 +150,22 @@ each backend before committing to a run.
   directory). The offline walkthrough
   [examples/file_model_relocation/](examples/file_model_relocation/) shows
   the full loop in two processes.
+- Solver scratch can live on **one unified managed tmp root** instead of
+  inside each run: an opt-in `[scratch] root = "...", retention = "..."`
+  section (or `QeConfig(scratch_root=..., retention=...)`). Every adapted
+  attempt runs in its exclusive `tmp/<run-uuid>/<backend-role>/<request>/
+  <attempt>/` directory; with `retention = "results"` the verified result
+  is archived out of scratch and the attempt's subtree is reclaimed
+  immediately, with `pyramid scratch inspect --root PATH` and
+  `pyramid scratch clean --root PATH [--dry-run]` to view and safely retry.
+  A complete fake-QE walkthrough — install, configure the root, run a
+  standalone label, read the archived result, inspect and clean — is in
+  [examples/standalone_qe_label/](examples/standalone_qe_label/) (its
+  `demo_fake.sh` verifies the program flow only; it produces no real DFT
+  label).  Older processes never switch code mid-run, and existing runs
+  are never migrated or cleaned retroactively: enable the root for new
+  tasks.  The verified cross-version scope today is the plain-NVT toy
+  checkpoint resume under identical dependencies.
 - Changing settings means a new run, or a library-level `fork` that inherits
   the physical state and model chain under a new check stream.
 
@@ -197,7 +213,7 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   use either a reference engine or a surrogate. MD supports reference-only,
   surrogate-only and adaptive modes, with checkpoints, resume and export.
   Adaptive mode applies only to MD.
-- **Dynamics.** The current release (0.7.0) supports fixed-cell NVE and NVT
+- **Dynamics.** The current release (0.7.1) supports fixed-cell NVE and NVT
   (ASE Langevin, `fixcm=False`) with `FixAtoms`: plain
   reference/surrogate modes, and adaptive MD in both ensembles — with a
   fixed base model via TOML/CLI, or with guarded online updates through
