@@ -12,6 +12,7 @@ from ase import Atoms
 from pyraimd2.cli import main as cli_main
 from pyraimd2.config import ConfigError, load_config, load_resolved_config
 from pyraimd2.engines.qe_engine import QeConfig, QeEngine
+from pyraimd2.workflows.md import run_workflow
 from pyraimd2.workflows.setup import build_backends
 
 FIXTURE = Path(__file__).parents[1] / "data" / "qe_si_scf.out"
@@ -141,9 +142,11 @@ def _qe_workflow_config(root: Path, kind: str, scratch: str) -> Path:
         'Lattice="5.43 0.0 0.0 0.0 5.43 0.0 0.0 0.0 5.43" '
         'Properties=species:S:1:pos:R:3 pbc="T T T"\n'
         "Si 0.0 0.0 0.0\nSi 1.36 1.36 1.36\n")
-    # validate_setup requires an existing pseudo_dir; the fake pw.x never
-    # reads real UPFs, so an empty directory satisfies the path check
+    # validate_setup requires an existing pseudo_dir and the mapped UPF
+    # files; the fake pw.x never reads them, placeholders satisfy the check
     (root / "pseudos").mkdir(exist_ok=True)
+    (root / "pseudos" / "Si.pbe-n-kjpaw_psl.1.0.0.UPF").write_text(
+        "placeholder UPF for a fake-pwx run\n")
     script = _success_script(root)
     path = root / "run.toml"
     path.write_text(
@@ -171,8 +174,6 @@ def _assert_scratch_used(root: Path) -> None:
 def test_plain_singlepoint_honours_scratch_section(tmp_path):
     """run_workflow's plain path routes [scratch] into the QE engine
     (regression: _plain_backend bypassed the build_backends merge)."""
-    from pyraimd2.workflows.md import run_workflow
-
     root = tmp_path / "singlepoint"
     config = load_config(_qe_workflow_config(
         root, "singlepoint", '[scratch]\nroot = "./sc"\nretention = "all"\n'))
