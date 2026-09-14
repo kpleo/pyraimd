@@ -167,8 +167,9 @@ def _assert_scratch_used(root: Path) -> None:
     assert list((root / "sc").rglob("pw.out")), "no attempt ran in scratch"
     assert list((run_dir / "calculations").rglob("pw.out")), \
         "no archived pw.out in the run directory"
-    assert list((run_dir / "scratch_records").rglob("*.json")), \
-        "no scratch records written"
+    records = [p for p in run_dir.rglob("*.json")
+               if "scratch_records" in p.parts]
+    assert records, "no scratch records written"
 
 
 def test_plain_singlepoint_honours_scratch_section(tmp_path):
