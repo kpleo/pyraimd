@@ -208,6 +208,8 @@ class QeConfig:
     electron_maxstep: int = 200
     startpot_file: bool = False  # warm start from a compatible density when one exists
     density_source: str | None = None  # directory with a density manifest (known origin)
+    density_source_policy: str = "latest"  # "latest": prefer the most recent successful density; "fixed": always prefer density_source (legacy)
+    disk_io: str | None = None  # QE disk_io; "nowf" writes no wavefunction files (execution knob)
     max_retries: int = 1  # retries after the first attempt (bounded, classified)
     timeout_s: float = 3600.0
     scratch_root: str | None = None  # unified managed tmp root (absolute)
@@ -319,6 +321,8 @@ def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
     lines.append(f"  calculation = 'scf'\n  prefix = '{QE_PREFIX}'\n")
     lines.append(f"  pseudo_dir = '{Path(cfg.pseudo_dir).expanduser().resolve()}'\n")
     lines.append("  outdir = './tmp'\n")
+    if cfg.disk_io is not None:
+        lines.append(f"  disk_io = '{cfg.disk_io}'\n")
     lines.append("  tprnfor = .true.\n  tstress = .true.\n/\n")
     lines.append("&SYSTEM\n  ibrav = 0\n")
     lines.append(f"  nat = {len(atoms)}\n  ntyp = {len(groups)}\n")
@@ -445,32 +449,50 @@ def parse_qe_output(text: str) -> EngineResult:
     )
 
 
-_PSEUDO_HASH_CACHE: dict[tuple[str, int, int], str | None] = {}
+_PSEUDO_HASH_CACHE: dict[tuple[str, int, int, int, int, int], str | None] = {}
+
+# Files this small are cheap to hash: no stat tuple can distinguish rapid
+# same-size rewrites on coarse-timestamp filesystems (both mtime and ctime
+# may share one tick), so small files skip the cache entirely. Larger files
+# use the stat-keyed cache, and only once older than any realistic
+# filesystem mtime tick; ctime/device/inode join the key so a rewrite with
+# a preserved old mtime and an atomic same-path replacement also miss it.
+_SMALL_FILE_MAX_BYTES = 16 * 1024 * 1024
+_RECENT_WRITE_GRACE_S = 10.0
 
 
 def _pseudo_sha256(path: Path) -> str | None:
     """Content sha256 of a pseudopotential file, or None when unreadable.
 
-    Cached by (path, mtime, size): fingerprints are read per evaluation, so
-    multi-MB UPF files must not be re-hashed every time.
+    Files up to 16 MiB are always re-hashed (see the contract above);
+    larger ones are cached so per-evaluation fingerprints stay cheap. This
+    is an identity cache for files provisioned before a run and held
+    constant during it — not a proof of integrity under arbitrary
+    concurrent modification; start/resume-time content verification is the
+    boundary check.
     """
     try:
         stat = path.stat()
     except OSError:
         return None
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    if key not in _PSEUDO_HASH_CACHE:
-        digest: str | None = None
-        try:
-            h = hashlib.sha256()
-            with path.open("rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
-        except OSError:
-            digest = None
+    cacheable = (stat.st_size > _SMALL_FILE_MAX_BYTES
+                 and (time.time() - stat.st_mtime) > _RECENT_WRITE_GRACE_S)
+    key = (str(path), stat.st_mtime_ns, stat.st_size,
+           stat.st_ctime_ns, stat.st_dev, stat.st_ino)
+    if cacheable and key in _PSEUDO_HASH_CACHE:
+        return _PSEUDO_HASH_CACHE[key]
+    digest: str | None = None
+    try:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        digest = h.hexdigest()
+    except OSError:
+        digest = None
+    if cacheable:
         _PSEUDO_HASH_CACHE[key] = digest
-    return _PSEUDO_HASH_CACHE[key]
+    return digest
 
 
 def pseudo_identities(config: QeConfig) -> dict[str, dict[str, str | None]]:
@@ -492,7 +514,7 @@ def pseudo_identities(config: QeConfig) -> dict[str, dict[str, str | None]]:
 # parameters and platform profiles stay separate.
 _EXECUTION_FIELDS = frozenset(
     {"pw_cmd", "timeout_s", "max_retries", "density_source", "startpot_file",
-     "scratch_root", "retention"}
+     "density_source_policy", "disk_io", "scratch_root", "retention"}
 )
 
 
@@ -782,6 +804,10 @@ class QeEngine:
         self.run_root = Path(run_root)
         self.run_root.mkdir(parents=True, exist_ok=True)
         self._event_log = event_log
+        if config.density_source_policy not in ("latest", "fixed"):
+            raise QeEngineError(
+                f"unknown density_source_policy {config.density_source_policy!r} "
+                "(expected 'latest' or 'fixed')")
         self._scratch_run_uuid = uuid.uuid4().hex[:12]
         self._last_density_dir: Path | None = None
         self._io_counter = 0
@@ -1006,12 +1032,23 @@ class QeEngine:
             )
 
     def _resolve_density(self, atoms: Atoms) -> DensitySource | None:
-        """Pick a compatible known-origin density, or decide atomic up front."""
-        candidates: list[tuple[str, Path]] = []
-        if self.config.density_source is not None:
-            candidates.append(("config.density_source", Path(self.config.density_source)))
-        if self._last_density_dir is not None:
-            candidates.append(("previous attempt", self._last_density_dir))
+        """Pick a compatible known-origin density, or decide atomic up front.
+
+        ``density_source_policy="latest"`` (default): the most recent
+        successful density of this engine wins; ``config.density_source``
+        only initializes — the first evaluation, a fresh process (resume),
+        or a fallback when the latest density is unusable. ``"fixed"``
+        keeps the legacy order (config source first) for callers that
+        deliberately re-seed every evaluation."""
+        config_candidate = (("config.density_source", Path(self.config.density_source))
+                            if self.config.density_source is not None else None)
+        latest_candidate = (("previous attempt", self._last_density_dir)
+                            if self._last_density_dir is not None else None)
+        if self.config.density_source_policy == "fixed":
+            ordered = (config_candidate, latest_candidate)
+        else:
+            ordered = (latest_candidate, config_candidate)
+        candidates: list[tuple[str, Path]] = [c for c in ordered if c is not None]
         reasons: list[str] = []
         for label, origin in candidates:
             source, reason = load_density_source(origin, engine=self, atoms=atoms)

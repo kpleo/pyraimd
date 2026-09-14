@@ -7,7 +7,9 @@ Fixture: tests/data/qe_si_scf.out — a QE 7.5 Si bulk parsing fixture: E = -93.
 
 from __future__ import annotations
 
+import os
 import stat
+import time
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +21,7 @@ from pyraimd2.engines.base import EngineError
 from pyraimd2.engines.qe_engine import (
     QeConfig,
     QeEngine,
+    _pseudo_sha256,
     parse_qe_output,
     write_qe_input,
 )
@@ -106,6 +109,65 @@ def _fake_pwx(tmp_path: Path, body: str) -> tuple[str, ...]:
     script.write_text(body)
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return ("bash", str(script))
+
+
+def test_write_input_disk_io_opt_in(tmp_path: Path) -> None:
+    """disk_io is an execution knob: absent by default, written verbatim when set."""
+    out = tmp_path / "pw.in"
+    write_qe_input(out, _water_box(), QeConfig(pseudo_dir="/pseudo"))
+    assert "disk_io" not in out.read_text()
+    write_qe_input(out, _water_box(), QeConfig(pseudo_dir="/pseudo", disk_io="nowf"))
+    assert "disk_io = 'nowf'" in out.read_text()
+
+
+def test_pseudo_sha256_same_tick_same_size_rewrite(tmp_path: Path) -> None:
+    """UPF identity must track content even when a coarse-mtime filesystem
+    makes (path, mtime, size) identical across a same-size rewrite."""
+    pseudo = tmp_path / "X.pbe-n.UPF"
+    pseudo.write_text("pseudo-v1")
+    tick = time.time_ns()
+    os.utime(pseudo, ns=(tick, tick))
+    first = _pseudo_sha256(pseudo)
+    pseudo.write_text("pseudo-v2")
+    os.utime(pseudo, ns=(tick, tick))
+    second = _pseudo_sha256(pseudo)
+    assert first is not None
+    assert second is not None
+    assert first != second
+
+
+def test_pseudo_sha256_old_mtime_same_size_rewrite(tmp_path: Path) -> None:
+    """mtime pinned old, then a same-size rewrite preserving the old mtime:
+    small files are always re-hashed, so the content identity must change."""
+    pseudo = tmp_path / "X.pbe-n.UPF"
+    pseudo.write_text("pseudo-v1")
+    old = (1_600_000_000, 1_600_000_000)
+    os.utime(pseudo, old)
+    first = _pseudo_sha256(pseudo)
+    pseudo.write_text("pseudo-v2")
+    os.utime(pseudo, old)
+    second = _pseudo_sha256(pseudo)
+    assert first is not None
+    assert second is not None
+    assert first != second
+
+
+def test_pseudo_sha256_atomic_replace(tmp_path: Path) -> None:
+    """Atomic same-path replacement: identity follows content even with the
+    mtime pinned old."""
+    pseudo = tmp_path / "X.pbe-n.UPF"
+    pseudo.write_text("pseudo-v1")
+    old = (1_600_000_000, 1_600_000_000)
+    os.utime(pseudo, old)
+    first = _pseudo_sha256(pseudo)
+    staging = tmp_path / "staging.UPF"
+    staging.write_text("pseudo-v2")
+    os.utime(staging, old)
+    os.replace(staging, pseudo)
+    second = _pseudo_sha256(pseudo)
+    assert first is not None
+    assert second is not None
+    assert first != second
 
 
 def test_compute_with_fake_pwx(tmp_path: Path) -> None:
@@ -270,6 +332,79 @@ def test_density_start_fallback_keeps_failed_attempt(tmp_path: Path) -> None:
     assert "startingpot" not in attempt_2
     # The failed attempt's output stays on disk for diagnosis.
     assert "bad density" in (run_dir / "attempt-1" / "pw.out").read_text()
+
+
+def _si() -> Atoms:
+    return Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]], cell=[5.43] * 3, pbc=True)
+
+
+def _density_engine(work: Path, *, policy: str = "latest",
+                    source: str | None = None) -> QeEngine:
+    body = "#!/bin/bash\n" + _MAKE_SAVE + f"cat {FIXTURE.resolve()}\n"
+    return QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(work, body),
+                 startpot_file=True, density_source=source,
+                 density_source_policy=policy),
+        run_root=work / "runs")
+
+
+def test_density_chain_prefers_latest_successful(tmp_path: Path) -> None:
+    """config.density_source only initializes: a continuous chain reuses the
+    most recent successful density, not the original external source."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    assert seed.last_density_decision["start"] == "atomic"
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _density_engine(tmp_path / "b", source=source_dir)
+    engine.compute(_si(), label="first")
+    assert engine.last_density_decision["via"] == "config.density_source"
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "previous attempt"
+    assert engine.last_density_decision["origin"] != source_dir
+
+
+def test_density_chain_fixed_policy_keeps_config_source(tmp_path: Path) -> None:
+    """The legacy fixed order stays available explicitly: every evaluation
+    re-seeds from the configured external source."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _density_engine(tmp_path / "b", policy="fixed", source=source_dir)
+    engine.compute(_si(), label="first")
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "config.density_source"
+    assert engine.last_density_decision["origin"] == source_dir
+
+
+def test_density_latest_invalid_falls_back_to_config(tmp_path: Path) -> None:
+    """When the most recent density is unusable, the chain falls back to the
+    configured external source instead of reusing the broken one."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _density_engine(tmp_path / "b", source=source_dir)
+    engine.compute(_si(), label="first")
+    manifest = Path(engine._last_density_dir) / "density_manifest.json"
+    assert manifest.exists()
+    manifest.unlink()
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "config.density_source"
+
+
+def test_density_resume_fresh_engine_uses_config_source(tmp_path: Path) -> None:
+    """A fresh process (resume) has no in-memory density: the configured
+    external source initializes it."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    resumed = _density_engine(tmp_path / "b", source=source_dir)
+    resumed.compute(_si(), label="resume")
+    assert resumed.last_density_decision["via"] == "config.density_source"
+
+
+def test_density_source_policy_rejects_unknown(tmp_path: Path) -> None:
+    with pytest.raises(EngineError, match="density_source_policy"):
+        _density_engine(tmp_path, policy="sometimes")
 
 
 def test_parse_groups_last_scf_block() -> None:

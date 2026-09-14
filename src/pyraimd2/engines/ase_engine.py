@@ -28,29 +28,50 @@ from pyraimd2.engines.base import (
     EngineResult,
 )
 
-_FILE_HASH_CACHE: dict[tuple[str, int, int], str | None] = {}
+_FILE_HASH_CACHE: dict[tuple[str, int, int, int, int, int], str | None] = {}
+
+# Files this small are cheap to hash: no stat tuple can distinguish rapid
+# same-size rewrites on coarse-timestamp filesystems (both mtime and ctime
+# may share one tick), so small files skip the cache entirely. Larger files
+# use the stat-keyed cache, and only once older than any realistic
+# filesystem mtime tick; ctime/device/inode join the key so a rewrite with
+# a preserved old mtime and an atomic same-path replacement also miss it.
+_SMALL_FILE_MAX_BYTES = 16 * 1024 * 1024
+_RECENT_WRITE_GRACE_S = 10.0
 
 
 def _file_sha256(path: Path) -> str | None:
-    """Content sha256 of a model file, None when unreadable (cached by
-    path/mtime/size so per-evaluation fingerprints stay cheap)."""
+    """Content sha256 of a model file, None when unreadable.
+
+    Files up to 16 MiB are always re-hashed (see the contract above);
+    larger ones are cached so per-evaluation fingerprints stay cheap. This
+    is an identity cache for files provisioned before a run and held
+    constant during it — not a proof of integrity under arbitrary
+    concurrent modification; start/resume-time content verification is the
+    boundary check.
+    """
     try:
         stat = path.stat()
     except OSError:
         return None
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    if key not in _FILE_HASH_CACHE:
-        digest: str | None = None
-        try:
-            h = hashlib.sha256()
-            with path.open("rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
-        except OSError:
-            digest = None
+    cacheable = (stat.st_size > _SMALL_FILE_MAX_BYTES
+                 and (time.time() - stat.st_mtime) > _RECENT_WRITE_GRACE_S)
+    key = (str(path), stat.st_mtime_ns, stat.st_size,
+           stat.st_ctime_ns, stat.st_dev, stat.st_ino)
+    if cacheable and key in _FILE_HASH_CACHE:
+        return _FILE_HASH_CACHE[key]
+    digest: str | None = None
+    try:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        digest = h.hexdigest()
+    except OSError:
+        digest = None
+    if cacheable:
         _FILE_HASH_CACHE[key] = digest
-    return _FILE_HASH_CACHE[key]
+    return digest
 
 
 def _jsonable(value: object) -> object:
