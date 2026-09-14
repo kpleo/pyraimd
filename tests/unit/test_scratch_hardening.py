@@ -164,6 +164,142 @@ def test_recreated_directory_identity_mismatch_refused(tmp_path):
     receipt = scratch_mod.cleanup(handle)
     assert receipt["status"] == "refused"
     assert "identity changed" in receipt["reason"]
+    # the replacement directory's original bytes are never touched
+    assert (handle.scratch_dir / "pw.out").read_text() == "out"
+
+
+def _replace_dir_simulating_number_reuse(handle):
+    """Delete the attempt directory and recreate it empty at the same
+    path, then hand-set the record's pinned dev/ino to the REPLACEMENT's
+    actual values — a simulation of an OS recycling the numeric identity
+    (the Linux CI condition), not claimed as a real Linux experiment."""
+    import shutil
+    shutil.rmtree(handle.scratch_dir)
+    handle.scratch_dir.mkdir()
+    (handle.scratch_dir / "pw.out").write_text("out")
+    replacement = handle.scratch_dir.stat()
+    record = json.loads(handle.record_path.read_text())
+    record["identity"] = {"dev": replacement.st_dev,
+                          "ino": replacement.st_ino}
+    handle.record_path.write_text(json.dumps(record))
+    return record
+
+
+@pytest.mark.parametrize("case", ["missing", "wrong-token", "other-attempt",
+                                  "symlink", "not-json", "unknown-schema",
+                                  "different-attempt-fields"])
+def test_ownership_marker_decides_despite_matching_numbers(tmp_path, case):
+    """Even with every numeric identity check forced to pass (simulated
+    number reuse), a directory without the valid per-attempt ownership
+    marker is never reclaimed: missing / wrong-token / another attempt's
+    marker / link / non-JSON / unknown schema / mismatched association
+    are all refused with the reason, and the bytes are kept."""
+    handle = _make_handle(tmp_path)
+    (handle.scratch_dir / "pw.out").write_text("out")
+    scratch_mod.archive(handle, ["pw.out"])
+    record = _replace_dir_simulating_number_reuse(handle)
+    marker = handle.scratch_dir / scratch_mod.SCRATCH_OWNERSHIP_MARKER
+    if case == "wrong-token":
+        marker.write_text(json.dumps({
+            "record": scratch_mod.SCRATCH_OWNERSHIP_SCHEMA,
+            "ownership": "0" * 32,
+            "run_uuid": record["run_uuid"],
+            "backend_role": record["backend_role"],
+            "request_id": record["request_id"],
+            "attempt_id": record["attempt_id"]}))
+    elif case == "other-attempt":
+        other = _make_handle(tmp_path, request_id="req-other")
+        marker.write_text((other.scratch_dir
+                           / scratch_mod.SCRATCH_OWNERSHIP_MARKER).read_text())
+    elif case == "symlink":
+        genuine = tmp_path / "genuine-marker"
+        genuine.write_text(json.dumps({
+            "record": scratch_mod.SCRATCH_OWNERSHIP_SCHEMA,
+            "ownership": record["ownership"],
+            "run_uuid": record["run_uuid"],
+            "backend_role": record["backend_role"],
+            "request_id": record["request_id"],
+            "attempt_id": record["attempt_id"]}))
+        marker.symlink_to(genuine)
+    elif case == "not-json":
+        marker.write_text("{ not json")
+    elif case == "unknown-schema":
+        marker.write_text(json.dumps({
+            "record": "scratch-attempt-ownership-v0",
+            "ownership": record["ownership"],
+            "run_uuid": record["run_uuid"],
+            "backend_role": record["backend_role"],
+            "request_id": record["request_id"],
+            "attempt_id": record["attempt_id"]}))
+    elif case == "different-attempt-fields":
+        marker.write_text(json.dumps({
+            "record": scratch_mod.SCRATCH_OWNERSHIP_SCHEMA,
+            "ownership": record["ownership"],
+            "run_uuid": record["run_uuid"],
+            "backend_role": record["backend_role"],
+            "request_id": "req-someone-else",
+            "attempt_id": record["attempt_id"]}))
+    receipt = scratch_mod.cleanup(handle)
+    assert receipt["status"] == "refused"
+    assert "identity changed" in receipt["reason"]
+    assert (handle.scratch_dir / "pw.out").read_text() == "out"
+
+
+def test_ownership_rechecked_on_the_open_fd(tmp_path, monkeypatch):
+    """The marker is verified again relative to the held target fd inside
+    the deletion critical section: a swap after the path-level pre-check
+    is still refused before anything is removed."""
+    handle = _make_handle(tmp_path)
+    (handle.scratch_dir / "pw.out").write_text("out")
+    scratch_mod.archive(handle, ["pw.out"])
+    original_verify = scratch_mod._verify_archived_content
+    marker = handle.scratch_dir / scratch_mod.SCRATCH_OWNERSHIP_MARKER
+
+    def swap_marker(record):
+        marker.write_text(json.dumps({
+            "record": scratch_mod.SCRATCH_OWNERSHIP_SCHEMA,
+            "ownership": "0" * 32,
+            "run_uuid": record["run_uuid"],
+            "backend_role": record["backend_role"],
+            "request_id": record["request_id"],
+            "attempt_id": record["attempt_id"]}))
+        return original_verify(record)
+
+    monkeypatch.setattr(scratch_mod, "_verify_archived_content", swap_marker)
+    receipt = scratch_mod.cleanup(handle)
+    assert receipt["status"] == "failed"
+    assert "identity changed" in receipt["error"]
+    assert (handle.scratch_dir / "pw.out").read_text() == "out"
+
+
+def test_record_without_ownership_is_refused_not_adopted(tmp_path):
+    """A record without the per-attempt ownership token (written before
+    it existed, or stripped) is refused conservatively — the manager
+    never mints a new identity to adopt an unknown directory."""
+    handle = _make_handle(tmp_path)
+    (handle.scratch_dir / "pw.out").write_text("out")
+    scratch_mod.archive(handle, ["pw.out"])
+    record = json.loads(handle.record_path.read_text())
+    record.pop("ownership")
+    handle.record_path.write_text(json.dumps(record))
+    receipt = scratch_mod.cleanup(handle)
+    assert receipt["status"] == "refused"
+    assert "ownership" in receipt["reason"]
+    assert handle.scratch_dir.is_dir()
+
+
+def test_dry_run_lists_bad_ownership_marker_as_kept(tmp_path):
+    handle = _make_handle(tmp_path)
+    (handle.scratch_dir / "pw.out").write_text("out")
+    scratch_mod.archive(handle, ["pw.out"])
+    (handle.scratch_dir / scratch_mod.SCRATCH_OWNERSHIP_MARKER).unlink()
+    dry = scratch_mod.clean_pending(tmp_path / "tmp", dry_run=True)
+    assert dry["reclaimable"] == []
+    assert len(dry["kept"]) == 1
+    assert "identity changed" in dry["kept"][0]["reason"]
+    actual = scratch_mod.clean_pending(tmp_path / "tmp", dry_run=False)
+    assert actual["reclaimable"] == [] and actual["receipts"] == []
+    assert handle.scratch_dir.is_dir()
 
 
 def test_unsafe_identity_components_refused(tmp_path):

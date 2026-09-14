@@ -26,12 +26,16 @@ import os
 import shutil
 import stat
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 SCRATCH_ATTEMPT_RECORD = "scratch-attempt-v2"
 SCRATCH_OWNER_RECORD = "scratch-owner-v2"
 SCRATCH_RECORD_DIR = "scratch_records"
+SCRATCH_OWNERSHIP_MARKER = ".pyraimd2-ownership"
+SCRATCH_OWNERSHIP_SCHEMA = "scratch-attempt-ownership-v1"
+_OWNERSHIP_MARKER_CAP = 1 << 16
 RETENTION_MODES = ("all", "results")
 RECORD_STATES = ("allocated", "archived", "archive_failed", "failed_kept",
                  "kept", "cleanup_pending", "cleaned")
@@ -147,6 +151,13 @@ def _validate_record(record: dict, *, path: Path) -> dict:
             or not isinstance(identity.get("ino"), int):
         raise ScratchError(
             f"scratch record {path} has no complete pinned identity")
+    # the independent per-attempt ownership token: records written before
+    # it existed (or stripped of it) are refused conservatively — never
+    # adopted by minting a new identity for an unknown directory
+    if not isinstance(record.get("ownership"), str) \
+            or not record["ownership"]:
+        raise ScratchError(
+            f"scratch record {path} has no usable 'ownership'")
     root = Path(record["scratch_root"])
     scratch_dir = Path(record["scratch_dir"])
     archive_dir = Path(record["archive_dir"])
@@ -230,10 +241,16 @@ def allocate(*, run_root: str | Path, scratch_root: str | Path,
 
     The canonical root, the run/request/attempt identity and the created
     directory's object identity are pinned at allocation — a later record
-    alone can never move the target.  Identities from callers are confined
-    to single path components.  Uniqueness comes from the generated
-    identities, never from a user-chosen label; a collision is an error,
-    never a silent merge.
+    alone can never move the target.  Ownership does not rely on those
+    reusable numbers: each attempt gets an independent random token
+    written as a small regular marker file inside the exclusively
+    created directory (only after that creation succeeds) and stored in
+    the authoritative record; a directory whose marker is missing,
+    replaced or another attempt's is never the original, whatever the
+    dev/ino say.  Identities from callers are confined to single path
+    components.  Uniqueness comes from the generated identities, never
+    from a user-chosen label; a collision is an error, never a silent
+    merge.
     """
     run_root = Path(run_root).resolve()
     root = _checked_root(scratch_root).resolve()
@@ -255,6 +272,15 @@ def allocate(*, run_root: str | Path, scratch_root: str | Path,
             f"scratch attempt directory already exists: {scratch_dir}"
         ) from error
     created = scratch_dir.stat()
+    ownership = uuid.uuid4().hex
+    (scratch_dir / SCRATCH_OWNERSHIP_MARKER).write_text(json.dumps({
+        "record": SCRATCH_OWNERSHIP_SCHEMA,
+        "ownership": ownership,
+        "run_uuid": run_uuid,
+        "backend_role": backend_role,
+        "request_id": request_id,
+        "attempt_id": attempt_id,
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     handle = AttemptScratch(
         run_uuid=run_uuid, backend_role=backend_role, request_id=request_id,
         attempt_id=attempt_id, scratch_dir=scratch_dir,
@@ -280,6 +306,7 @@ def allocate(*, run_root: str | Path, scratch_root: str | Path,
         "scratch_dir": str(scratch_dir),
         "archive_dir": str(archive_dir),
         "identity": {"dev": created.st_dev, "ino": created.st_ino},
+        "ownership": ownership,
         "retention": retention,
         "state": "allocated",
         "created_unix": time.time(),
@@ -358,12 +385,89 @@ def mark_failed(handle: AttemptScratch, error: str) -> dict:
         return record
 
 
+def _check_ownership_marker(record: dict, marker: object) -> None:
+    """Strict marker↔record consistency: the schema, the per-attempt
+    random token and the run/request/attempt association must all match
+    — another attempt's marker, a guess or a stripped file all fail."""
+    if not isinstance(marker, dict) \
+            or marker.get("record") != SCRATCH_OWNERSHIP_SCHEMA:
+        raise ScratchError(
+            "attempt identity changed: ownership marker has unknown schema")
+    if marker.get("ownership") != record["ownership"]:
+        raise ScratchError(
+            "attempt identity changed: ownership marker does not match "
+            "the persistent record")
+    for key in ("run_uuid", "backend_role", "request_id", "attempt_id"):
+        if marker.get(key) != record[key]:
+            raise ScratchError(
+                "attempt identity changed: ownership marker belongs to a "
+                "different attempt")
+
+
+def _ownership_marker_via_path(scratch_dir: Path, record: dict) -> None:
+    """The path-level ownership pre-check: the marker must be a small
+    regular file (never a link) whose content matches the record."""
+    marker = scratch_dir / SCRATCH_OWNERSHIP_MARKER
+    if marker.is_symlink() or not marker.is_file():
+        raise ScratchError(
+            "attempt identity changed: ownership marker is missing or "
+            f"not a regular file: {marker}")
+    try:
+        value = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ScratchError(
+            "attempt identity changed: ownership marker is not readable "
+            f"JSON ({error})") from error
+    _check_ownership_marker(record, value)
+
+
+def _ownership_marker_via_fd(dir_fd: int, record: dict) -> None:
+    """Re-verify the CURRENT ownership marker relative to the held target
+    fd inside the deletion critical section — a no-follow open (a
+    swapped-in link is refused), a regular-file fstat, then the strict
+    content match.  This runs after the path-level pre-check, so a
+    replacement between the two is still caught before anything is
+    deleted."""
+    try:
+        fd = os.open(SCRATCH_OWNERSHIP_MARKER,
+                     os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError as error:
+        raise ScratchError(
+            "attempt identity changed: ownership marker is missing or "
+            f"unreadable ({error})") from error
+    try:
+        current = os.fstat(fd)
+        if not stat.S_ISREG(current.st_mode) \
+                or current.st_size > _OWNERSHIP_MARKER_CAP:
+            raise ScratchError(
+                "attempt identity changed: ownership marker is not a "
+                "small regular file")
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1 << 16)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    try:
+        marker = json.loads(b"".join(chunks).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ScratchError(
+            "attempt identity changed: ownership marker is not valid "
+            f"JSON ({error})") from error
+    _check_ownership_marker(record, marker)
+
+
 def _verify_identity_path(record: dict) -> Path:
     """Re-walk the pinned path level by level: no component may be a
-    symlink, the target must still be exactly the allocated directory
-    (same dev/ino pinned at allocation), and it must sit inside the
-    pinned canonical root — a parent-symlink replacement, a sibling swap
-    or an out-of-scope target is never the original attempt."""
+    symlink, the target must still sit inside the pinned canonical root
+    — a parent-symlink replacement, a sibling swap or an out-of-scope
+    target is never the original attempt.  The dev/ino pinned at
+    allocation are re-compared, but they are only auxiliary (an OS may
+    recycle the numbers): the decisive proof is the independent
+    per-attempt ownership marker, which a recreated or swapped directory
+    cannot show."""
     root = Path(record["scratch_root"])
     scratch_dir = Path(record["scratch_dir"])
     relative = scratch_dir.relative_to(root)
@@ -386,6 +490,7 @@ def _verify_identity_path(record: dict) -> Path:
         raise ScratchError(
             f"attempt directory identity changed since allocation "
             f"(pinned {pinned}, now dev={actual.st_dev} ino={actual.st_ino})")
+    _ownership_marker_via_path(scratch_dir, record)
     return scratch_dir
 
 
@@ -523,20 +628,27 @@ def _step_down_fd(parent_fd: int, name: str) -> int:
     return child_fd
 
 
-def _descend_and_empty(dir_fd: int) -> int:
+def _descend_and_empty(dir_fd: int, *, delete_last: str | None = None) -> int:
     """Empty the held directory fd (the CPython fd-safe rmtree descent):
     each child is examined without following links; a directory child is
     opened relative to this fd and confirmed to be the same object
     before it is entered — a swap for a link to a live sibling is
     refused, never descended into; anything else is unlinked relative
-    to this fd.  Returns the total size of the unlinked files."""
+    to this fd.  ``delete_last`` names a file (the ownership marker)
+    unlinked only after everything else in this directory succeeded —
+    a mid-deletion failure never strips the evidence a retry needs.
+    Returns the total size of the unlinked files."""
     removed = 0
+    deferred = None
     with os.scandir(dir_fd) as entries:
         for entry in entries:
             name = entry.name
             if name in (".", ".."):
                 continue
             listed = entry.stat(follow_symlinks=False)
+            if name == delete_last:
+                deferred = listed
+                continue
             if stat.S_ISDIR(listed.st_mode):
                 child_fd, _ = _open_child_fd(dir_fd, name, expect=listed)
                 try:
@@ -547,6 +659,9 @@ def _descend_and_empty(dir_fd: int) -> int:
             else:
                 os.unlink(name, dir_fd=dir_fd)
                 removed += listed.st_size
+    if deferred is not None:
+        os.unlink(delete_last, dir_fd=dir_fd)
+        removed += deferred.st_size
     return removed
 
 
@@ -555,11 +670,16 @@ def _delete_tree_via_fd(record: dict) -> int:
     from the canonical root each level is opened relative to its held
     parent without following links and confirmed against the object
     statted just before; the attempt directory itself must match the
-    dev/ino pinned at allocation; the final rmdir is issued relative to
-    the held parent fd — the target is never re-located by its original
-    absolute string.  Platforms without dir_fd/O_NOFOLLOW/fd-scandir
-    support refuse safely instead of deleting unanchored.  Returns the
-    total size of the removed files."""
+    dev/ino pinned at allocation AND still show the per-attempt
+    ownership marker — re-verified relative to the held target fd inside
+    this critical section, so a replacement after the path-level
+    pre-check is caught before anything is removed; the marker itself
+    is unlinked LAST, so a mid-deletion I/O failure never strips the
+    ownership evidence a retry needs.  The final rmdir is issued
+    relative to the held parent fd — the target is never re-located by
+    its original absolute string.  Platforms without
+    dir_fd/O_NOFOLLOW/fd-scandir support refuse safely instead of
+    deleting unanchored.  Returns the total size of the removed files."""
     if not _SAFE_DELETE_CAPABLE:
         raise ScratchError(
             "anchored recursive deletion requires dir_fd, O_NOFOLLOW and "
@@ -579,15 +699,17 @@ def _delete_tree_via_fd(record: dict) -> int:
                 f"attempt identity changed at the deletion boundary: "
                 f"{name!r} is no longer a plain directory")
         target_fd, target = _open_child_fd(parent_fd, name, expect=listed)
-        if target.st_dev != pinned["dev"] or target.st_ino != pinned["ino"]:
-            os.close(target_fd)
-            raise ScratchError(
-                f"attempt directory identity changed at the deletion "
-                f"boundary (pinned dev={pinned['dev']} "
-                f"ino={pinned['ino']}, now dev={target.st_dev} "
-                f"ino={target.st_ino})")
         try:
-            removed = _descend_and_empty(target_fd)
+            if target.st_dev != pinned["dev"] \
+                    or target.st_ino != pinned["ino"]:
+                raise ScratchError(
+                    f"attempt directory identity changed at the deletion "
+                    f"boundary (pinned dev={pinned['dev']} "
+                    f"ino={pinned['ino']}, now dev={target.st_dev} "
+                    f"ino={target.st_ino})")
+            _ownership_marker_via_fd(target_fd, record)
+            removed = _descend_and_empty(
+                target_fd, delete_last=SCRATCH_OWNERSHIP_MARKER)
         finally:
             os.close(target_fd)
         os.rmdir(name, dir_fd=parent_fd)
