@@ -65,6 +65,7 @@ from pyraimd2.engines.base import (
     EngineResult,
 )
 from pyraimd2.engines.qe_engine import (
+    _DISK_IO_WITHOUT_DENSITY,
     QE_PREFIX,
     DensitySource,
     QeConfig,
@@ -75,11 +76,14 @@ from pyraimd2.engines.qe_engine import (
     _stage_density_into,
     _total_charge,
     allocate_run_dir,
+    check_execution_options,
     check_qe_run_text,
     check_scratch_options,
     classify_qe_failure_text,
+    density_output_file,
     load_density_source,
     normalize_config_paths,
+    order_density_candidates,
     recipe_name,
     write_density_manifest,
 )
@@ -103,6 +107,8 @@ def espresso_input_data(config: QeConfig) -> dict:
         "tprnfor": True,
         "tstress": True,
     }
+    if config.disk_io is not None:
+        control["disk_io"] = config.disk_io
     system: dict = {
         "ibrav": 0,
         "ecutwfc": config.ecutwfc,
@@ -173,6 +179,7 @@ class AseQeEngine(AseEngine):
                  event_log: object | None = None) -> None:
         config = normalize_config_paths(config)
         check_scratch_options(config, engine_name=recipe_name(config))
+        check_execution_options(config, engine_name=recipe_name(config))
         if config.timeout_s != _TIMEOUT_DEFAULT:
             raise EngineError(
                 "AseQeEngine cannot enforce timeout_s through ASE's FileIO "
@@ -357,6 +364,10 @@ class AseQeEngine(AseEngine):
             handle = self._last_scratch_handle
             archive_dir = (handle.archive_dir if handle is not None
                            else Path(record["directory"]))
+            # only an attempt that actually left a charge density behind may
+            # become the chained-start source of a later evaluation
+            produced_density = (archive_dir
+                                if record.get("density_available", True) else None)
             if handle is not None and self.config.retention == "results":
                 receipt = scratch_mod.cleanup(handle)
                 record["scratch_cleanup"] = receipt  # the complete receipt
@@ -367,9 +378,9 @@ class AseQeEngine(AseEngine):
                 self._last_density_dir = None
             elif handle is not None:
                 record["scratch_cleanup"] = scratch_mod.mark_kept(handle)
-                self._last_density_dir = archive_dir
+                self._last_density_dir = produced_density
             else:
-                self._last_density_dir = archive_dir
+                self._last_density_dir = produced_density
             total_wall = sum(r.get("wall_time_s", 0.0)
                              for r in self.last_attempt_records)
             return EngineResult(
@@ -496,11 +507,20 @@ class AseQeEngine(AseEngine):
                 f"espresso output processing failed in {work_dir}: {error}",
                 retryable=True,
             ) from error
+        save_tree = work_dir / "tmp" / f"{QE_PREFIX}.save"
+        # Same product rule as the handwritten path: disk_io none/minimal
+        # never write a density from this SCF (any density file present is
+        # the staged input copy); producing modes are verified by the actual
+        # charge-density file (.dat or .hdf5).
+        density_available = (
+            self.config.disk_io not in _DISK_IO_WITHOUT_DENSITY
+            and density_output_file(save_tree) is not None)
+        record["density_available"] = density_available
         try:
             write_density_manifest(
                 archive_dir, engine=self, atoms=atoms,
-                save_dir=(None if handle is None else
-                          str(work_dir / "tmp" / "pyraimd2.save")),
+                save_dir=(None if handle is None else str(save_tree)),
+                density_available=density_available,
                 source=(
                     {"kind": "atomic"} if density is None else {
                         "kind": "copied",
@@ -605,19 +625,28 @@ class AseQeEngine(AseEngine):
         return QeEngineError(message, retryable=retryable)
 
     def _resolve_density(self, atoms: Atoms) -> DensitySource | None:
-        """Pick a compatible known-origin density, or decide atomic up front."""
-        candidates: list[tuple[str, Path]] = []
-        if self.config.density_source is not None:
-            candidates.append(("config.density_source", Path(self.config.density_source)))
-        if self._last_density_dir is not None:
-            candidates.append(("previous attempt", self._last_density_dir))
+        """Pick a compatible known-origin density, or decide atomic up front.
+
+        Same helper and same decision record as the handwritten path
+        (:func:`order_density_candidates`): a fresh process re-initializes
+        from ``config.density_source`` and says so, never silently claiming
+        the previous process's latest density.
+        """
+        fresh_process = self._last_density_dir is None
         reasons: list[str] = []
-        for via, origin in candidates:
+        for via, origin in order_density_candidates(self.config,
+                                                    self._last_density_dir):
             source, reason = load_density_source(origin, engine=self, atoms=atoms)
             if source is not None:
-                self.last_density_decision = {
-                    "start": "density", "origin": str(source.origin_dir), "via": via,
-                }
+                decision: dict = {"start": "density",
+                                  "origin": str(source.origin_dir), "via": via}
+                if (via == "config.density_source" and fresh_process
+                        and self.config.density_source_policy == "latest"):
+                    decision["note"] = (
+                        "fresh process: initialized from config.density_source; "
+                        "the previous process's latest density is not recovered "
+                        "automatically")
+                self.last_density_decision = decision
                 return source
             reasons.append(f"{via} ({origin}): {reason}")
         self.last_density_decision = {

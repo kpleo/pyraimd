@@ -63,17 +63,23 @@ inside the attempt span and must not be summed on top. A caller passing
 ``request_id`` without an attached sink is rejected before launch.
 
 Density warm start (``startpot_file=True``): before launch the engine
-looks for a compatible density of known origin — ``density_source`` first,
-then the engine's own last successful attempt. Compatibility means a
-density manifest (written next to every successful attempt's ``.save``)
-whose reference fingerprint, atom count and species match, with the
-``.save`` tree actually present. A compatible density is *copied* into the
-new attempt's writable directory — two computations never share one
-writable ``.save`` — and the copy is recorded (origin, bytes, seconds) in
-the attempt record and, when an event log is attached, as an ``io`` task
-event in the WP02 cost ledger. Without a compatible density the first
-attempt already starts atomic: no directory deliberately fails once just
-to discover there is nothing to restart from.
+looks for a compatible density of known origin, in the order
+``density_source_policy`` selects — ``"latest"`` (default) prefers the
+engine's own most recent successful density and treats ``density_source``
+as initialization/fallback, ``"fixed"`` keeps the pre-0.7.2 order
+(``density_source`` first, then the last successful attempt).
+Compatibility means a density manifest (written next to every successful
+attempt's ``.save``) whose reference fingerprint, atom count and species
+match, with the ``.save`` tree's charge density actually present. A
+compatible density is *copied* into the new attempt's writable directory
+— two computations never share one writable ``.save`` — and the copy is
+recorded (origin, bytes, seconds) in the attempt record and, when an
+event log is attached, as an ``io`` task event in the WP02 cost ledger.
+Without a compatible density the first attempt already starts atomic: no
+directory deliberately fails once just to discover there is nothing to
+restart from. A fresh process holds no in-memory latest density: it
+re-initializes from ``config.density_source`` and records that honestly
+in the density decision.
 
 Stress sign: pw.x reports stress with compression-positive convention; we
 convert to the ASE convention (``stress_ase = -stress_qe``) and voigt order
@@ -186,6 +192,16 @@ class QeConfig:
     start also gets one atomic-start fallback). ``density_source`` points
     at a directory holding a :data:`DENSITY_MANIFEST` from a previous
     successful attempt, for cross-run warm starts.
+
+    ``disk_io`` is QE's own write knob (INPUT_PW, QE 7.5): None keeps QE's
+    default; "nowf" still writes the XML and the converged charge density
+    (so a *later* SCF can warm-start from the density) but skips the
+    wavefunction files; "minimal" writes only the XML; "none" writes
+    neither.  "nowf" is about the next SCF's density start — it is not an
+    in-place resume of an interrupted SCF, and it does not make every
+    restart mode available.  With "minimal"/"none" no charge density
+    survives, and the run is then honest about it: no density manifest
+    claims a reusable density that was never written.
     """
 
     pseudo_dir: str
@@ -208,6 +224,8 @@ class QeConfig:
     electron_maxstep: int = 200
     startpot_file: bool = False  # warm start from a compatible density when one exists
     density_source: str | None = None  # directory with a density manifest (known origin)
+    density_source_policy: str = "latest"  # "latest": chains reuse the most recent successful density; "fixed": density_source wins every evaluation (pre-0.7.2 order)
+    disk_io: str | None = None  # QE disk_io (execution knob): e.g. "nowf" skips wavefunction files
     max_retries: int = 1  # retries after the first attempt (bounded, classified)
     timeout_s: float = 3600.0
     scratch_root: str | None = None  # unified managed tmp root (absolute)
@@ -319,6 +337,8 @@ def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
     lines.append(f"  calculation = 'scf'\n  prefix = '{QE_PREFIX}'\n")
     lines.append(f"  pseudo_dir = '{Path(cfg.pseudo_dir).expanduser().resolve()}'\n")
     lines.append("  outdir = './tmp'\n")
+    if cfg.disk_io is not None:
+        lines.append(f"  disk_io = '{cfg.disk_io}'\n")
     lines.append("  tprnfor = .true.\n  tstress = .true.\n/\n")
     lines.append("&SYSTEM\n  ibrav = 0\n")
     lines.append(f"  nat = {len(atoms)}\n  ntyp = {len(groups)}\n")
@@ -445,32 +465,26 @@ def parse_qe_output(text: str) -> EngineResult:
     )
 
 
-_PSEUDO_HASH_CACHE: dict[tuple[str, int, int], str | None] = {}
-
-
 def _pseudo_sha256(path: Path) -> str | None:
     """Content sha256 of a pseudopotential file, or None when unreadable.
 
-    Cached by (path, mtime, size): fingerprints are read per evaluation, so
-    multi-MB UPF files must not be re-hashed every time.
+    Always derived from the file's current bytes.  No stat tuple
+    (path, mtime, size, ctime, ...) can stand in for content: on
+    coarse-timestamp filesystems mtime and ctime share one tick, and an
+    atomic same-path replacement or an mtime-preserving rewrite defeats
+    any stat key, so there is no cache here at all.  An unreadable file
+    yields None for this call only — never cached, so a later
+    start/resume re-reads the real content instead of keeping a stale
+    "unknown".
     """
     try:
-        stat = path.stat()
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
     except OSError:
         return None
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    if key not in _PSEUDO_HASH_CACHE:
-        digest: str | None = None
-        try:
-            h = hashlib.sha256()
-            with path.open("rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
-        except OSError:
-            digest = None
-        _PSEUDO_HASH_CACHE[key] = digest
-    return _PSEUDO_HASH_CACHE[key]
 
 
 def pseudo_identities(config: QeConfig) -> dict[str, dict[str, str | None]]:
@@ -492,7 +506,7 @@ def pseudo_identities(config: QeConfig) -> dict[str, dict[str, str | None]]:
 # parameters and platform profiles stay separate.
 _EXECUTION_FIELDS = frozenset(
     {"pw_cmd", "timeout_s", "max_retries", "density_source", "startpot_file",
-     "scratch_root", "retention"}
+     "density_source_policy", "disk_io", "scratch_root", "retention"}
 )
 
 
@@ -628,9 +642,21 @@ class DensitySource:
 
 
 def write_density_manifest(attempt_dir: Path, *, engine: QeEngine, atoms: Atoms,
-                           source: dict, save_dir: str | None = None) -> Path:
+                           source: dict, save_dir: str | None = None,
+                           density_available: bool = True) -> Path:
     """Record what a successful attempt produced, so a later computation can
-    verify origin and reference-settings compatibility before reusing it."""
+    verify origin and reference-settings compatibility before reusing it.
+
+    ``density_available`` states whether the run actually left a reusable
+    charge density behind: ``disk_io`` levels "minimal"/"none" (or any build
+    that skips the density) suppress it, and a manifest must never claim a
+    density the run did not write — in particular a staged warm-start input
+    copy is never this attempt's own product.  The density itself is
+    recognized by name in either format QE 7.5 writes
+    (``charge-density.dat`` / ``charge-density.hdf5``).  Manifests written
+    before this field existed default to True and are still gated by the
+    on-disk density-file check at load time.
+    """
     manifest = {
         "schema": DENSITY_MANIFEST_SCHEMA,
         "engine_name": engine.name,
@@ -639,6 +665,7 @@ def write_density_manifest(attempt_dir: Path, *, engine: QeEngine, atoms: Atoms,
         "species": sorted(_species(atoms)),
         "save_dir": save_dir if save_dir is not None
         else f"tmp/{QE_PREFIX}.save",
+        "density_available": bool(density_available),
         "source": source,
         "created_unix": time.time(),
     }
@@ -664,9 +691,96 @@ def load_density_source(origin_dir: Path, *, engine: QeEngine,
     if manifest.get("species") != sorted(_species(atoms)):
         return None, "species differ"
     save_dir = origin_dir / str(manifest.get("save_dir", ""))
+    if manifest.get("density_available", True) is False:
+        return None, ("the producing attempt saved no reusable charge "
+                      "density (its disk_io suppresses it)")
     if not save_dir.is_dir():
         return None, "density files are missing"
+    if density_output_file(save_dir) is None:
+        return None, ("density files are missing (no charge-density.dat/"
+                      "charge-density.hdf5)")
     return DensitySource(origin_dir=origin_dir, save_dir=save_dir, manifest=manifest), ""
+
+
+# QE's own disk_io vocabulary (INPUT_PW, QE 7.5): high/medium/low write
+# wavefunction files at different verbosity; "nowf" keeps the XML and the
+# charge density of a converged run but writes no wavefunctions; "minimal"
+# keeps only the XML; "none" writes neither.  Python None (the default) is
+# not the string "none": None leaves QE's own default in effect.
+QE_DISK_IO_VALUES = ("high", "medium", "low", "nowf", "minimal", "none")
+
+# QE writes the converged charge density as charge-density.dat, or as
+# charge-density.hdf5 in HDF5 builds (QE 7.5: PW/src/io_rho_xml.f90 hands
+# "charge-density" to write_rhog; Modules/io_base.f90 picks the suffix by
+# build).  Either file means the run left a reusable density.
+DENSITY_FILENAMES = ("charge-density.dat", "charge-density.hdf5")
+
+# disk_io levels whose scf punch never writes a charge density (QE 7.5
+# punch.f90: none/minimal skip it).  With these modes any density file in
+# the save tree can only be the staged *input* copy — never this attempt's
+# output.
+_DISK_IO_WITHOUT_DENSITY = ("minimal", "none")
+
+
+def density_output_file(save_dir: Path) -> Path | None:
+    """The charge-density file inside a .save tree, or None.
+
+    One recognition rule shared by the production side (did this attempt
+    leave a density?), the manifest reader and the warm-start loader — both
+    QE adapters, default and scratch-root modes alike.  Pure name-level
+    recognition: no HDF5 parser is needed to know the format QE wrote.
+    """
+    for name in DENSITY_FILENAMES:
+        candidate = save_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+# Density-chain orders: "latest" prefers the most recent successful density
+# and treats config.density_source as initialization/fallback; "fixed" keeps
+# the pre-0.7.2 order (the configured source wins every evaluation).
+DENSITY_SOURCE_POLICIES = ("latest", "fixed")
+
+
+def check_execution_options(config: QeConfig, *, engine_name: str) -> None:
+    """Execution knobs validated once at construction — before any launch.
+
+    ``disk_io`` is written verbatim into the QE input, so an unsupported
+    value must fail here with a clear message, not after an expensive SCF.
+    ``density_source_policy`` picks the density-chain trial order; an
+    unknown policy must fail loudly rather than silently pick one side.
+    Both QE adapters run this same check.
+    """
+    if config.disk_io is not None and config.disk_io not in QE_DISK_IO_VALUES:
+        raise QeEngineError(
+            f"disk_io must be one of {QE_DISK_IO_VALUES} or None (QE's own "
+            f"default), got {config.disk_io!r}: {engine_name}")
+    if config.density_source_policy not in DENSITY_SOURCE_POLICIES:
+        raise QeEngineError(
+            f"unknown density_source_policy {config.density_source_policy!r} "
+            f"(expected one of {DENSITY_SOURCE_POLICIES}): {engine_name}")
+
+
+def order_density_candidates(config: QeConfig,
+                             last_density_dir: Path | None) -> list[tuple[str, Path]]:
+    """The density-source trial order shared by both QE adapters.
+
+    ``density_source_policy="latest"`` (default): the engine's most recent
+    successful density wins; ``config.density_source`` only initializes —
+    the first evaluation of a process, or the fallback when the latest
+    density is unusable.  ``"fixed"`` keeps the pre-0.7.2 order (the
+    configured source first) for callers that deliberately re-seed every
+    evaluation.
+    """
+    config_candidate = (("config.density_source", Path(config.density_source))
+                        if config.density_source is not None else None)
+    latest_candidate = (("previous attempt", last_density_dir)
+                        if last_density_dir is not None else None)
+    ordered = ((config_candidate, latest_candidate)
+               if config.density_source_policy == "fixed"
+               else (latest_candidate, config_candidate))
+    return [candidate for candidate in ordered if candidate is not None]
 
 
 def check_scratch_options(config: QeConfig, *, engine_name: str) -> None:
@@ -779,6 +893,7 @@ class QeEngine:
         # fingerprint and the subprocess must resolve the same files.
         self.config = normalize_config_paths(config)
         check_scratch_options(self.config, engine_name=recipe_name(self.config))
+        check_execution_options(self.config, engine_name=recipe_name(self.config))
         self.run_root = Path(run_root)
         self.run_root.mkdir(parents=True, exist_ok=True)
         self._event_log = event_log
@@ -978,6 +1093,10 @@ class QeEngine:
                 raise
             record = self.last_attempt_records[-1]
             record.update(status="success", error=None, retryable=None)
+            # only an attempt that actually left a charge density behind may
+            # become the chained-start source of a later evaluation
+            produced_density = (archive_dir
+                                if record.get("density_available", True) else None)
             if handle is not None and self.config.retention == "results":
                 receipt = scratch_mod.cleanup(handle)
                 record["scratch_cleanup"] = receipt  # the complete receipt
@@ -988,9 +1107,9 @@ class QeEngine:
                 self._last_density_dir = None
             elif handle is not None:
                 record["scratch_cleanup"] = scratch_mod.mark_kept(handle)
-                self._last_density_dir = archive_dir
+                self._last_density_dir = produced_density
             else:
-                self._last_density_dir = archive_dir
+                self._last_density_dir = produced_density
             # wall_time_s is the physical total of this call: every attempt
             # span (staging + process + validation), not only the last
             # successful process.
@@ -1006,19 +1125,30 @@ class QeEngine:
             )
 
     def _resolve_density(self, atoms: Atoms) -> DensitySource | None:
-        """Pick a compatible known-origin density, or decide atomic up front."""
-        candidates: list[tuple[str, Path]] = []
-        if self.config.density_source is not None:
-            candidates.append(("config.density_source", Path(self.config.density_source)))
-        if self._last_density_dir is not None:
-            candidates.append(("previous attempt", self._last_density_dir))
+        """Pick a compatible known-origin density, or decide atomic up front.
+
+        The trial order comes from :func:`order_density_candidates` (the
+        same helper the ASE adapter uses).  A fresh process holds no
+        in-memory latest density; it re-initializes from
+        ``config.density_source`` and the decision record says so — the
+        previous process's latest density is not recovered implicitly
+        (recovering persisted restart resources is a separate feature).
+        """
+        fresh_process = self._last_density_dir is None
         reasons: list[str] = []
-        for label, origin in candidates:
+        for label, origin in order_density_candidates(self.config,
+                                                      self._last_density_dir):
             source, reason = load_density_source(origin, engine=self, atoms=atoms)
             if source is not None:
-                self.last_density_decision = {
-                    "start": "density", "origin": str(source.origin_dir), "via": label,
-                }
+                decision: dict = {"start": "density",
+                                  "origin": str(source.origin_dir), "via": label}
+                if (label == "config.density_source" and fresh_process
+                        and self.config.density_source_policy == "latest"):
+                    decision["note"] = (
+                        "fresh process: initialized from config.density_source; "
+                        "the previous process's latest density is not recovered "
+                        "automatically")
+                self.last_density_decision = decision
                 return source
             reasons.append(f"{label} ({origin}): {reason}")
         self.last_density_decision = {
@@ -1166,11 +1296,19 @@ class QeEngine:
                 retryable=True,
             ) from error
 
+        save_tree = work_dir / "tmp" / f"{QE_PREFIX}.save"
+        # A density counts as this attempt's product only when this SCF
+        # could write one: disk_io none/minimal never do (any density file
+        # present is the staged input copy); the producing modes are then
+        # verified by the actual charge-density file (.dat or .hdf5).
+        density_available = (config.disk_io not in _DISK_IO_WITHOUT_DENSITY
+                             and density_output_file(save_tree) is not None)
+        record["density_available"] = density_available
         try:
             write_density_manifest(
                 attempt_dir, engine=self, atoms=atoms,
-                save_dir=(None if scratch_handle is None else
-                          str(work_dir / "tmp" / f"{QE_PREFIX}.save")),
+                save_dir=(None if scratch_handle is None else str(save_tree)),
+                density_available=density_available,
                 source=(
                     {"kind": "atomic"} if density is None else {
                         "kind": "copied",

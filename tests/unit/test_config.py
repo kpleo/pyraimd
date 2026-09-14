@@ -287,6 +287,65 @@ def test_load_resolved_config_requires_a_run_directory(tmp_path) -> None:
         load_resolved_config(tmp_path)
 
 
+def _qe_document(policy: str | None = None) -> str:
+    reference = ('[reference]\nbackend = "qe"\npseudo_dir = "pseudos"\n'
+                 'pseudos = { H = "H.upf" }')
+    if policy is not None:
+        reference += f'\ndensity_source_policy = "{policy}"'
+    return HARMONIC_CONFIG.replace(
+        '[reference]\nbackend = "harmonic-reference"', reference)
+
+
+def test_qe_density_policy_recorded_explicitly(tmp_path) -> None:
+    """New QE configurations record the effective policy in the resolved
+    configuration, so a later resume never inherits a changed default.  The
+    in-memory options keep an unstated policy absent, so an explicit user
+    choice stays distinguishable from the default."""
+    config = load_config(write(tmp_path, _qe_document()))
+    assert "density_source_policy" not in config.reference.options
+    resolved = config.resolved_dict()
+    assert resolved["reference"]["options"]["density_source_policy"] == "latest"
+
+
+def test_qe_density_policy_explicit_value_survives(tmp_path) -> None:
+    config = load_config(write(tmp_path, _qe_document(policy="fixed")))
+    assert config.reference.options["density_source_policy"] == "fixed"
+
+
+def test_qe_density_policy_legacy_record_resumes_fixed(tmp_path) -> None:
+    """A resolved_config.json written before the policy existed (<= 0.7.1,
+    no field) must resume with the order those runs actually used — the
+    configured source first — never the new "latest" default."""
+    import json
+
+    config = load_config(write(tmp_path, _qe_document()))
+    run_dir = config.run.directory
+    run_dir.mkdir(parents=True)
+    resolved = config.resolved_dict()
+    # simulate the pre-policy record: no density_source_policy anywhere
+    del resolved["reference"]["options"]["density_source_policy"]
+    (run_dir / "resolved_config.json").write_text(json.dumps(resolved, indent=2))
+    restored = load_resolved_config(run_dir)
+    assert restored.reference.options["density_source_policy"] == "fixed"
+    # the restored run re-records the field, so a second resume is stable
+    assert (restored.resolved_dict()["reference"]["options"]
+            ["density_source_policy"] == "fixed")
+
+
+def test_qe_density_policy_current_record_roundtrips_unchanged(tmp_path) -> None:
+    """A resolved record written by this version already names the policy;
+    resume must keep exactly it (latest stays latest)."""
+    import json
+
+    config = load_config(write(tmp_path, _qe_document()))
+    run_dir = config.run.directory
+    run_dir.mkdir(parents=True)
+    (run_dir / "resolved_config.json").write_text(
+        json.dumps(config.resolved_dict(), indent=2))
+    restored = load_resolved_config(run_dir)
+    assert restored.reference.options["density_source_policy"] == "latest"
+
+
 def test_parse_config_rejects_non_table() -> None:
     with pytest.raises(ConfigError):
         parse_config([1, 2, 3], base_dir=Path("/tmp"))

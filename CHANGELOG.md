@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.7.2
+
+Four fixes from real adoption feedback, on both pw.x paths (subprocess
+`QeEngine` and ASE-QE).  Configurations and engines that do not use the
+new options behave exactly as 0.7.1, with one deliberate exception:
+QE density chains now default to reusing the latest successful density
+(see below), and runs saved by 0.7.1 or earlier resume with the legacy
+order they were recorded with.
+
+### Added
+
+- `QeConfig.disk_io` / `disk_io = "..."` in `[reference]`/`[surrogate]`:
+  QE's own write knob (INPUT_PW, QE 7.5 — `high`/`medium`/`low`/`nowf`/
+  `minimal`/`none`), passed through verbatim by both QE paths and
+  validated at construction, before any launch.  `nowf` keeps the
+  converged charge density (next-SCF warm starts keep working) while
+  skipping wavefunction files; `minimal`/`none` write no reusable
+  density, and the density manifest then says so honestly instead of
+  claiming a density that was never saved.  An execution knob: recorded
+  in the resolved configuration, excluded from the reference fingerprint.
+- `QeConfig.density_source_policy` / `density_source_policy = "..."`:
+  the density-chain trial order, shared by both QE adapters.  `"latest"`
+  (the new default) reuses the most recent successful density and treats
+  `density_source` as initialization/fallback; `"fixed"` is the 0.7.1
+  order.  New runs record the effective policy in
+  `resolved_config.json`; older resolved records resume as `"fixed"`.
+
+### Fixed
+
+- `[scratch]` settings now reach the engines used by new single-point,
+  plain MD and adaptive MD runs, matching resumed runs. Previously these
+  entry points bypassed the shared configuration merge, so temporary
+  files could remain in per-attempt directories despite a managed root.
+
+- Continuous QE chains configured with an external `density_source`
+  re-seeded every evaluation from the initial geometry; they now follow
+  the latest successful density (issue #4).  A failed or non-converged
+  attempt is never promoted, and a fresh process records honestly that
+  it re-initialized from the configured source.
+- Density claims follow what a run actually produced: both QE charge
+  density formats are recognized (`charge-density.dat` and
+  `charge-density.hdf5` from HDF5 builds — one shared rule on the
+  production, manifest and loading sides of both adapters), and a staged
+  warm-start input copy is never mislabelled as the attempt's own
+  output.  With `disk_io = "minimal"`/`"none"` an attempt claims no
+  produced density (QE writes none in these modes); the manifest keeps
+  the true input origin and the chain falls back to the real source.
+- Legacy recipe stages saved before `density_source_policy` existed
+  adopt correctly again: the stored record's missing field is completed
+  in memory with the fixed order the run provably used (the file is
+  never rewritten), an unchanged stage continues with that legacy
+  order, and an explicit policy change or any other changed reference
+  setting is still refused.
+- Model/UPF content identity no longer comes from a `(path, mtime,
+  size)` cache: identical stat tuples across a same-size rewrite
+  (coarse-timestamp filesystems, preserved mtimes, atomic replacement)
+  used to serve a stale digest.  The identity is always computed from
+  the file's current bytes, on both the UPF and the ASE model-file
+  paths, and a transient unreadable state is never cached (issue #6).
+  Note: on the generic undeclared ASE adapter path this re-reads the
+  model file at each fingerprint read (a few times per adaptive
+  evaluation); the declared `file_parameters` resource path identifies
+  at construction and re-verifies content at the documented boundaries.
+- `test_sigint_stops_at_a_step_boundary_and_resume_continues` signalled
+  on a fixed delay after the event log appeared and could fire before
+  the first step on a loaded machine; it now waits (bounded) for the
+  first committed `step_completed` event — the real "runner owns the
+  handler and a step boundary exists" condition.
+
 ## 0.7.1
 
 A unified, managed temporary root for solver scratch with a

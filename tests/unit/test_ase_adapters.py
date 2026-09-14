@@ -1,4 +1,6 @@
 """Adapter contracts for externally supplied ASE calculators."""
+import os
+import time
 from typing import ClassVar
 
 import numpy as np
@@ -119,6 +121,83 @@ def test_fingerprint_tracks_model_file_content(tmp_path):
     second = AseEngine(FileBacked(model)).fingerprint
     assert first != second
     assert AseEngine(FileBacked(model)).fingerprint == second  # stable again
+
+
+class _FileBacked(Calculator):
+    implemented_properties: ClassVar[list[str]] = ['energy', 'forces']
+
+    def __init__(self, model_path):
+        super().__init__()
+        self.parameters = {'model': str(model_path)}
+
+    def calculate(self, atoms=None, properties=('energy',), system_changes=None):
+        super().calculate(atoms, properties, system_changes or [])
+        self.results = {'energy': 0.0, 'forces': np.zeros((len(self.atoms), 3))}
+
+
+def test_fingerprint_same_tick_same_size_rewrite_tracks_content(tmp_path):
+    """A same-size rewrite within one filesystem mtime tick keeps the same
+    (path, mtime, size): the identity must still follow content, not stat."""
+    model = tmp_path / 'model.dat'
+    model.write_text('weights-v1')
+    tick = time.time_ns()
+    os.utime(model, ns=(tick, tick))
+    first = AseEngine(_FileBacked(model)).fingerprint
+    model.write_text('weights-v2')
+    os.utime(model, ns=(tick, tick))  # same path, same size, same mtime tick
+    second = AseEngine(_FileBacked(model)).fingerprint
+    assert first != second
+
+
+def test_fingerprint_old_mtime_same_size_rewrite_tracks_content(tmp_path):
+    """mtime pinned old, then a same-size rewrite preserving it: no stat
+    tuple is trusted, so the identity still follows content."""
+    model = tmp_path / 'model.dat'
+    model.write_text('weights-v1')
+    old = (1_600_000_000, 1_600_000_000)
+    os.utime(model, old)
+    first = AseEngine(_FileBacked(model)).fingerprint
+    model.write_text('weights-v2')
+    os.utime(model, old)
+    second = AseEngine(_FileBacked(model)).fingerprint
+    assert first != second
+
+
+def test_fingerprint_atomic_replace_tracks_content(tmp_path):
+    """Atomic same-path replacement: identity follows content even with the
+    mtime pinned old."""
+    model = tmp_path / 'model.dat'
+    model.write_text('weights-v1')
+    old = (1_600_000_000, 1_600_000_000)
+    os.utime(model, old)
+    first = AseEngine(_FileBacked(model)).fingerprint
+    staging = tmp_path / 'staging.dat'
+    staging.write_text('weights-v2')
+    os.utime(staging, old)
+    os.replace(staging, model)
+    second = AseEngine(_FileBacked(model)).fingerprint
+    assert first != second
+
+
+def _large_bytes(seed_byte: int, size: int) -> bytes:
+    block = bytes((seed_byte + i) % 256 for i in range(256))
+    return (block * (size // 256 + 1))[:size]
+
+
+def test_fingerprint_large_model_same_size_rewrite_tracks_content(tmp_path):
+    """A model file just above the former 16 MiB cache threshold: same path,
+    same size, mtime pinned identical — the identity must still follow the
+    real bytes (the threshold is gone; large files are re-read too)."""
+    size = 16 * 1024 * 1024 + 1
+    model = tmp_path / 'model.dat'
+    old = (1_600_000_000, 1_600_000_000)
+    model.write_bytes(_large_bytes(0, size))
+    os.utime(model, old)
+    first = AseEngine(_FileBacked(model)).fingerprint
+    model.write_bytes(_large_bytes(1, size))
+    os.utime(model, old)
+    second = AseEngine(_FileBacked(model)).fingerprint
+    assert first != second
 
 
 def test_fingerprint_none_when_state_cannot_be_identified():

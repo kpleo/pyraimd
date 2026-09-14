@@ -194,22 +194,53 @@ def test_resume_continues_plain_mode_runs(tmp_path) -> None:
 def test_sigint_stops_at_a_step_boundary_and_resume_continues(tmp_path) -> None:
     config = load_config(make_config(tmp_path, steps=20000,
                                      checkpoint_interval=2))
+    done = threading.Event()
+    fired = threading.Event()
 
-    def fire_when_running() -> None:
-        # send SIGINT only once the runner owns the handler (run_start
-        # written); signalling earlier would hit pytest's own handler
+    def first_step_committed() -> bool:
+        """The observable sync point: a committed step_completed event proves
+        both that the runner owns the SIGINT handler (installed before the
+        step loop runs) and that at least one complete step exists to stop
+        after.  A torn final line is skipped; the next poll sees it whole."""
         events = config.run.directory / "events.jsonl"
-        for _ in range(3000):
-            if events.exists():
-                time.sleep(0.2)
-                signal.raise_signal(signal.SIGINT)
-                return
-            time.sleep(0.01)
+        try:
+            lines = events.read_text().splitlines()
+        except OSError:
+            return False
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "step_completed":
+                return True
+        return False
 
-    timer = threading.Thread(target=fire_when_running, daemon=True)
+    def fire_at_first_committed_step() -> None:
+        # Bounded wait on the real condition — never a fixed sleep after the
+        # log file appears: on a loaded machine the first step can take
+        # longer than such a delay, and the signal then lands before any
+        # step boundary (the 0.7.1 CI failure on Python 3.13).
+        deadline = time.monotonic() + 30.0
+        while not done.is_set() and time.monotonic() < deadline:
+            if first_step_committed():
+                fired.set()
+                if not done.is_set():
+                    signal.raise_signal(signal.SIGINT)
+                return
+            time.sleep(0.005)
+
+    timer = threading.Thread(target=fire_at_first_committed_step, daemon=True)
     timer.start()
-    result = run_workflow(config, verbose=False, handle_sigint=True)
-    timer.join(timeout=5)
+    try:
+        result = run_workflow(config, verbose=False, handle_sigint=True)
+    finally:
+        done.set()
+        timer.join(timeout=5)
+    assert fired.is_set(), (
+        "no step committed within the bounded wait; the run cannot have "
+        "stopped early, so the boundary/resume assertions below would be "
+        "meaningless — investigate the runner instead of the signal timing")
     assert result.stopped_early
     assert 0 < result.steps_completed < 20000
     assert (config.run.directory / "checkpoints" / "latest.json").is_file()

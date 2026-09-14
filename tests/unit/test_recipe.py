@@ -25,6 +25,7 @@ import numpy as np
 import pytest
 from test_nvt import events
 
+from pyraimd2.config import load_config
 from pyraimd2.runtime.events import EventLog
 from pyraimd2.store import Store
 from pyraimd2.workflows.setup import WorkflowError
@@ -1156,3 +1157,139 @@ def test_sigint_disabled_keeps_the_old_recipe_behavior(tmp_path):
                 if s["name"] == "nvt")["status"] == "running"
     assert len([e for e in events(root / "nvt")
                 if e["type"] == "step_completed"]) < 6
+
+
+# --- legacy (<= 0.7.1) stage adoption across the density-policy introduction ---
+
+
+def _qe_singlepoint_stage(root: Path, *, backend: str = "qe",
+                          policy: str | None = None,
+                          ecutwfc: float | None = None) -> Path:
+    """A QE-backend singlepoint stage TOML; returns the config path."""
+    stage_dir = root / "stage"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    (stage_dir / "structure.extxyz").write_text(_STRUCTURE)
+    extra = ""
+    if policy is not None:
+        extra += f'density_source_policy = "{policy}"\n'
+    if ecutwfc is not None:
+        extra += f"ecutwfc = {ecutwfc}\n"
+    (stage_dir / "run.toml").write_text(
+        'schema_version = 1\n'
+        '[run]\nid = "qe-stage"\ndirectory = "."\nseed = 0\n'
+        '[task]\nkind = "singlepoint"\nmode = "reference"\n'
+        '[structure]\nfile = "structure.extxyz"\n'
+        '[dynamics]\ntimestep_fs = 1.0\nsteps = 1\n'
+        f'[reference]\nbackend = "{backend}"\npseudo_dir = "pseudos"\n'
+        'pseudos = { H = "H.upf" }\n' + extra)
+    return stage_dir / "run.toml"
+
+
+def _legacy_stored_record(config) -> dict:
+    """The resolved record a <= 0.7.1 run of this config would have written:
+    no density_source_policy anywhere."""
+    stored = config.resolved_dict()
+    stored["reference"]["options"].pop("density_source_policy", None)
+    return stored
+
+
+@pytest.mark.parametrize("backend", ["qe", "qe-ase"])
+def test_legacy_qe_stage_adoption_reconciles_missing_policy(tmp_path, backend):
+    """A pre-policy stage (resolved record without density_source_policy,
+    unchanged TOML) must be adoptable: the missing field means the fixed
+    order the run actually used — for the identity comparison and for the
+    continuation semantics alike."""
+    from pyraimd2.workflows.stages import _reconcile_stage_identity
+
+    root = tmp_path / "recipe"
+    config_path = _qe_singlepoint_stage(root, backend=backend)
+    stage_dir = root / "stage"
+    config = load_config(config_path)
+    assert "density_source_policy" not in config.reference.options  # unstated
+    stored = _legacy_stored_record(config)
+    (stage_dir / "resolved_config.json").write_text(json.dumps(stored, indent=2))
+    manifest: dict = {"stages": []}
+    record, bound = _reconcile_stage_identity(
+        manifest, RecipeStage("stage", config_path), config, stage_dir, None)
+    assert record["reconciled_from_run"] is True
+    # the adopted stage continues with the proven legacy semantics
+    assert bound.reference.options["density_source_policy"] == "fixed"
+    # the run's own record is never rewritten to hide the migration
+    on_disk = json.loads((stage_dir / "resolved_config.json").read_text())
+    assert "density_source_policy" not in on_disk["reference"]["options"]
+
+
+@pytest.mark.parametrize("backend", ["qe", "qe-ase"])
+def test_legacy_qe_stage_adoption_accepts_explicit_fixed(tmp_path, backend):
+    """An explicit density_source_policy = "fixed" matches the legacy
+    record's proven semantics: adoption proceeds."""
+    from pyraimd2.workflows.stages import _reconcile_stage_identity
+
+    root = tmp_path / "recipe"
+    config_path = _qe_singlepoint_stage(root, backend=backend, policy="fixed")
+    stage_dir = root / "stage"
+    config = load_config(config_path)
+    stored = _legacy_stored_record(config)
+    (stage_dir / "resolved_config.json").write_text(json.dumps(stored, indent=2))
+    record, bound = _reconcile_stage_identity(
+        {"stages": []}, RecipeStage("stage", config_path), config, stage_dir, None)
+    assert record["reconciled_from_run"] is True
+    assert bound.reference.options["density_source_policy"] == "fixed"
+
+
+@pytest.mark.parametrize("backend", ["qe", "qe-ase"])
+def test_legacy_qe_stage_adoption_refuses_explicit_latest(tmp_path, backend):
+    """An explicit density_source_policy = "latest" over a legacy run is a
+    deliberate policy change: still refused, never silently reconciled."""
+    from pyraimd2.workflows.stages import _reconcile_stage_identity
+
+    root = tmp_path / "recipe"
+    config_path = _qe_singlepoint_stage(root, backend=backend, policy="latest")
+    stage_dir = root / "stage"
+    config = load_config(config_path)
+    stored = _legacy_stored_record(config)
+    (stage_dir / "resolved_config.json").write_text(json.dumps(stored, indent=2))
+    with pytest.raises(WorkflowError, match="different resolved settings"):
+        _reconcile_stage_identity(
+            {"stages": []}, RecipeStage("stage", config_path), config,
+            stage_dir, None)
+
+
+@pytest.mark.parametrize("backend", ["qe", "qe-ase"])
+def test_legacy_qe_stage_adoption_refuses_changed_settings(tmp_path, backend):
+    """The reconciliation is not a bypass: a genuinely changed reference
+    setting (ecutwfc) is still refused against the legacy record."""
+    from pyraimd2.workflows.stages import _reconcile_stage_identity
+
+    root = tmp_path / "recipe"
+    config_path = _qe_singlepoint_stage(root, backend=backend, ecutwfc=99.0)
+    stage_dir = root / "stage"
+    config = load_config(config_path)
+    stored = _legacy_stored_record(load_config(config_path))
+    stored["reference"]["options"]["ecutwfc"] = 50.0  # the run's actual setting
+    (stage_dir / "resolved_config.json").write_text(json.dumps(stored, indent=2))
+    with pytest.raises(WorkflowError, match="different resolved settings"):
+        _reconcile_stage_identity(
+            {"stages": []}, RecipeStage("stage", config_path), config,
+            stage_dir, None)
+
+
+@pytest.mark.parametrize("backend", ["qe", "qe-ase"])
+def test_current_qe_stage_adoption_keeps_latest(tmp_path, backend):
+    """A record written by this version already names the policy; adoption
+    of an unchanged stage keeps the recorded latest semantics exactly."""
+    from pyraimd2.workflows.stages import _reconcile_stage_identity
+
+    root = tmp_path / "recipe"
+    config_path = _qe_singlepoint_stage(root, backend=backend)
+    stage_dir = root / "stage"
+    config = load_config(config_path)
+    stored = config.resolved_dict()  # current writer: policy recorded
+    assert stored["reference"]["options"]["density_source_policy"] == "latest"
+    (stage_dir / "resolved_config.json").write_text(json.dumps(stored, indent=2))
+    record, bound = _reconcile_stage_identity(
+        {"stages": []}, RecipeStage("stage", config_path), config, stage_dir, None)
+    assert record["reconciled_from_run"] is True
+    assert "density_source_policy" not in bound.reference.options  # still unstated
+    assert (bound.resolved_dict()["reference"]["options"]
+            ["density_source_policy"] == "latest")

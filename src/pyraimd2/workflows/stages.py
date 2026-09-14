@@ -15,6 +15,8 @@ not a second event/checkpoint system.
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import json
 import os
 import time
@@ -25,7 +27,14 @@ from pathlib import Path
 import numpy as np
 from ase import Atoms
 
-from pyraimd2.config import PyramidConfig, load_config, load_resolved_config
+from pyraimd2.config import (
+    QE_BACKENDS,
+    QE_DENSITY_POLICY_LEGACY,
+    BackendConfig,
+    PyramidConfig,
+    load_config,
+    load_resolved_config,
+)
 from pyraimd2.loop.integrators import IntegratorSpec, state_digest
 from pyraimd2.runtime.events import RUN_END, RUN_SUMMARY, STEP_COMPLETED
 from pyraimd2.runtime.inspect import inspect_run
@@ -415,7 +424,7 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
         # 1. identity first — persisted atomically before any backend
         #    computation (R1); every refusal above happens without touching
         #    the existing run directory
-        record = _reconcile_stage_identity(
+        record, config = _reconcile_stage_identity(
             manifest, stage, config, stage_dir, previous)
 
         if record["status"] == "done":
@@ -514,9 +523,48 @@ def run_serial_recipe(root: str | Path, stages: list[RecipeStage], *,
     return manifest
 
 
+def _reconcile_legacy_density_policy(config: PyramidConfig,
+                                     stored: dict) -> tuple[PyramidConfig, dict]:
+    """Reconcile a pre-policy resolved record with the current configuration.
+
+    A resolved record written before ``density_source_policy`` existed
+    (<= 0.7.1) carries no policy field, and the run it describes used the
+    fixed order.  Fill a *copy* of the stored record with that proven legacy
+    semantics (the run's own file is never rewritten), and reconcile an
+    unstated current policy to the same fixed order, so an adopted stage
+    keeps producing what its existing results were computed under.  An
+    explicitly configured policy is a deliberate setting: ``fixed`` matches
+    the legacy semantics; anything else stays a detected difference and is
+    refused by the caller's normal comparison.
+    """
+    stored = copy.deepcopy(stored)
+    updates: dict[str, BackendConfig] = {}
+    for section in ("reference", "surrogate"):
+        stored_section = stored.get(section)
+        if not isinstance(stored_section, dict):
+            continue
+        options = stored_section.get("options")
+        if (stored_section.get("backend") not in QE_BACKENDS
+                or not isinstance(options, dict)
+                or "density_source_policy" in options):
+            continue  # not a QE section, or recorded by a policy-aware version
+        options["density_source_policy"] = QE_DENSITY_POLICY_LEGACY
+        current = getattr(config, section)
+        if current is not None and "density_source_policy" not in current.options:
+            # Unstated in the current TOML: the adopted stage continues with
+            # the order its existing results were produced under.
+            updates[section] = BackendConfig(
+                name=current.name,
+                options={**current.options,
+                         "density_source_policy": QE_DENSITY_POLICY_LEGACY})
+    if updates:
+        config = dataclasses.replace(config, **updates)
+    return config, stored
+
+
 def _reconcile_stage_identity(manifest: list | dict, stage: RecipeStage,
                               config: PyramidConfig, stage_dir: Path,
-                              previous: CompletedState | None) -> dict:
+                              previous: CompletedState | None) -> tuple[dict, PyramidConfig]:
     """Bind or verify the stage's stable identity before any computation.
 
     A manifest record must match the declared run id, config file digest,
@@ -524,6 +572,10 @@ def _reconcile_stage_identity(manifest: list | dict, stage: RecipeStage,
     record (an interrupted first start, R1) is adopted only when the
     current config's resolved settings equal the run's own
     resolved_config.json — never blessing new settings over old results.
+    Returns the stage record and the configuration actually bound to the
+    stage (a legacy resolved record reconciles an unstated
+    density_source_policy to the run's proven semantics — see
+    :func:`_reconcile_legacy_density_policy`).
     """
     stages = manifest["stages"]
     config_sha = sha256(Path(stage.config_path).read_bytes()).hexdigest()
@@ -544,7 +596,7 @@ def _reconcile_stage_identity(manifest: list | dict, stage: RecipeStage,
                 f"stage {stage.name!r}: the momenta policy changed from "
                 f"{record['momenta']!r} to {stage.momenta!r} after the "
                 "stage started — use a new recipe root")
-        return record
+        return record, config
     has_run_evidence = (stage_dir / "resolved_config.json").is_file() or \
         (stage_dir / "events.jsonl").is_file()
     if has_run_evidence:
@@ -556,6 +608,7 @@ def _reconcile_stage_identity(manifest: list | dict, stage: RecipeStage,
                 "proven — use a new output directory (the existing run is "
                 "preserved)")
         stored = json.loads(stored_path.read_text())
+        config, stored = _reconcile_legacy_density_policy(config, stored)
         if config.resolved_dict() != stored:
             raise WorkflowError(
                 f"stage {stage.name!r} has an existing run under different "
@@ -572,14 +625,14 @@ def _reconcile_stage_identity(manifest: list | dict, stage: RecipeStage,
                   "wall_time_s": 0.0, "result": None,
                   "reconciled_from_run": True}
         stages.append(record)
-        return record
+        return record, config
     record = {"name": stage.name, "kind": config.task.kind,
               "run_id": config.run.id, "run_dir": stage.name,
               "status": "pending", "config_sha256": config_sha,
               "source": None, "momenta": stage.momenta,
               "wall_time_s": 0.0, "result": None}
     stages.append(record)
-    return record
+    return record, config
 
 
 def _advance_stage(record: dict, stage: RecipeStage, config: PyramidConfig,

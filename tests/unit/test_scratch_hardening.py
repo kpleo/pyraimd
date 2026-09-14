@@ -360,6 +360,10 @@ def test_flock_blocks_competitor_and_recovers_after_exit(tmp_path):
     finally:
         holder.kill()
         holder.wait(timeout=10)
+        # close the pipes: an unclosed holder stdout/stderr is a
+        # ResourceWarning under -W error once the process is reaped
+        holder.stdout.close()
+        holder.stderr.close()
     # after the holder died the kernel released the lock: the retry works
     receipt = scratch_mod.cleanup(handle)
     assert receipt["status"] == "cleaned"

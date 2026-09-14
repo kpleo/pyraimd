@@ -55,6 +55,15 @@ _PATH_VALUE_KEYS = ("model", "density_source")
 _PSEUDO_DICT_KEY = "pseudos"  # QE species -> filename, resolved under pseudo_dir
 _MODEL_FILE_SUFFIXES = (".model", ".pt", ".pth", ".ckpt", ".json")
 
+# The QE engine backends share QeConfig and its density-chain policy.
+QE_BACKENDS = ("qe", "qe-ase")
+# New configurations record the effective policy explicitly, so a resume
+# never depends on a dataclass default that may change across versions.
+QE_DENSITY_POLICY_DEFAULT = "latest"
+# Resolved records written before the policy existed (<= 0.7.1) resume with
+# the order those runs actually used: the configured source first.
+QE_DENSITY_POLICY_LEGACY = "fixed"
+
 
 class ConfigError(ValueError):
     """A configuration cannot be parsed or validated.
@@ -204,7 +213,15 @@ class PyramidConfig:
         def backend_section(section: BackendConfig | None) -> dict | None:
             if section is None:
                 return None
-            return {"backend": section.name, "options": dict(section.options)}
+            options = dict(section.options)
+            if section.name in QE_BACKENDS:
+                # Record the effective density-chain policy explicitly: a
+                # resume then never inherits a changed dataclass default.
+                # The in-memory options stay untouched, so an unset policy
+                # remains distinguishable from an explicitly chosen one.
+                options.setdefault("density_source_policy",
+                                   QE_DENSITY_POLICY_DEFAULT)
+            return {"backend": section.name, "options": options}
 
         return {
             "schema_version": self.schema_version,
@@ -315,6 +332,15 @@ def load_resolved_config(run_dir: str | Path) -> PyramidConfig:
         value = document.get(section)
         if isinstance(value, dict) and "options" in value:
             document[section] = {"backend": value["backend"], **value["options"]}
+    # Resolved records written before density_source_policy existed (<= 0.7.1)
+    # carry no policy; such a saved run must resume with the order it actually
+    # used (the configured source first), not the new default — a missing
+    # field in a *recorded* configuration means the legacy semantics.
+    for section in ("reference", "surrogate"):
+        value = document.get(section)
+        if (isinstance(value, dict) and value.get("backend") in QE_BACKENDS
+                and "density_source_policy" not in value):
+            value["density_source_policy"] = QE_DENSITY_POLICY_LEGACY
     return parse_config(document, base_dir=run_dir.resolve(), source_path=resolved)
 
 

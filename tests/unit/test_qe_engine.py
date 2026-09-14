@@ -7,7 +7,10 @@ Fixture: tests/data/qe_si_scf.out — a QE 7.5 Si bulk parsing fixture: E = -93.
 
 from __future__ import annotations
 
+import json
+import os
 import stat
+import time
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +22,8 @@ from pyraimd2.engines.base import EngineError
 from pyraimd2.engines.qe_engine import (
     QeConfig,
     QeEngine,
+    _pseudo_sha256,
+    load_density_source,
     parse_qe_output,
     write_qe_input,
 )
@@ -106,6 +111,98 @@ def _fake_pwx(tmp_path: Path, body: str) -> tuple[str, ...]:
     script.write_text(body)
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return ("bash", str(script))
+
+
+def test_pseudo_sha256_same_tick_same_size_rewrite(tmp_path: Path) -> None:
+    """UPF identity must track content even when a coarse-mtime filesystem
+    makes (path, mtime, size) identical across a same-size rewrite."""
+    pseudo = tmp_path / "X.pbe-n.UPF"
+    pseudo.write_text("pseudo-v1")
+    tick = time.time_ns()
+    os.utime(pseudo, ns=(tick, tick))
+    first = _pseudo_sha256(pseudo)
+    pseudo.write_text("pseudo-v2")
+    os.utime(pseudo, ns=(tick, tick))  # same path, same size, same mtime tick
+    second = _pseudo_sha256(pseudo)
+    assert first is not None
+    assert second is not None
+    assert first != second
+
+
+def test_pseudo_sha256_old_mtime_same_size_rewrite(tmp_path: Path) -> None:
+    """mtime pinned old, then a same-size rewrite preserving the old mtime:
+    the content identity must change (no stat tuple is trusted)."""
+    pseudo = tmp_path / "X.pbe-n.UPF"
+    pseudo.write_text("pseudo-v1")
+    old = (1_600_000_000, 1_600_000_000)
+    os.utime(pseudo, old)
+    first = _pseudo_sha256(pseudo)
+    pseudo.write_text("pseudo-v2")
+    os.utime(pseudo, old)
+    second = _pseudo_sha256(pseudo)
+    assert first is not None
+    assert second is not None
+    assert first != second
+
+
+def test_pseudo_sha256_atomic_replace(tmp_path: Path) -> None:
+    """Atomic same-path replacement: identity follows content even with the
+    mtime pinned old."""
+    pseudo = tmp_path / "X.pbe-n.UPF"
+    pseudo.write_text("pseudo-v1")
+    old = (1_600_000_000, 1_600_000_000)
+    os.utime(pseudo, old)
+    first = _pseudo_sha256(pseudo)
+    staging = tmp_path / "staging.UPF"
+    staging.write_text("pseudo-v2")
+    os.utime(staging, old)
+    os.replace(staging, pseudo)
+    second = _pseudo_sha256(pseudo)
+    assert first is not None
+    assert second is not None
+    assert first != second
+
+
+def _large_bytes(seed_byte: int, size: int) -> bytes:
+    block = bytes((seed_byte + i) % 256 for i in range(256))
+    return (block * (size // 256 + 1))[:size]
+
+
+def test_pseudo_sha256_large_file_same_size_rewrite(tmp_path: Path) -> None:
+    """A file just above the former 16 MiB cache threshold: same path, same
+    size, mtime pinned identical — the identity must still follow the real
+    bytes (the threshold is gone; large files are re-read too)."""
+    size = 16 * 1024 * 1024 + 1
+    pseudo = tmp_path / "X.pbe-n.UPF"
+    old = (1_600_000_000, 1_600_000_000)
+    pseudo.write_bytes(_large_bytes(0, size))
+    os.utime(pseudo, old)
+    first = _pseudo_sha256(pseudo)
+    pseudo.write_bytes(_large_bytes(1, size))
+    os.utime(pseudo, old)
+    second = _pseudo_sha256(pseudo)
+    assert first is not None
+    assert second is not None
+    assert first != second
+
+
+def test_write_input_disk_io_opt_in(tmp_path: Path) -> None:
+    """disk_io is an execution knob: absent by default, written verbatim when set."""
+    out = tmp_path / "pw.in"
+    write_qe_input(out, _water_box(), QeConfig(pseudo_dir="/pseudo"))
+    assert "disk_io" not in out.read_text()
+    write_qe_input(out, _water_box(), QeConfig(pseudo_dir="/pseudo", disk_io="nowf"))
+    assert "disk_io = 'nowf'" in out.read_text()
+
+
+def test_disk_io_rejects_unsupported_value(tmp_path: Path) -> None:
+    """An unsupported disk_io fails at construction — before any launch —
+    and Python None is not the string 'none'."""
+    QeEngine(QeConfig(pseudo_dir="/pseudo", disk_io=None), run_root=tmp_path / "a")
+    QeEngine(QeConfig(pseudo_dir="/pseudo", disk_io="none"), run_root=tmp_path / "b")
+    with pytest.raises(EngineError, match="disk_io"):
+        QeEngine(QeConfig(pseudo_dir="/pseudo", disk_io="banana"),
+                 run_root=tmp_path / "c")
 
 
 def test_compute_with_fake_pwx(tmp_path: Path) -> None:
@@ -270,6 +367,278 @@ def test_density_start_fallback_keeps_failed_attempt(tmp_path: Path) -> None:
     assert "startingpot" not in attempt_2
     # The failed attempt's output stays on disk for diagnosis.
     assert "bad density" in (run_dir / "attempt-1" / "pw.out").read_text()
+
+
+def test_nowf_keeps_the_density_chain(tmp_path: Path) -> None:
+    """disk_io='nowf' still writes the converged charge density (only the
+    wavefunctions are skipped), so the chain must keep reusing it."""
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(
+            tmp_path, "#!/bin/bash\n" + _MAKE_SAVE + f"cat {FIXTURE.resolve()}\n"),
+            startpot_file=True, disk_io="nowf"),
+        run_root=tmp_path / "runs",
+    )
+    si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]],
+               cell=[5.43] * 3, pbc=True)
+    engine.compute(si, label="first")
+    engine.compute(si, label="second")
+    assert engine.last_density_decision["start"] == "density"
+    manifest = json.loads(
+        (tmp_path / "runs" / "first-000000" / "attempt-1"
+         / "density_manifest.json").read_text())
+    assert manifest["density_available"] is True
+
+
+def test_disk_io_none_claims_no_reusable_density(tmp_path: Path) -> None:
+    """disk_io='none' writes no charge density: the manifest must not claim
+    one, the attempt must not become a chained-start source, and a later
+    evaluation falls back to an atomic start with the reason recorded."""
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", disk_io="none",
+                 # no _MAKE_SAVE: like a real disk_io='none' run, nothing is
+                 # left in tmp/pyraimd2.save
+                 pw_cmd=_fake_pwx(tmp_path, f"#!/bin/bash\ncat {FIXTURE.resolve()}\n"),
+                 startpot_file=True),
+        run_root=tmp_path / "runs",
+    )
+    si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]],
+               cell=[5.43] * 3, pbc=True)
+    engine.compute(si, label="first")
+    attempt_dir = tmp_path / "runs" / "first-000000" / "attempt-1"
+    manifest = json.loads((attempt_dir / "density_manifest.json").read_text())
+    assert manifest["density_available"] is False
+    source, reason = load_density_source(attempt_dir, engine=engine, atoms=si)
+    assert source is None
+    assert "charge density" in reason
+    engine.compute(si, label="second")
+    # the non-producing attempt was never promoted, so the chain stays atomic
+    assert engine.last_density_decision["start"] == "atomic"
+    assert engine.last_density_decision["reason"] == "no density source configured"
+
+
+def _si() -> Atoms:
+    return Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]],
+                 cell=[5.43] * 3, pbc=True)
+
+
+def _density_engine(work: Path, *, policy: str = "latest",
+                    source: str | None = None) -> QeEngine:
+    body = "#!/bin/bash\n" + _MAKE_SAVE + f"cat {FIXTURE.resolve()}\n"
+    return QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(work, body),
+                 startpot_file=True, density_source=source,
+                 density_source_policy=policy),
+        run_root=work / "runs")
+
+
+def test_density_chain_prefers_latest_successful(tmp_path: Path) -> None:
+    """config.density_source only initializes: a continuous chain reuses the
+    most recent successful density, not the original external source."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    assert seed.last_density_decision["start"] == "atomic"
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _density_engine(tmp_path / "b", source=source_dir)
+    engine.compute(_si(), label="first")
+    assert engine.last_density_decision["via"] == "config.density_source"
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "previous attempt"
+    assert engine.last_density_decision["origin"] != source_dir
+
+
+def test_density_chain_fixed_policy_keeps_config_source(tmp_path: Path) -> None:
+    """The legacy fixed order stays available explicitly: every evaluation
+    re-seeds from the configured external source."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _density_engine(tmp_path / "b", policy="fixed", source=source_dir)
+    engine.compute(_si(), label="first")
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "config.density_source"
+    assert engine.last_density_decision["origin"] == source_dir
+
+
+def test_density_latest_invalid_falls_back_to_config(tmp_path: Path) -> None:
+    """When the most recent density is unusable, the chain falls back to the
+    configured external source instead of reusing the broken one."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _density_engine(tmp_path / "b", source=source_dir)
+    engine.compute(_si(), label="first")
+    manifest = Path(engine._last_density_dir) / "density_manifest.json"
+    assert manifest.exists()
+    manifest.unlink()
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "config.density_source"
+
+
+def test_density_resume_fresh_engine_uses_config_source(tmp_path: Path) -> None:
+    """A fresh process (resume) has no in-memory density: the configured
+    external source initializes it, and the record says so honestly."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    resumed = _density_engine(tmp_path / "b", source=source_dir)
+    resumed.compute(_si(), label="resume")
+    assert resumed.last_density_decision["via"] == "config.density_source"
+    assert "fresh process" in resumed.last_density_decision["note"]
+
+
+def test_density_source_policy_rejects_unknown(tmp_path: Path) -> None:
+    with pytest.raises(EngineError, match="density_source_policy"):
+        _density_engine(tmp_path, policy="sometimes")
+
+
+def test_density_failed_attempt_is_not_promoted(tmp_path: Path) -> None:
+    """A failed evaluation must not become the chain's latest density: the
+    pointer stays on the last attempt that actually succeeded."""
+    counter = tmp_path / "calls.txt"
+    body = (
+        "#!/bin/bash\n"
+        f'n=$(cat {counter} 2>/dev/null || echo 0); n=$((n+1)); echo $n > {counter}\n'
+        'if [ "$n" -eq 2 ]; then echo "transient crash"; exit 139; fi\n'
+        + _MAKE_SAVE + f"cat {FIXTURE.resolve()}\n"
+    )
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path, body),
+                 startpot_file=True, max_retries=0),
+        run_root=tmp_path / "runs",
+    )
+    engine.compute(_si(), label="first")
+    latest = engine._last_density_dir
+    assert latest is not None
+    with pytest.raises(EngineError):
+        engine.compute(_si(), label="crash")
+    assert engine._last_density_dir == latest  # unchanged by the failure
+    engine.compute(_si(), label="third")
+    assert engine._last_density_dir != latest
+    assert engine.last_density_decision["via"] == "previous attempt"
+    assert engine.last_density_decision["origin"] == str(latest)
+
+
+def test_density_mismatched_source_is_not_used(tmp_path: Path) -> None:
+    """A density from different reference settings is rejected, not chained."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    other = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", ecutwfc=99.0,  # different fingerprint
+                 pw_cmd=_fake_pwx(tmp_path / "b",
+                                  "#!/bin/bash\n" + _MAKE_SAVE
+                                  + f"cat {FIXTURE.resolve()}\n"),
+                 startpot_file=True, density_source=source_dir),
+        run_root=tmp_path / "b" / "runs",
+    )
+    other.compute(_si(), label="first")
+    assert other.last_density_decision["start"] == "atomic"
+    assert "reference settings differ" in other.last_density_decision["reason"]
+
+
+# HDF5-build QE writes charge-density.hdf5 instead of .dat.  This fixture is
+# a NAMED MARKER only: it validates the wrapper's file recognition, never
+# HDF5 parsing or a real pw.x run.
+_MAKE_SAVE_HDF5 = ("mkdir -p tmp/pyraimd2.save && echo fake-density-hdf5 "
+                   "> tmp/pyraimd2.save/charge-density.hdf5\n")
+
+
+def test_hdf5_density_source_loads_and_chains(tmp_path: Path) -> None:
+    """An HDF5-build density (charge-density.hdf5, no .dat) must be a valid
+    warm-start source and a promotable product — the recognition rule covers
+    both formats QE 7.5 writes."""
+    body = "#!/bin/bash\n" + _MAKE_SAVE_HDF5 + f"cat {FIXTURE.resolve()}\n"
+    seed = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path / "a", body),
+                 startpot_file=True),
+        run_root=tmp_path / "a" / "runs")
+    seed.compute(_si(), label="seed")
+    attempt_dir = tmp_path / "a" / "runs" / "seed-000000" / "attempt-1"
+    manifest = json.loads((attempt_dir / "density_manifest.json").read_text())
+    assert manifest["density_available"] is True
+    source, reason = load_density_source(attempt_dir, engine=seed, atoms=_si())
+    assert source is not None, reason
+    source_dir = str(attempt_dir)
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", pw_cmd=_fake_pwx(tmp_path / "b", body),
+                 startpot_file=True, density_source=source_dir),
+        run_root=tmp_path / "b" / "runs")
+    engine.compute(_si(), label="first")
+    assert engine.last_density_decision["via"] == "config.density_source"
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "previous attempt"
+
+
+def _seeded_no_output_engine(work: Path, *, disk_io: str,
+                             source: str) -> QeEngine:
+    """A disk_io mode that writes no new density; the fake leaves only the
+    staged input copy behind (exactly what QE's none/minimal punch does)."""
+    return QeEngine(
+        QeConfig(pseudo_dir="/pseudo", disk_io=disk_io,
+                 pw_cmd=_fake_pwx(work, f"#!/bin/bash\ncat {FIXTURE.resolve()}\n"),
+                 startpot_file=True, density_source=source),
+        run_root=work / "runs")
+
+
+def test_seeded_disk_io_none_keeps_true_origin(tmp_path: Path) -> None:
+    """disk_io='none' with a staged seed: the copy still sits in the save
+    tree after the run, but it is the INPUT, not this attempt's output —
+    no false density claim, no promotion, and the chain keeps the true
+    origin."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _seeded_no_output_engine(tmp_path / "b", disk_io="none",
+                                      source=source_dir)
+    engine.compute(_si(), label="first")
+    attempt_dir = tmp_path / "b" / "runs" / "first-000000" / "attempt-1"
+    # the staged copy really survives — the fix is in the claim, not the copy
+    assert (attempt_dir / "tmp" / "pyraimd2.save" / "charge-density.dat").is_file()
+    manifest = json.loads((attempt_dir / "density_manifest.json").read_text())
+    assert manifest["density_available"] is False
+    assert manifest["source"]["from"] == source_dir  # true input origin kept
+    assert engine.last_attempt_records[-1]["density_available"] is False
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "config.density_source"
+    assert engine.last_density_decision["origin"] == source_dir
+
+
+def test_seeded_disk_io_minimal_keeps_true_origin(tmp_path: Path) -> None:
+    """Same contract for disk_io='minimal' (XML only, no new density)."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _seeded_no_output_engine(tmp_path / "b", disk_io="minimal",
+                                      source=source_dir)
+    engine.compute(_si(), label="first")
+    attempt_dir = tmp_path / "b" / "runs" / "first-000000" / "attempt-1"
+    manifest = json.loads((attempt_dir / "density_manifest.json").read_text())
+    assert manifest["density_available"] is False
+    assert manifest["source"]["from"] == source_dir
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "config.density_source"
+    assert engine.last_density_decision["origin"] == source_dir
+
+
+def test_seeded_nowf_produces_and_promotes_new_density(tmp_path: Path) -> None:
+    """nowf still writes the converged density: a seeded nowf attempt is a
+    genuine new product and becomes the chain's next source."""
+    body = "#!/bin/bash\n" + _MAKE_SAVE_HDF5 + f"cat {FIXTURE.resolve()}\n"
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo", disk_io="nowf",
+                 pw_cmd=_fake_pwx(tmp_path / "b", body),
+                 startpot_file=True, density_source=source_dir),
+        run_root=tmp_path / "b" / "runs")
+    engine.compute(_si(), label="first")
+    attempt_dir = tmp_path / "b" / "runs" / "first-000000" / "attempt-1"
+    manifest = json.loads((attempt_dir / "density_manifest.json").read_text())
+    assert manifest["density_available"] is True
+    engine.compute(_si(), label="second")
+    assert engine.last_density_decision["via"] == "previous attempt"
+    assert engine.last_density_decision["origin"] == str(attempt_dir)
 
 
 def test_parse_groups_last_scf_block() -> None:

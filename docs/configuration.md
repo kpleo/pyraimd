@@ -198,6 +198,48 @@ run requires a stateful updater.
 - Missing optional dependencies are reported at selection time with the
   matching extra (`pip install 'pyraimd2[mace]'` / `[pyscf]`).
 
+#### QE backends (`qe` / `qe-ase`)
+
+Both QE paths share one `QeConfig`, so their options are identical; the
+execution knobs below change how pw.x runs, never the physical recipe
+(they are recorded in `resolved_config.json` but excluded from the
+reference fingerprint).
+
+- `disk_io` (string, optional): QE's own `disk_io` (INPUT_PW, QE 7.5).
+  One of `high` / `medium` / `low` / `nowf` / `minimal` / `none`; an
+  unsupported value fails at validation, before any SCF.  Absent (TOML)
+  or `None` (Python) keeps QE's default — that is not the string
+  `"none"`.  `nowf` still writes the XML and the converged charge
+  density, so the *next* SCF can start from the density, but skips the
+  wavefunction files (tens of GB on large cells with HDF5 builds).
+  `minimal` writes only the XML; `none` writes neither — with those,
+  warm-start chaining honestly reports that no reusable density exists.
+  Note the distinction: `nowf` supports *starting the next SCF from the
+  saved density*; it is not an in-place resume of an interrupted SCF.
+  Both QE charge-density formats are recognized on warm starts and in
+  density provenance: `charge-density.dat`, and `charge-density.hdf5`
+  from HDF5 builds.  A density staged as warm-start *input* is never
+  mislabelled as the attempt's own output: an attempt running
+  `minimal`/`none` claims no produced density (its manifest keeps the
+  true input origin), and the chain then falls back to the real source.
+- `startpot_file` / `density_source`: warm starts from a verified
+  density of known origin (see the engine docstrings).
+- `density_source_policy` (`latest` default, or `fixed`): the
+  density-chain trial order.  `latest` reuses the most recent successful
+  density of the run and treats `density_source` as initialization (first
+  evaluation, fresh process) plus fallback when the latest density is
+  unusable — a continuous MD chain no longer re-seeds from the initial
+  geometry every step.  `fixed` keeps the pre-0.7.2 order (the configured
+  source wins every evaluation).  A failed or non-converged attempt never
+  becomes the latest density, and an attempt whose `disk_io` wrote no
+  charge density is never claimed as one.  New runs record the effective
+  policy in `resolved_config.json`; runs saved by 0.7.1 or earlier carry
+  no policy and resume with the legacy `fixed` order, so an old run's
+  semantics never change under a new binary.  A resumed process
+  re-initializes from `density_source` (recorded honestly in the density
+  decision); recovering the previous process's latest density from
+  persisted restart resources is a separate, later feature.
+
 ### [policy] (adaptive only)
 
 - `name`: only `energetic`.

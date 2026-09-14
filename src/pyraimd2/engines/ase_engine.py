@@ -28,29 +28,27 @@ from pyraimd2.engines.base import (
     EngineResult,
 )
 
-_FILE_HASH_CACHE: dict[tuple[str, int, int], str | None] = {}
-
 
 def _file_sha256(path: Path) -> str | None:
-    """Content sha256 of a model file, None when unreadable (cached by
-    path/mtime/size so per-evaluation fingerprints stay cheap)."""
+    """Content sha256 of a model file, or None when unreadable.
+
+    Always derived from the file's current bytes.  No stat tuple
+    (path, mtime, size, ctime, ...) can stand in for content: on
+    coarse-timestamp filesystems mtime and ctime share one tick, and an
+    atomic same-path replacement or an mtime-preserving rewrite defeats
+    any stat key, so there is no cache here at all.  An unreadable file
+    yields None for this call only — never cached, so a later
+    start/resume re-reads the real content instead of keeping a stale
+    "unknown".
+    """
     try:
-        stat = path.stat()
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
     except OSError:
         return None
-    key = (str(path), stat.st_mtime_ns, stat.st_size)
-    if key not in _FILE_HASH_CACHE:
-        digest: str | None = None
-        try:
-            h = hashlib.sha256()
-            with path.open("rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    h.update(chunk)
-            digest = h.hexdigest()
-        except OSError:
-            digest = None
-        _FILE_HASH_CACHE[key] = digest
-    return _FILE_HASH_CACHE[key]
 
 
 def _jsonable(value: object) -> object:
