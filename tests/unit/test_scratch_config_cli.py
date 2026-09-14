@@ -132,3 +132,54 @@ def test_cli_scratch_inspect_and_dry_run_clean(tmp_path, capsys):
     assert cli_main(["scratch", "clean", "--root", str(tmp_path / "tmp"),
                      "--dry-run"]) == 0
     assert "reclaimable" in capsys.readouterr().out
+
+
+def _qe_workflow_config(root: Path, kind: str, scratch: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "structure.extxyz").write_text(
+        "2\n"
+        'Lattice="5.43 0.0 0.0 0.0 5.43 0.0 0.0 0.0 5.43" '
+        'Properties=species:S:1:pos:R:3 pbc="T T T"\n'
+        "Si 0.0 0.0 0.0\nSi 1.36 1.36 1.36\n")
+    script = _success_script(root)
+    path = root / "run.toml"
+    path.write_text(
+        "schema_version = 1\n[run]\nid = \"t\"\ndirectory = \"run\"\n"
+        "seed = 42\n[task]\nkind = \"" + kind + "\"\nmode = \"reference\"\n"
+        "[structure]\nfile = \"structure.extxyz\"\n"
+        "[reference]\nbackend = \"qe\"\npseudo_dir = \"/pseudo\"\n"
+        "pw_cmd = [\"bash\", \"" + str(script[1]) + "\"]\n"
+        "[dynamics]\nensemble = \"nve\"\ntimestep_fs = 0.5\nsteps = 1\n"
+        "temperature_K = 300.0\nvelocity_seed = 7\n" + scratch)
+    return path
+
+
+def _assert_scratch_used(root: Path) -> None:
+    run_dir = root / "run"
+    # attempts ran under the managed root, durable results archived into
+    # the run directory, records kept outside the scratch root
+    assert list((root / "sc").rglob("pw.out")), "no attempt ran in scratch"
+    assert list((run_dir / "calculations").rglob("pw.out")), \
+        "no archived pw.out in the run directory"
+    assert list((run_dir / "scratch_records").rglob("*.json")), \
+        "no scratch records written"
+
+
+def test_plain_singlepoint_honours_scratch_section(tmp_path):
+    """run_workflow's plain path routes [scratch] into the QE engine
+    (regression: _plain_backend bypassed the build_backends merge)."""
+    from pyraimd2.workflows.md import run_workflow
+
+    root = tmp_path / "singlepoint"
+    config = load_config(_qe_workflow_config(
+        root, "singlepoint", '[scratch]\nroot = "./sc"\nretention = "all"\n'))
+    run_workflow(config, verbose=False, handle_sigint=False)
+    _assert_scratch_used(root)
+
+
+def test_plain_md_honours_scratch_section(tmp_path):
+    root = tmp_path / "md"
+    config = load_config(_qe_workflow_config(
+        root, "md", '[scratch]\nroot = "./sc"\nretention = "all"\n'))
+    run_workflow(config, verbose=False, handle_sigint=False)
+    _assert_scratch_used(root)

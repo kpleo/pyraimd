@@ -242,11 +242,10 @@ def _run_adaptive(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
             # The reference is created with the run's event log when its
             # factory accepts one (QE density I/O then enters the ledger).
             store = None
-            engine = create_configured_backend("reference", config.reference,
-                                               run_dir=run_dir,
+            # build_backends (not bare factories) so a configured [scratch]
+            # section reaches scratch-aware factories here as well.
+            engine, surrogate = build_backends(config, run_dir=run_dir,
                                                event_log=event_log)
-            surrogate = create_configured_backend("surrogate", config.surrogate,
-                                                  run_dir=run_dir)
             store = Store(run_dir / "trajectory.db")
             prepare_run_directory(config, engine=engine, surrogate=surrogate)
             runner = EnergeticRunner(
@@ -885,11 +884,12 @@ def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
 
 def _plain_backend(config: PyramidConfig, run_dir: Path, *,
                    event_log: EventLog | None = None) -> object:
-    return (create_configured_backend("reference", config.reference,
-                                      run_dir=run_dir, event_log=event_log)
-            if config.task.mode == "reference"
-            else create_configured_backend("surrogate", config.surrogate,
-                                           run_dir=run_dir))
+    # Route through build_backends so the [scratch] section is merged into
+    # scratch-aware factories — the plain path must honor it exactly like
+    # resume does (previously it bypassed the merge entirely).
+    engine, surrogate = build_backends(config, run_dir=run_dir,
+                                       event_log=event_log)
+    return engine if config.task.mode == "reference" else surrogate
 
 
 def _check_boundary_record(row: object, boundary_step: dict,
