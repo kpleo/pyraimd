@@ -5,11 +5,12 @@ pair is a two-mode harmonic dimer with unequal masses (H/O) and
 off-diagonal x-y coupling; the quadratic correction reproduces the
 reference exactly, so energy/force agreement, finite-difference
 consistency and mass-weighted mode frequencies are checked against
-closed-form values.  Further groups: translation invariance and the
-recorded residuals, sign/mapping-error sensitivity (a sign-flipped
-delta_h or swapped atom blocks must be caught), content-hash
-fingerprints, stress non-impersonation, input validation, the periodic
-image chart and registry wiring.
+closed-form values.  Further groups: translation invariance with the
+acoustic sum rule enforced on delta_h (projection residuals recorded
+before/after), sign/mapping-error sensitivity (a sign-flipped delta_h
+or swapped atom blocks must be caught), content-hash fingerprints,
+stress non-impersonation, input validation, the periodic image chart
+and registry wiring.
 """
 
 from __future__ import annotations
@@ -49,19 +50,30 @@ K_BASE = np.array([[0.90, 0.15, 0.0],
                    [0.15, 1.05, 0.0],
                    [0.00, 0.00, 0.0]])
 
-# Anchored blocks for the mapping-sensitivity test: the two atoms'
-# diagonal blocks differ, so exchanging per-atom blocks changes the
-# physics (a translation-invariant dimer's blocks are exchange-symmetric
-# and could not serve).
-A_R = np.array([[1.30, 0.20, 0.00],
-                [0.20, 0.90, 0.10],
-                [0.00, 0.10, 0.70]])
-C_R = np.array([[0.60, -0.10, 0.00],
-                [-0.10, 1.10, 0.20],
-                [0.00, 0.20, 0.80]])
-B_R = np.array([[0.15, 0.05, 0.00],
-                [0.00, -0.10, 0.05],
-                [0.05, 0.00, 0.10]])
+# Three-atom system for the mapping-sensitivity test: distinct pair
+# couplings make the Hessian translation-invariant (so the acoustic
+# projection is a no-op and the correction stays exact) but not symmetric
+# under exchanging two atoms' blocks — a 2-atom translation-invariant
+# Hessian is always exchange-symmetric and could not serve.
+K_PAIR_01 = np.array([[0.50, 0.10, 0.00],
+                      [0.10, 0.40, 0.05],
+                      [0.00, 0.05, 0.30]])
+K_PAIR_02 = np.array([[0.70, -0.05, 0.10],
+                      [-0.05, 0.60, 0.00],
+                      [0.10, 0.00, 0.20]])
+K_PAIR_12 = np.array([[0.30, 0.20, -0.10],
+                      [0.20, 0.50, 0.05],
+                      [-0.10, 0.05, 0.40]])
+
+Q0_TRIMER = np.array([[0.05, 0.03, -0.02],
+                      [0.98, 0.02, 0.03],
+                      [0.10, 0.95, 0.04]])
+CENTER_TRIMER_REFERENCE = np.array([[0.00, 0.00, 0.00],
+                                    [0.95, 0.05, 0.02],
+                                    [0.06, 0.90, 0.01]])
+CENTER_TRIMER_BASE = np.array([[0.03, -0.02, 0.01],
+                               [0.90, 0.08, -0.01],
+                               [0.04, 0.93, 0.03]])
 
 CENTER_REFERENCE = np.array([[0.00, 0.00, 0.00], [0.95, 0.05, 0.02]])
 CENTER_BASE = np.array([[0.03, -0.02, 0.01], [0.90, 0.08, -0.01]])
@@ -125,6 +137,24 @@ def _dimer(positions, **kwargs) -> Atoms:
 def _block_hessian(coupling):
     """Translation-invariant dimer Hessian from one 3x3 coupling block."""
     return np.block([[coupling, -coupling], [-coupling, coupling]])
+
+
+def _pair_hessian():
+    """Translation-invariant 3-atom Hessian from distinct pair couplings:
+    H_ii = sum_j K_ij, H_ij = -K_ij (row sums vanish per component)."""
+    hessian = np.zeros((9, 9))
+    for i, j, coupling in (
+        (0, 1, K_PAIR_01),
+        (0, 2, K_PAIR_02),
+        (1, 2, K_PAIR_12),
+    ):
+        ii = slice(3 * i, 3 * i + 3)
+        jj = slice(3 * j, 3 * j + 3)
+        hessian[ii, ii] += coupling
+        hessian[jj, jj] += coupling
+        hessian[ii, jj] -= coupling
+        hessian[jj, ii] -= coupling
+    return hessian
 
 
 def _build_correction(hessian_reference=None, hessian_base=None):
@@ -213,7 +243,11 @@ def test_two_mode_frequencies_match_with_unequal_masses():
 
 def test_global_translation_leaves_energy_and_correction_force_untouched():
     _, base, corrected = _build_correction()
-    assert max(corrected.translation_hessian_residuals) < 1e-12
+    # The well-built matrix is already translation-invariant, so the
+    # acoustic projection is a no-op and every record shows it.
+    assert max(corrected.translation_hessian_residuals_before) < 1e-12
+    assert max(corrected.translation_hessian_residuals_after) < 1e-12
+    assert corrected.translation_projection_norm < 1e-12
     assert max(corrected.translation_force_residuals) < 1e-12
     shift = np.array([0.31, -0.27, 0.19])
     q = Q0 + DISPLACEMENTS[1]
@@ -229,19 +263,45 @@ def test_global_translation_leaves_energy_and_correction_force_untouched():
     np.testing.assert_allclose(shifted_origin.forces, expected, atol=1e-10)
 
 
-def test_translation_records_expose_an_inconsistent_correction():
+def test_translation_projection_is_applied_and_recorded():
     _, base, corrected = _build_correction()
     delta_h_broken = corrected.delta_h + np.diag([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
     delta_f0_broken = corrected.delta_f0 + np.array([[0.2, 0.0, 0.0],
                                                      [0.0, 0.0, 0.0]])
-    broken = QuadraticCorrectedSurrogate(base, Q0, delta_f0_broken, delta_h_broken)
-    assert max(broken.translation_hessian_residuals) > 1e-3
-    assert max(broken.translation_force_residuals) > 1e-3
+    repaired = QuadraticCorrectedSurrogate(base, Q0, delta_f0_broken, delta_h_broken)
+    # The pre-projection records expose the broken input ...
+    assert max(repaired.translation_hessian_residuals_before) > 1e-3
+    assert repaired.translation_projection_norm > 1e-3
+    # ... and the enforced matrix satisfies the acoustic sum rule to
+    # machine precision.
+    assert max(repaired.translation_hessian_residuals_after) < 1e-12
+    # delta_f0 is recorded only: the constraint applies to the matrix, so
+    # the broken net force is flagged but stays in the physics.
+    assert max(repaired.translation_force_residuals) > 1e-3
+    net_force = repaired.predict(_dimer(Q0)).forces.sum(axis=0)
+    assert net_force[0] == pytest.approx(0.2, abs=1e-12)
+    # With the matrix constrained, a rigid translation no longer leaks
+    # delta_h into the forces.
     shift = np.array([0.31, -0.27, 0.19])
     q = Q0 + DISPLACEMENTS[1]
-    defect = np.linalg.norm(broken.predict(_dimer(q + shift)).forces
-                            - broken.predict(_dimer(q)).forces)
-    assert defect > 0.1
+    defect = np.linalg.norm(repaired.predict(_dimer(q + shift)).forces
+                            - repaired.predict(_dimer(q)).forces)
+    assert defect < 1e-10
+
+
+def test_translation_projection_is_idempotent():
+    _, base, corrected = _build_correction()
+    delta_h_broken = corrected.delta_h + np.diag([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+    repaired = QuadraticCorrectedSurrogate(
+        base, Q0, corrected.delta_f0, delta_h_broken)
+    # Reconstructing from the already-projected matrix is a fixed point:
+    # nothing left to project, and the matrix is unchanged.
+    twice = QuadraticCorrectedSurrogate(base, Q0, corrected.delta_f0,
+                                        repaired.delta_h)
+    np.testing.assert_allclose(twice.delta_h, repaired.delta_h, atol=1e-12)
+    assert twice.translation_projection_norm < 1e-12
+    assert max(twice.translation_hessian_residuals_before) < 1e-12
+    assert max(twice.translation_hessian_residuals_after) < 1e-12
 
 
 def test_hessian_symmetrization_is_applied_and_recorded():
@@ -281,21 +341,37 @@ def test_sign_flip_of_delta_h_is_detectable():
 
 
 def test_swapping_atom_blocks_is_detectable():
-    hessian_reference = np.block([[A_R, B_R], [B_R.T, C_R]])
-    reference, base, corrected = _build_correction(
-        hessian_reference, 0.5 * hessian_reference)
-    permutation = np.array([3, 4, 5, 0, 1, 2])  # exchange the two atom blocks
+    hessian_reference = _pair_hessian()
+    hessian_base = 0.5 * hessian_reference
+    reference = QuadraticModel(CENTER_TRIMER_REFERENCE, hessian_reference,
+                               E0_REFERENCE, fingerprint="reference-3")
+    base = QuadraticModel(CENTER_TRIMER_BASE, hessian_base, E0_BASE,
+                          fingerprint="base-3")
+    atoms0 = Atoms("H3", positions=Q0_TRIMER)
+    delta_f0 = reference.predict(atoms0).forces - base.predict(atoms0).forces
+    corrected = QuadraticCorrectedSurrogate(
+        base, Q0_TRIMER, delta_f0, hessian_reference - hessian_base,
+        energy_offset=reference.predict(atoms0).energy
+        - base.predict(atoms0).energy)
+    # Both matrices are translation-invariant, so the acoustic projection
+    # is a no-op and the corrected trimer stays exact.
+    assert corrected.translation_projection_norm < 1e-12
+    permutation = np.array([3, 4, 5, 0, 1, 2, 6, 7, 8])  # exchange atoms 0/1
     swapped = corrected.delta_h[np.ix_(permutation, permutation)]
     wrong = QuadraticCorrectedSurrogate(
-        base, Q0, corrected.delta_f0, swapped,
+        base, Q0_TRIMER, delta_f0, swapped,
         energy_offset=corrected.energy_offset)
-    atoms = _dimer(Q0 + DISPLACEMENTS[2])
+    displacement = np.array([[0.04, -0.03, 0.02],
+                             [-0.02, 0.05, -0.01],
+                             [0.03, 0.01, -0.04]])
+    atoms = Atoms("H3", positions=Q0_TRIMER + displacement)
     # Normal assertion first: the correct block mapping matches.
     np.testing.assert_allclose(corrected.predict(atoms).forces,
                                reference.predict(atoms).forces, atol=1e-10)
-    # The swapped matrix is still symmetric, so only the physics catches it.
+    # The swapped matrix is still symmetric and translation-invariant, so
+    # only the physics catches it.
     expected_defect = np.linalg.norm(
-        (corrected.delta_h - swapped) @ DISPLACEMENTS[2].reshape(-1))
+        (corrected.delta_h - swapped) @ displacement.reshape(-1))
     defect = np.linalg.norm(
         wrong.predict(atoms).forces - reference.predict(atoms).forces)
     assert defect == pytest.approx(expected_defect, rel=1e-8)

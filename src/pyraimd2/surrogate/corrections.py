@@ -74,6 +74,24 @@ def _immutable(value: np.ndarray) -> np.ndarray:
     return np.frombuffer(value.tobytes(order="C"), dtype=float).reshape(value.shape)
 
 
+def _translation_vectors(n_atoms: int) -> np.ndarray:
+    """The three uniform translation directions of the 3N configuration
+    space as (3N, 3) unit-norm columns."""
+    translations = np.zeros((3 * n_atoms, 3))
+    for alpha in range(3):
+        translations[alpha::3, alpha] = 1.0 / math.sqrt(n_atoms)
+    return translations
+
+
+def _translation_residuals(
+    hessian: np.ndarray, translations: np.ndarray
+) -> tuple[float, float, float]:
+    """``|dH·t|`` for each of the three unit translation vectors."""
+    return tuple(
+        float(np.linalg.norm(hessian @ translations[:, alpha])) for alpha in range(3)
+    )
+
+
 def _base_identity(base: object) -> str:
     return fingerprint_of(base) or type(base).__qualname__
 
@@ -175,14 +193,22 @@ class QuadraticCorrectedSurrogate:
     ``U_c = U_b - dF0·u + 1/2 uᵀ dH u + E0``
     ``F_c = F_b + dF0 - dH u``
 
-    ``delta_h`` is symmetrized at construction; the Frobenius residuals
-    before and after symmetrization are recorded
-    (``symmetrization_residual_before`` / ``_after``).  The translation
-    constraint is *checked*, never silently enforced:
-    ``translation_hessian_residuals`` holds ``|dH·t|`` for the three unit
-    global-translation vectors ``t`` and ``translation_force_residuals``
-    the per-component magnitude of the net force ``sum(dF0)`` — both are
-    ~0 for a translationally consistent correction.
+    ``delta_h`` is symmetrized at construction and then projected onto the
+    translation-invariant subspace: P dH P with
+    ``P = I - T (TᵀT)⁻¹ Tᵀ``, T the three uniform translation vectors of
+    the 3N configuration space, so the enforced matrix satisfies the
+    acoustic sum rule by construction.  Every step is recorded: the
+    Frobenius residuals before/after symmetrization
+    (``symmetrization_residual_before`` / ``_after``), the ``|dH·t|``
+    residuals for the three unit translation vectors before/after the
+    projection (``translation_hessian_residuals_before`` / ``_after``),
+    and the projection's matrix-difference norm
+    (``translation_projection_norm``).  The projected matrix is what
+    enters the energy, the forces and the fingerprint.  The constraint
+    applies to the matrix only: ``delta_f0`` is never projected — its net
+    force is just recorded (``translation_force_residuals``, the
+    per-component magnitude of ``sum(dF0)``), ~0 for a translationally
+    consistent correction.
 
     The displacement uses the fixed-reference Cartesian expansion.  For
     periodic systems the per-atom periodic image is chosen once — by the
@@ -205,9 +231,10 @@ class QuadraticCorrectedSurrogate:
     honest base spread unchanged, so the base uncertainty is forwarded
     as-is.  Stress is not implemented: ``stress_available=False`` and
     predictions return ``stress=None``, never the base model's stress.
-    The content hashes of ``q0``, ``delta_f0``, the symmetrized
-    ``delta_h``, the energy offset and the calibration note enter the
-    fingerprint together with the base model's identity.
+    The content hashes of ``q0``, ``delta_f0``, the enforced ``delta_h``
+    (symmetrized and translation-projected), the energy offset and the
+    calibration note enter the fingerprint together with the base model's
+    identity.
     """
 
     def __init__(
@@ -253,20 +280,28 @@ class QuadraticCorrectedSurrogate:
         self.symmetrization_residual_after = float(
             np.linalg.norm(symmetrized - symmetrized.T)
         )
-        translation_hessian_residuals = []
-        for alpha in range(3):
-            translation = np.zeros((n_atoms, 3))
-            translation[:, alpha] = 1.0 / math.sqrt(n_atoms)  # unit 3N vector
-            translation_hessian_residuals.append(
-                float(np.linalg.norm(symmetrized @ translation.reshape(-1)))
-            )
-        self.translation_hessian_residuals = tuple(translation_hessian_residuals)
+        translations = _translation_vectors(n_atoms)
+        self.translation_hessian_residuals_before = _translation_residuals(
+            symmetrized, translations
+        )
+        # Enforce the translation constraint on the matrix: P δH P with
+        # P = I - T (TᵀT)⁻¹ Tᵀ, T the three uniform translation vectors.
+        # Two rank-3 downdates; P itself is never formed.
+        gram_inv_t = np.linalg.solve(translations.T @ translations, translations.T)
+        projected = symmetrized - translations @ (gram_inv_t @ symmetrized)
+        projected = projected - (projected @ translations) @ gram_inv_t
+        self.translation_projection_norm = float(
+            np.linalg.norm(projected - symmetrized)
+        )
+        self.translation_hessian_residuals_after = _translation_residuals(
+            projected, translations
+        )
         self.translation_force_residuals = tuple(
             float(abs(component)) for component in delta_f0_checked.sum(axis=0)
         )
         self._q0 = _immutable(q0_checked)
         self._delta_f0 = _immutable(delta_f0_checked)
-        self._delta_h = _immutable(symmetrized)
+        self._delta_h = _immutable(projected)
         self._image_offsets: np.ndarray | None = None
         self._chart_cell: np.ndarray | None = None
         self._chart_inv_cell: np.ndarray | None = None
@@ -283,8 +318,9 @@ class QuadraticCorrectedSurrogate:
 
     @property
     def delta_h(self) -> np.ndarray:
-        """The symmetrized Hessian difference, (3N, 3N) eV/angstrom^2,
-        atom-major Cartesian, no mass weighting, read-only."""
+        """The enforced Hessian difference — symmetrized and
+        translation-projected — (3N, 3N) eV/angstrom^2, atom-major
+        Cartesian, no mass weighting, read-only."""
         return self._delta_h
 
     @property
