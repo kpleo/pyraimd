@@ -756,10 +756,33 @@ class _PlainDriver:
         run_start = time.perf_counter()
         completed = start_step
         checkpoint_interval = self.config.checkpoint.interval_steps
+        # Process-level walltime budget (dynamics.max_wall_hours; a resumed
+        # process re-arms it from zero).  The reserve for starting one more
+        # step is 1.5x the last measured step wall plus a fixed I/O margin,
+        # or the 3 h single-SCF ceiling before this process measured any
+        # step.  A running step is never interrupted.
+        budget_s = (None if self.config.dynamics.max_wall_hours is None
+                    else self.config.dynamics.max_wall_hours * 3600.0)
+        last_step_wall: float | None = None
+        budget_stop: dict | None = None
         try:
             for step in range(start_step + 1, start_step + n_steps + 1):
                 if self._stop_requested:
                     break
+                if budget_s is not None:
+                    remaining = budget_s - (time.perf_counter() - run_start)
+                    reserve = (10800.0 if last_step_wall is None
+                               else 1.5 * last_step_wall + 300.0)
+                    if remaining < reserve:
+                        # clean exit at the last complete boundary: checkpoint
+                        # regardless of the interval, then stop
+                        self._write_checkpoint(completed)
+                        budget_stop = {"step": completed,
+                                       "remaining_s": remaining,
+                                       "reserve_s": reserve,
+                                       "last_step_wall_s": last_step_wall}
+                        break
+                step_start = time.perf_counter()
                 # ASE's VelocityVerlet evaluates the new-step forces inside
                 # step(): exactly one evaluation per step.  The committed
                 # record afterwards reads the calculator cache.
@@ -800,6 +823,7 @@ class _PlainDriver:
                 if step % checkpoint_interval == 0 or self._stop_requested:
                     self._write_checkpoint(step)
                 outputs.append_trajectory_step(step)
+                last_step_wall = time.perf_counter() - step_start
                 if step % interval == 0:
                     outputs.write_summaries()
                     if verbose:
@@ -809,16 +833,22 @@ class _PlainDriver:
         except Exception as error:
             self._fail(error, completed + 1)
             raise
-        stopped = bool(self._stop_requested)
+        stopped = bool(self._stop_requested) or budget_stop is not None
         wall = time.perf_counter() - run_start
         if stopped:
             # A stop received on the final step is still a received stop:
             # the run's own records say so (the adaptive runner does the
             # same), and the recipe layer ends the invocation there.
-            self.event_log.append(RUN_END, {
-                "run_id": self.run_id, "status": "stopped",
-                "reason": "stop requested; checkpoint saved at the last "
-                          "complete step"})
+            stop_payload = {"run_id": self.run_id, "status": "stopped"}
+            if budget_stop is None:
+                stop_payload["reason"] = ("stop requested; checkpoint saved at "
+                                          "the last complete step")
+            else:
+                stop_payload["reason"] = ("walltime budget exhausted; "
+                                          "checkpoint saved at the last "
+                                          "complete step")
+                stop_payload.update(budget_stop)
+            self.event_log.append(RUN_END, stop_payload)
         self.event_log.append(RUN_SUMMARY, {
             "run_id": self.run_id, "n_steps": completed,
             "n_evaluations": completed + 1, "n_accepted": completed + 1,
