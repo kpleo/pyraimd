@@ -107,6 +107,7 @@ import numpy as np
 from ase import Atoms, units
 from ase.data import atomic_masses, chemical_symbols
 
+from pyraimd2.engines import density_publish
 from pyraimd2.engines.base import (
     EnergyKind,
     EngineCapabilities,
@@ -632,6 +633,95 @@ def check_qe_run_text(text: str, nat: int, *, require_stress: bool = True) -> No
         )
 
 
+# QE 7.5 prints exactly this line (PW/src/electrons.f90, potinit via
+# read_scf) when startingpot='file' actually loaded the density, followed
+# by the path it read.  A build that prints something else — or nothing —
+# is never assumed to have read the seed: the proof simply stays absent.
+DENSITY_READ_MARKER = "The initial density is read from file"
+_STARTPOT_FILE_RE = re.compile(
+    r"(?i)\bstartingpot\s*=\s*['\"]file['\"]")
+
+
+def parse_density_read_evidence(output_text: str, input_text: str) -> tuple[dict | None, str | None]:
+    """The actual density-read observation of ONE successful attempt, from
+    its own raw output and launch input — never another attempt's log.
+
+    Returns ``(evidence, None)`` on a positive, unambiguous match,
+    ``(None, reason)`` otherwise.  A proof requires all of: the launch
+    input requested a file start (``startingpot = 'file'``), the raw
+    output carries QE's density-read marker exactly once, and the path
+    line after the marker names the attempt's own outdir save tree (the
+    staged copy) — a relative ``tmp/<prefix>.save/charge-density[.*]``
+    path, never absolute and never escaping it.  Missing, ambiguous or
+    foreign-looking evidence answers the reason; the caller preserves the
+    seed source rather than assuming a silent or unknown build read it.
+    """
+    if not _STARTPOT_FILE_RE.search(input_text):
+        return None, ("the launch input did not request startingpot='file' "
+                      "— a density decision without the matching input is "
+                      "not a read")
+    lines = output_text.splitlines()
+    matches = [i for i, line in enumerate(lines)
+               if DENSITY_READ_MARKER in line]
+    if not matches:
+        return None, (f"the solver output has no density-read marker "
+                      f"({DENSITY_READ_MARKER!r}); a silent or differently "
+                      "worded build is never proof of a read")
+    if len(matches) > 1:
+        return None, ("the solver output carries the density-read marker "
+                      f"{len(matches)} times; ambiguous evidence is no proof")
+    index = matches[0]
+    read_path = ""
+    for line in lines[index + 1:]:
+        stripped = line.strip()
+        if stripped:
+            read_path = stripped
+            break
+    if not read_path:
+        return None, "the density-read marker has no following path line"
+    normalized = read_path.removeprefix("./")
+    expected = f"tmp/{QE_PREFIX}.save/charge-density"
+    if read_path.startswith("/") or "\\" in read_path or ".." in normalized \
+            or not (normalized == expected
+                    or normalized.startswith(expected + ".")):
+        return None, (f"the density-read path {read_path!r} is not the "
+                      f"attempt's own staged save tree ({expected!r}); a "
+                      "read from anywhere else is not independent proof")
+    return {"marker": lines[index].strip(),
+            "read_path": read_path,
+            "startpot": "file"}, None
+
+
+def _density_read_evidence_for(record: dict, density: DensitySource | None,
+                               *, output_path: Path, input_path: Path) -> None:
+    """Parse and record the actual density-read evidence of a density-start
+    attempt, bound to this attempt's own raw output and launch input
+    (path + SHA-256 of both — the output is archived with the attempt, so
+    the receipt stays checkable afterwards).  ``record`` gains
+    ``density_read_evidence`` (or ``density_read_evidence_missing`` with
+    the reason); a failed parse never raises into the label path."""
+    if density is None:
+        return
+    try:
+        output_text = output_path.read_text(errors="replace")
+        input_text = input_path.read_text(errors="replace")
+        evidence, reason = parse_density_read_evidence(output_text,
+                                                       input_text)
+    except OSError as error:
+        evidence, reason = None, (f"the attempt's raw output/input could "
+                                  f"not be read for evidence: {error}")
+    if evidence is not None:
+        evidence = dict(evidence)
+        evidence["output"] = {"file": output_path.name,
+                              "bytes": output_path.stat().st_size,
+                              "sha256": scratch_mod._sha256(output_path)}
+        evidence["input"] = {"file": input_path.name,
+                             "sha256": scratch_mod._sha256(input_path)}
+        record["density_read_evidence"] = evidence
+    else:
+        record["density_read_evidence_missing"] = reason
+
+
 @dataclass(frozen=True)
 class DensitySource:
     """A verified density artifact of known origin, ready to be copied."""
@@ -885,10 +975,23 @@ class QeEngine:
     ``request_id`` the engine generates its own, and the same terminal
     records are always available in ``last_attempt_records`` for a caller
     that prefers to consume execution records directly.
+
+    ``density_registry_run_dir`` (optional) names the top-level run
+    directory owning ``restart/density`` and switches on the persistent
+    density chain: a successful attempt that actually produced a new charge
+    density publishes its candidate seed pack as one immutable generation
+    (see :mod:`pyraimd2.engines.density_publish`), the attempt record
+    carries the outcome under ``density_publish``, and the producer
+    scratch is released only after a later calculation independently
+    consumed that exact seed (the delayed release; a managed scratch's
+    authoritative record is bound to that explicit owner, not the
+    engine's calculations subtree).  No density source is switched and
+    the default behavior is untouched when the option is absent.
     """
 
     def __init__(self, config: QeConfig, run_root: str | Path, *,
-                 event_log: object | None = None) -> None:
+                 event_log: object | None = None,
+                 density_registry_run_dir: str | Path | None = None) -> None:
         # Path inputs are fixed against the construction-time cwd: the
         # fingerprint and the subprocess must resolve the same files.
         self.config = normalize_config_paths(config)
@@ -896,9 +999,27 @@ class QeEngine:
         check_execution_options(self.config, engine_name=recipe_name(self.config))
         self.run_root = Path(run_root)
         self.run_root.mkdir(parents=True, exist_ok=True)
+        self._density_registry_dir = density_publish.resolve_registry_owner(
+            self.run_root, density_registry_run_dir,
+            scratch_root=self.config.scratch_root,
+            retention=self.config.retention, engine_name=self.name)
         self._event_log = event_log
         self._scratch_run_uuid = uuid.uuid4().hex[:12]
         self._last_density_dir: Path | None = None
+        # persistent-chain state (inert unless the registry is enabled):
+        # the resume-pinned generation (cleared after the first successful
+        # compute consumes it) and the current persistent head — the
+        # generation this run's latest committed state actually depends on
+        self._pinned_density_generation: int | None = None
+        self._density_head: int | None = None
+        # the independent-consumption proof of the latest successful compute
+        # (which registry generation it actually read, with the raw-output
+        # evidence); consumed by the next release_consumed_scratch call — a
+        # cache hit carries no proof.  A successful attempt that staged a
+        # registry seed but shows no actual-read evidence lands in
+        # _consumption_unproven instead: the producer is preserved.
+        self._pending_consumption: dict | None = None
+        self._consumption_unproven: dict | None = None
         self._io_counter = 0
         self._request_counter = 0
         self.last_attempt_records: list[dict] = []
@@ -925,6 +1046,41 @@ class QeEngine:
     def fingerprint(self) -> str:
         digest = _settings_digest(self.config, path_kind="qe-subprocess")
         return f"{self.name}:{digest}"
+
+    @property
+    def density_registry_enabled(self) -> bool:
+        """Whether this engine is wired to a run-owned density registry."""
+        return self._density_registry_dir is not None
+
+    def current_density_generation(self) -> int | None:
+        """The persistent density head: the generation the last successful
+        evaluation published, or the registry generation it consumed when
+        nothing new was published.  ``None`` is honest — the current state
+        has no registry dependency (atomic/legacy/external start, or the
+        ``fixed`` external-density policy, which never holds a registry
+        reference).  Right after a resume the pin stands in for the head:
+        the restored boundary's dependency is exactly the pinned
+        generation, even if the first evaluation is served from the
+        calculator cache and no compute has run yet."""
+        if self._density_head is not None:
+            return self._density_head
+        return self._pinned_density_generation
+
+    def pin_density_generation(self, generation: int | None) -> None:
+        """Bind the first new evaluation after a resume to exactly this
+        published generation (workflow-resume only).  The pin is consumed
+        — and cleared — by the first successful compute; a pinned
+        generation that fails verification refuses the evaluation instead
+        of silently falling back to the latest pointer.  The decision
+        trail records the pin so an inspection between the resume and the
+        first evaluation already sees the binding."""
+        self._pinned_density_generation = generation
+        if generation is not None:
+            self.last_density_decision = {
+                "start": "density", "via": "density_registry",
+                "generation": int(generation), "pinned": True,
+                "note": ("resume binding pinned by the workflow; the first "
+                         "new evaluation resolves exactly this generation")}
 
     def _emit_attempt(self, record: dict, *, request_id: str) -> None:
         """One event per real process launch (R6): the ledger's physical
@@ -1003,18 +1159,39 @@ class QeEngine:
         base = "eval" if label is None else str(label).replace("/", "_")
         run_dir = allocate_run_dir(self.run_root, base)
         self.last_attempt_records = []
+        self._pending_consumption = None
+        self._consumption_unproven = None
         if request_id is None:
-            self._request_counter += 1
-            request_id = f"qe-request-{self._request_counter}"
+            if self._density_registry_dir is not None:
+                # The publication needs a persistent request identity: the
+                # actually allocated, uniquely numbered compute directory
+                # (relative to the run owner) — a rebuilt engine continues
+                # the on-disk numbering instead of reusing "qe-request-1".
+                request_id = density_publish.directory_request_id(
+                    self._density_registry_dir, run_dir)
+            else:
+                self._request_counter += 1
+                request_id = f"qe-request-{self._request_counter}"
 
         density: DensitySource | None = None
+        density_input_generation: int | None = None
         if self.config.startpot_file:
             density = self._resolve_density(atoms)
+            decision = self.last_density_decision or {}
+            if decision.get("via") == "density_registry":
+                density_input_generation = decision.get("generation")
 
         retries_done = 0
         attempt = 1
         while True:
             use_density = density is not None and attempt == 1
+            # this attempt's persistent input binding (None for an atomic
+            # or legacy-chain start): recorded on the attempt record and,
+            # with a managed scratch, on the durable record BEFORE the
+            # launch, so compute_references protects the consumed
+            # generation for the attempt's whole in-flight lifetime
+            attempt_input_generation = (density_input_generation
+                                        if use_density else None)
             if use_density:
                 attempt_config = self.config
             else:
@@ -1026,7 +1203,9 @@ class QeEngine:
             handle = None
             if self.config.scratch_root is not None:
                 handle = scratch_mod.allocate(
-                    run_root=self.run_root,
+                    run_root=(self._density_registry_dir
+                              if self._density_registry_dir is not None
+                              else self.run_root),
                     scratch_root=self.config.scratch_root,
                     run_uuid=self._scratch_run_uuid,
                     backend_role="reference",
@@ -1034,6 +1213,9 @@ class QeEngine:
                     attempt_id=f"attempt-{attempt}",
                     archive_dir=archive_dir,
                     retention=self.config.retention)
+                if self._density_registry_dir is not None:
+                    handle.update_record(
+                        density_generation=attempt_input_generation)
             self._last_scratch_handle = handle
             try:
                 result = self._attempt(
@@ -1053,6 +1235,8 @@ class QeEngine:
                     # here; no process ever started, so no attempt event.
                     record["status"] = "failed"
                 record.update(error=str(error), retryable=error.retryable)
+                if self._density_registry_dir is not None:
+                    record["density_input_generation"] = attempt_input_generation
                 # A failed density start gets one atomic-start retry even when
                 # the failure itself is deterministic (stale density): the
                 # retry runs a different input. Anything else retries only
@@ -1090,6 +1274,8 @@ class QeEngine:
                 if record["status"] == "running":
                     record["status"] = "failed"
                 record["retryable"] = False
+                if self._density_registry_dir is not None:
+                    record["density_input_generation"] = attempt_input_generation
                 raise
             record = self.last_attempt_records[-1]
             record.update(status="success", error=None, retryable=None)
@@ -1097,6 +1283,61 @@ class QeEngine:
             # become the chained-start source of a later evaluation
             produced_density = (archive_dir
                                 if record.get("density_available", True) else None)
+            if self._density_registry_dir is not None:
+                record["density_input_generation"] = attempt_input_generation
+                if produced_density is not None:
+                    # save-only publication of this attempt's density into the
+                    # run-owned registry; the outcome is recorded, never raised
+                    record["density_publish"] = self._publish_density(
+                        record=record, handle=handle, atoms=atoms,
+                        request_id=request_id, attempt_id=f"attempt-{attempt}")
+                self._update_density_head(
+                    record.get("density_publish"), attempt_input_generation)
+                if attempt_input_generation is not None:
+                    # the independent-consumption proof for the delayed
+                    # release: this attempt actually staged the registry
+                    # generation as its density start AND its raw output
+                    # shows the solver really read it — never an atomic
+                    # retry, a cache hit, a borrow from the producer's own
+                    # tree, or a successful run that silently ignored the
+                    # staged seed (the origin must be the registry, and the
+                    # read evidence must exist)
+                    staged_from = record.get("density_from")
+                    registry = Path(self._density_registry_dir) / "restart" \
+                        / "density"
+                    if staged_from is not None and Path(staged_from) \
+                            .resolve().is_relative_to(registry):
+                        read_evidence = record.get("density_read_evidence")
+                        if read_evidence is not None:
+                            self._pending_consumption = {
+                                "generation": int(attempt_input_generation),
+                                "consumer_attempt": {
+                                    "request_id": request_id,
+                                    "attempt_id": f"attempt-{attempt}"},
+                                "staged_from": staged_from,
+                                "staged_bytes": record.get(
+                                    "density_copy_bytes"),
+                                "staged_copy_s": record.get(
+                                    "density_copy_s"),
+                                # the consumed seed's identity pinned at
+                                # selection/staging time — the release gate
+                                # cross-checks it against the producer's
+                                # pending receipt and the live manifest
+                                "seed_content_digest":
+                                    density.manifest.get("content_digest"),
+                                "reference_fingerprint":
+                                    density.manifest.get(
+                                        "reference_fingerprint"),
+                                "read_evidence": read_evidence}
+                        else:
+                            self._consumption_unproven = {
+                                "generation": int(attempt_input_generation),
+                                "reason": record.get(
+                                    "density_read_evidence_missing")
+                                    or "no actual-read evidence was parsed"}
+                # the resume pin binds exactly one evaluation: the first
+                # successful compute consumed it
+                self._pinned_density_generation = None
             if handle is not None and self.config.retention == "results":
                 receipt = scratch_mod.cleanup(handle)
                 record["scratch_cleanup"] = receipt  # the complete receipt
@@ -1124,18 +1365,87 @@ class QeEngine:
                 force_consistent=result.force_consistent,
             )
 
+    def _update_density_head(self, publish: dict | None,
+                             input_generation: int | None) -> None:
+        """Advance the persistent head after a successful compute.
+
+        A verified publication moves the head to the new generation; an
+        evaluation that consumed a registry generation without publishing
+        keeps that input as the head (the current state still derives from
+        it); anything else (atomic/legacy-chain input, or the ``fixed``
+        external-density policy, which never holds a registry reference)
+        leaves no registry dependency — the head is honestly None.
+        """
+        if self.config.density_source_policy == "fixed":
+            self._density_head = None
+        elif publish is not None and publish.get("status") == "published":
+            self._density_head = int(publish["generation"])
+        elif input_generation is not None:
+            self._density_head = int(input_generation)
+        else:
+            self._density_head = None
+
     def _resolve_density(self, atoms: Atoms) -> DensitySource | None:
         """Pick a compatible known-origin density, or decide atomic up front.
 
-        The trial order comes from :func:`order_density_candidates` (the
-        same helper the ASE adapter uses).  A fresh process holds no
-        in-memory latest density; it re-initializes from
-        ``config.density_source`` and the decision record says so — the
-        previous process's latest density is not recovered implicitly
-        (recovering persisted restart resources is a separate feature).
+        With the run-owned registry enabled, the trial order is: a
+        resume-pinned generation first (resolved strictly — a reference
+        that fails verification refuses the evaluation, never silently
+        swaps in the latest pointer); otherwise, under the default
+        ``latest`` policy, the registry's latest verified generation; the
+        ``fixed`` policy never consults the registry for source selection
+        (the configured external source is never overridden by it).  When
+        the registry offers nothing usable under ``latest``, the
+        pre-registry order runs unchanged
+        (:func:`order_density_candidates`: the in-memory archive chain
+        plus ``config.density_source`` initialization/fallback), and the
+        decision record says the registry was tried first.  Without the
+        registry the behavior is byte-identical to before: a fresh
+        process holds no in-memory latest density, re-initializes from
+        ``config.density_source`` and the decision record says so.
         """
+        if self._density_registry_dir is not None:
+            pinned = self._pinned_density_generation
+            if pinned is not None:
+                payload, reason, generation = density_publish.load_published_density(
+                    self._density_registry_dir, generation=pinned,
+                    reference_fingerprint=self.fingerprint, nat=len(atoms),
+                    species=sorted(_species(atoms)))
+                if payload is None:
+                    raise QeEngineError(
+                        f"the resume-pinned density generation g{pinned:06d} "
+                        f"cannot be used: {reason}; refusing to substitute "
+                        "another generation for the bound resume reference")
+                generation_dir, save_dir, manifest = payload
+                self.last_density_decision = {
+                    "start": "density", "origin": str(generation_dir),
+                    "via": "density_registry", "generation": generation,
+                    "pinned": True}
+                return DensitySource(origin_dir=generation_dir,
+                                     save_dir=save_dir, manifest=manifest)
+            if self.config.density_source_policy == "latest":
+                payload, reason, generation = density_publish.load_published_density(
+                    self._density_registry_dir, generation=None,
+                    reference_fingerprint=self.fingerprint, nat=len(atoms),
+                    species=sorted(_species(atoms)))
+                if payload is not None:
+                    generation_dir, save_dir, manifest = payload
+                    self.last_density_decision = {
+                        "start": "density", "origin": str(generation_dir),
+                        "via": "density_registry", "generation": generation}
+                    return DensitySource(origin_dir=generation_dir,
+                                         save_dir=save_dir, manifest=manifest)
+                # fall through to the pre-registry chain; the decision
+                # record keeps the registry miss alongside the legacy
+                # candidates' reasons
+                registry_miss = f"density_registry (latest): {reason}"
+            else:
+                registry_miss = None
+        else:
+            registry_miss = None
         fresh_process = self._last_density_dir is None
-        reasons: list[str] = []
+        reasons: list[str] = ([registry_miss] if registry_miss is not None
+                              else [])
         for label, origin in order_density_candidates(self.config,
                                                       self._last_density_dir):
             source, reason = load_density_source(origin, engine=self, atoms=atoms)
@@ -1296,6 +1606,12 @@ class QeEngine:
                 retryable=True,
             ) from error
 
+        # The actual-read observation of a density start: parsed from THIS
+        # attempt's raw output and launch input and bound to both (digests
+        # below).  Missing/ambiguous evidence is recorded with its reason —
+        # never assumed.
+        _density_read_evidence_for(record, density,
+                                   output_path=out_path, input_path=in_path)
         save_tree = work_dir / "tmp" / f"{QE_PREFIX}.save"
         # A density counts as this attempt's product only when this SCF
         # could write one: disk_io none/minimal never do (any density file
@@ -1385,8 +1701,65 @@ class QeEngine:
             request_id=request_id, io_counter=self._io_counter,
         )
 
+    def _publish_density(self, *, record: dict, handle, atoms: Atoms,
+                         request_id: str, attempt_id: str) -> dict:
+        """Publish this successful attempt's density into the run-owned
+        registry through the shared bridge (save-only; see
+        :mod:`pyraimd2.engines.density_publish`).  The attempt record keeps
+        the returned status under ``density_publish``; a publication
+        failure never reruns the SCF and never claims a generation."""
+        work_dir = Path(record["directory"])
+        save_tree = work_dir / "tmp" / f"{QE_PREFIX}.save"
+        return density_publish.publish_attempt_density(
+            owner_dir=self._density_registry_dir,
+            source_root=work_dir,
+            density_file=density_output_file(save_tree),
+            scratch_handle=handle,
+            request_id=request_id,
+            attempt_id=attempt_id,
+            reference_fingerprint=self.fingerprint,
+            nat=len(atoms),
+            species=sorted(_species(atoms)),
+            disk_io=self.config.disk_io,
+            source_desc={
+                "kind": "qe-attempt",
+                "engine": self.name,
+                "work_dir": str(work_dir),
+                "archive_dir": str(handle.archive_dir if handle is not None
+                                   else work_dir),
+            },
+        )
+
+    def release_consumed_scratch(self, *, evaluation_id: int) -> dict:
+        """Release managed scratch under the delayed-release contract — a
+        receipt, never an exception into the run loop.
+
+        This attempt's own scratch is released only once its published
+        seed has been independently consumed by a later successful
+        calculation; until then the attempt carries a pending release
+        receipt on its authoritative record and stays kept (a protected
+        resource, not a cleanup failure).  The shared implementation
+        (:func:`density_publish.release_consumed_scratch`) behaves
+        identically for both QE adapters.
+        """
+        return density_publish.release_consumed_scratch(
+            self, evaluation_id=evaluation_id,
+            on_reclaimed=self._note_reclaimed_scratch)
+
+    def _note_reclaimed_scratch(self, archive_dir: Path) -> None:
+        """An attempt's scratch was reclaimed: stop claiming its save tree
+        as a later evaluation's source.  The archive lives outside the
+        scratch root and is untouched; only its manifest stops claiming
+        the .save survives (same mark as the retention="results" path)."""
+        _mark_manifest_scratch_removed(archive_dir)
+        if self._last_density_dir is not None \
+                and self._last_density_dir == archive_dir:
+            self._last_density_dir = None
+
 
 def create_qe_engine(*, run_root: str | Path, event_log: object | None = None,
+                     density_registry_run_dir: str | Path | None = None,
                      **config_kwargs) -> QeEngine:
     """Registry factory: build a QeEngine from plain keyword settings."""
-    return QeEngine(QeConfig(**config_kwargs), run_root, event_log=event_log)
+    return QeEngine(QeConfig(**config_kwargs), run_root, event_log=event_log,
+                    density_registry_run_dir=density_registry_run_dir)

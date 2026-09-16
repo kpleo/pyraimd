@@ -1,0 +1,38 @@
+schema_version = 1
+
+[run]
+id = "density-demo"
+directory = "run"
+seed = 42
+
+[task]
+kind = "md"
+mode = "reference"
+
+[structure]
+file = "structure.extxyz"
+
+[reference]
+backend = "qe"
+pseudo_dir = "./pseudos"
+pw_cmd = ["pw.x"]
+startpot_file = true
+kpts = [1, 1, 1]
+
+[dynamics]
+ensemble = "nve"
+timestep_fs = 0.5
+steps = 3
+temperature_K = 300.0
+velocity_seed = 7
+
+[checkpoint]
+interval_steps = 2
+keep_generations = 2
+
+[scratch]
+root = "./tmp"
+retention = "all"
+
+[density]
+persist = true

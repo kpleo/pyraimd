@@ -184,6 +184,18 @@ class ScratchConfig:
 
 
 @dataclass(frozen=True)
+class DensityConfig:
+    """The run-owned persistent density chain ([density] section, opt-in).
+
+    ``persist = true`` switches a plain serial reference MD run on the QE
+    adapters to publishing every successful new charge density as an
+    immutable run-owned generation and reusing the verified persistent
+    chain across evaluations, checkpoints and resumes.  Absent section or
+    ``persist = false`` keeps the pre-feature behavior exactly."""
+    persist: bool
+
+
+@dataclass(frozen=True)
 class PyramidConfig:
     """Fully parsed and validated run configuration."""
 
@@ -201,6 +213,7 @@ class PyramidConfig:
     relax: RelaxConfig
     constraints: ConstraintsConfig
     scratch: ScratchConfig | None
+    density: DensityConfig | None
     source_path: Path | None  # the file this configuration was loaded from
 
     def resolved_dict(self) -> dict[str, Any]:
@@ -281,6 +294,11 @@ class PyramidConfig:
             **({} if self.scratch is None else {
                 "scratch": {"root": str(self.scratch.root),
                             "retention": self.scratch.retention}}),
+            # same rule for the density block: only a configured [density]
+            # section is recorded, so old configurations keep their exact
+            # resolved identity
+            **({} if self.density is None else {
+                "density": {"persist": self.density.persist}}),
         }
 
 
@@ -361,6 +379,7 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
             "this — follow the migration notes in docs/configuration.md")
     _reject_unknown(document, _SECTIONS, "", "section")
     scratch = _parse_scratch(_section(document, "scratch"), base_dir)
+    density = _parse_density(_section(document, "density"))
 
     run = _parse_run(_section(document, "run", required=True), base_dir)
     task = _parse_task(_section(document, "task", required=True))
@@ -382,12 +401,14 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
     _check_task_compatibility(task, reference=reference, surrogate=surrogate,
                               policy=policy,
                               verification_present=verification_table is not None)
+    _check_density_compatibility(density, task=task, reference=reference,
+                                 scratch=scratch)
     return PyramidConfig(
         schema_version=version, run=run, task=task, structure=structure,
         dynamics=dynamics, reference=reference, surrogate=surrogate,
         policy=policy, verification=verification, checkpoint=checkpoint,
         output=output, relax=relax, constraints=constraints,
-        scratch=scratch, source_path=source_path)
+        scratch=scratch, density=density, source_path=source_path)
 
 
 # ---------------------------------------------------------------------------
@@ -404,13 +425,24 @@ def _parse_scratch(table: dict | None, base_dir: Path) -> ScratchConfig | None:
     return ScratchConfig(root=root, retention=retention)
 
 
+def _parse_density(table: dict | None) -> DensityConfig | None:
+    if table is None:
+        return None
+    _reject_unknown(table, ("persist",), "density", "field")
+    persist = table.pop("persist", False)
+    if not isinstance(persist, bool):
+        raise ConfigError(
+            f"density.persist must be a boolean, got {persist!r}")
+    return DensityConfig(persist=persist)
+
+
 # ---------------------------------------------------------------------------
 # field helpers
 
 
 _SECTIONS = ("run", "task", "structure", "dynamics", "reference", "surrogate",
              "policy", "verification", "checkpoint", "output", "relax",
-             "constraints", "scratch")
+             "constraints", "scratch", "density")
 
 
 def _reject_unknown(table: dict, known: tuple[str, ...] | list[str], prefix: str,
@@ -871,3 +903,43 @@ def _check_task_compatibility(task: TaskConfig, *, reference: BackendConfig | No
                 f"task.mode {task.mode!r} does not use [verification]; "
                 "independent checks only exist in adaptive MD — remove the "
                 "section")
+
+
+def _check_density_compatibility(density: DensityConfig | None, *,
+                                 task: TaskConfig,
+                                 reference: BackendConfig | None,
+                                 scratch: ScratchConfig | None) -> None:
+    """Cross-field scope of the opt-in persistent density chain.
+
+    The publish/reuse/resume wiring is implemented for exactly one
+    workflow shape in this round — plain serial reference MD on the QE
+    adapters — so every other combination is refused at parse time with
+    the supported scope named, never silently ignored.  Runs after
+    :func:`_check_task_compatibility`, so a reference-mode task already
+    has its [reference] section.
+    """
+    if density is None or not density.persist:
+        return
+    supported = ("density.persist is supported only for a plain serial "
+                 "reference MD run (task.kind = 'md', task.mode = "
+                 "'reference') with a QE reference backend ('qe' or "
+                 "'qe-ase')")
+    if task.kind != "md":
+        raise ConfigError(
+            f"{supported}, got task.kind = {task.kind!r}; singlepoint and "
+            "relax runs share the backend entry points and must not pick "
+            "up the chain silently")
+    if task.mode != "reference":
+        raise ConfigError(
+            f"{supported}, got task.mode = {task.mode!r}; surrogate and "
+            "adaptive runs are outside this round's scope")
+    if reference is None or reference.name not in QE_BACKENDS:
+        raise ConfigError(
+            f"{supported}, got reference.backend = "
+            f"{None if reference is None else reference.name!r}")
+    if scratch is not None and scratch.retention != "all":
+        raise ConfigError(
+            "density.persist composes only with scratch.retention = 'all' "
+            f"(got {scratch.retention!r}): the publication bridge is "
+            "verified for the keep-and-release lifecycle, not the "
+            "immediate-reclaim one")

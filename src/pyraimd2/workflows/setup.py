@@ -124,29 +124,51 @@ def load_structure(config: PyramidConfig) -> Atoms:
 _OPTIONAL_EXTRAS = {"mace": "mace", "pyscf": "pyscf"}
 
 
-def _factory_run_kwargs(factory: Any, run_dir: Path | None) -> tuple[dict, Any]:
+def _factory_run_kwargs(factory: Any, run_dir: Path | None, *,
+                        density_registry: bool = False) -> tuple[dict, Any]:
     """Factories that declare ``run_root`` (e.g. QE) receive the run's
     calculations directory — a throwaway root during validation, so
-    ``pyramid validate`` never creates user-visible directories."""
+    ``pyramid validate`` never creates user-visible directories.
+
+    With ``density_registry`` (the ``[density] persist`` opt-in, offered
+    for the reference section only), a factory that additionally declares
+    ``density_registry_run_dir`` receives the TOP-LEVEL run directory —
+    the owner of the run's ``restart/density`` registry — or the same
+    throwaway root during validation (construction only validates the
+    owner relationship; no registry I/O happens there).  A factory
+    without the declaration is never offered the parameter."""
     try:
         params = _inspect.signature(factory).parameters
     except (TypeError, ValueError):
         return {}, None
-    if "run_root" not in params:
+    wants_root = "run_root" in params
+    wants_registry = density_registry and "density_registry_run_dir" in params
+    if not (wants_root or wants_registry):
         return {}, None
-    if run_dir is not None:
-        return {"run_root": run_dir / "calculations"}, None
-    tmp = tempfile.TemporaryDirectory(prefix="pyraimd2-validate-")
-    return {"run_root": tmp.name}, tmp
+    tmp = None
+    if run_dir is None:
+        tmp = tempfile.TemporaryDirectory(prefix="pyraimd2-validate-")
+    kwargs: dict[str, Any] = {}
+    if wants_root:
+        kwargs["run_root"] = (run_dir / "calculations") if run_dir is not None \
+            else tmp.name
+    if wants_registry:
+        kwargs["density_registry_run_dir"] = \
+            str(run_dir) if run_dir is not None else tmp.name
+    return kwargs, tmp
 
 
 def create_configured_backend(section: str, config: BackendConfig, *,
                               run_dir: Path | None = None,
-                              event_log: Any = None) -> object:
+                              event_log: Any = None,
+                              density_registry: bool = False) -> object:
     """Create one configured backend through the registry.
 
     ``section`` ("reference"/"surrogate") pins the protocol kind.  Factories
-    declaring ``event_log`` receive the run's log.  Optional-dependency
+    declaring ``event_log`` receive the run's log.  ``density_registry``
+    (set by :func:`build_backends` for the reference section of a
+    ``[density] persist`` run) offers the top-level run directory to
+    factories declaring ``density_registry_run_dir``.  Optional-dependency
     imports and factory parameter errors surface as :class:`WorkflowError`
     naming the offending option.
     """
@@ -172,7 +194,8 @@ def create_configured_backend(section: str, config: BackendConfig, *,
             f"{section}.backend {config.name!r} needs an optional dependency "
             f"that is not installed ({error}); {hint}, or choose another "
             "backend") from error
-    extra_kwargs, tmp = _factory_run_kwargs(factory, run_dir)
+    extra_kwargs, tmp = _factory_run_kwargs(factory, run_dir,
+                                            density_registry=density_registry)
     try:
         if event_log is not None and "event_log" in _inspect.signature(factory).parameters:
             extra_kwargs["event_log"] = event_log
@@ -257,7 +280,11 @@ def build_backends(config: PyramidConfig, *, run_dir: Path | None = None,
     A configured [scratch] section is merged into the options of factories
     that declare scratch support (``scratch_root`` in the signature) —
     backend-section options always win over the section defaults, and no
-    factory without the declaration is offered the new parameters.
+    factory without the declaration is offered the new parameters.  A
+    configured ``[density] persist`` section similarly offers the
+    top-level run directory to reference factories declaring
+    ``density_registry_run_dir`` (the surrogate section never receives
+    it — the persistent chain is a reference-engine feature).
     """
     engine = surrogate = None
     reference, surrogate_config = config.reference, config.surrogate
@@ -265,9 +292,11 @@ def build_backends(config: PyramidConfig, *, run_dir: Path | None = None,
         reference = _with_scratch("reference", reference, config.scratch)
         surrogate_config = _with_scratch("surrogate", surrogate_config,
                                          config.scratch)
+    density_registry = config.density is not None and config.density.persist
     if reference is not None:
         engine = create_configured_backend("reference", reference,
-                                           run_dir=run_dir, event_log=event_log)
+                                           run_dir=run_dir, event_log=event_log,
+                                           density_registry=density_registry)
     if surrogate_config is not None:
         surrogate = create_configured_backend("surrogate", surrogate_config,
                                               run_dir=run_dir)

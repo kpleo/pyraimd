@@ -1,0 +1,17 @@
+
+     Dense  grid:   146125 G-vectors     FFT dimensions: (  72,  72,  72)
+
+     Smooth grid:    51627 G-vectors     FFT dimensions: (  48,  48,  48)
+
+     Estimated max dynamical RAM per process >      79.51 MB
+
+     Estimated total dynamical RAM >     636.05 MB
+
+     The initial density is read from file :
+     ./tmp/pyraimd2.save/charge-density
+
+     Starting wfcs are   32 randomized atomic wfcs
+     Checking if some PAW data can be deallocated... 
+
+     total cpu time spent up to now is        2.2 secs
+

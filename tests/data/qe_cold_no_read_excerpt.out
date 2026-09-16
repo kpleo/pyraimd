@@ -1,0 +1,17 @@
+
+     Dense  grid:   146125 G-vectors     FFT dimensions: (  72,  72,  72)
+
+     Smooth grid:    51627 G-vectors     FFT dimensions: (  48,  48,  48)
+
+     Estimated max dynamical RAM per process >      79.51 MB
+
+     Estimated total dynamical RAM >     636.05 MB
+
+     Initial potential from superposition of free atoms
+
+     starting charge      31.9955, renormalised to      32.0000
+     Starting wfcs are   32 randomized atomic wfcs
+     Checking if some PAW data can be deallocated... 
+
+     total cpu time spent up to now is        2.2 secs
+

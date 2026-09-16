@@ -1,5 +1,102 @@
 # Changelog
 
+## 0.7.3 — 2026-09-17
+
+An opt-in persistent QE density chain for plain serial reference MD:
+every evaluation's charge density is published into a run-owned registry
+as one immutable, content-addressed generation; later calculations
+warm-start from the published seed; producer scratch and old generations
+are reclaimed under explicit safety contracts, so long runs no longer
+accumulate density data linearly (issue #7).  Runs that leave
+`[density]` unset behave exactly as 0.7.2.
+
+### Added
+
+- `[density] persist = true` (plain serial reference MD, `qe` and
+  `qe-ase` backends, requires `[scratch] retention = "all"`): publish
+  every produced charge density into `run/restart/density/` (charge
+  density + schema XML, plus the PAW `paw.txt` when present), bind
+  commits and checkpoints to the exact generation the state depends on,
+  and warm-start each following evaluation from the published seed.
+  Other workflow kinds and recipe/adaptive/surrogate combinations are
+  refused at configuration time.
+- Resume binds the one authoritative restored boundary: the committed
+  evaluation whose row supplied the restored positions/forces decides
+  the density reference (normal tail, crash-window heal and checkpoint
+  fallback share the rule; only a zero-step resume, which restores the
+  checkpoint's own arrays, reads the checkpoint field).  An explicit
+  null means external initialization; a legacy record without the field
+  keeps the old behavior; a referenced generation that is missing or
+  corrupt refuses the resume before anything is written or computed —
+  never a silent swap to a newer generation.  The `resumed` event
+  records the actual boundary evaluation and the bound density
+  generation and content digest.
+- Delayed producer release: an attempt's scratch is released only after
+  a later ordinary calculation independently read that exact published
+  seed and succeeded, proven by the consuming attempt's own raw output —
+  QE's `The initial density is read from file` marker naming its staged
+  save tree, bound to the launch input (`startingpot = 'file'`) and the
+  archived output digest — and only while the consumed seed's identity
+  (generation, content digest, reference settings) agrees across the
+  consumer's selection-time pin, the producer's persisted pending
+  receipt and the live registry manifest; a contradiction or missing
+  identity preserves the producer, and a damaged receipt is never
+  repaired into an approval.  A verified publication alone, an atomic
+  fallback, a cache hit, a borrow from the producer's own tree, or a
+  successful run whose output reports no read never qualify: a silent or
+  unknown output format preserves every producer with the reason
+  recorded.  The producer attempt carries a persistent pending/consumed
+  receipt; an unproven terminal seed keeps its scratch as a protected
+  resource.
+- Old-generation reclaim: `plan_density_reclaim` (dry-run with
+  per-generation keep/hold/reclaim reasons) and
+  `execute_density_reclaim` (run lock held, references re-read inside
+  it, stale plans refused).  Only generations the run fully owns — once
+  attached, validated, unreferenced — are deleted; the latest pointer,
+  retained checkpoints' references, the committed recoverable boundary,
+  in-flight inputs and unconsumed producer seeds are always kept, and
+  anything foreign, external, corrupt, never-attached or leftover is
+  never auto-deleted.  Every deletion is preceded by a durable tombstone
+  in the registry state, so interrupted or repeated cleans are resumable
+  — a deletion stopped mid-tree completes only while a readable manifest
+  still confirms ownership (directory name, tombstone and run_root/run_id
+  must agree; already-deleted payload needs no re-validation); a
+  same-number foreign tree is held forever, and a missing manifest is
+  never resumed — and reclaimed generations are never mistaken for
+  corruption — their numbers are never reused.  The serial driver
+  reclaims automatically after each step commit and checkpoint retention
+  update.
+- `examples/density_persist_qe/`: a documented minimal configuration and
+  a fake-`pw.x` end-to-end demo (run, fresh-process resume, receipts,
+  tombstones, dry-run and real reclaim).
+
+### Compatibility and verified scope
+
+- Opt-in only; runs without `[density] persist` are byte-for-byte the
+  0.7.2 behavior.  Chains recorded by the development previews resume
+  under the rules above.- Verified scope: QE 7.5 (HDF5 build), PAW, non-spin-polarized SCF
+  restarts, exercised end to end on Si8 (fresh-process resume bound the
+  actual boundary generation; the boundary seed's producer was released
+  only after the first post-resume evaluation independently consumed
+  that exact seed; old generations were reclaimed under tombstones).
+  Fixed-retention fake-QE runs at 6/20/60 steps show the persistent seed
+  set plateauing (latest + retained-checkpoint references + boundary +
+  one unconsumed producer) while lightweight logs, per-attempt archives
+  and registry metadata grow with the step count — no
+  constant-whole-disk claim.  Other QE builds/formats/profiles are not
+  claimed: an unproven profile keeps its producer scratch until a later
+  calculation proves the seed independently sufficient.
+
+### Packaging and upgrade
+
+- The release ships `pyraimd2-0.7.3-py3-none-any.whl` and
+  `pyraimd2-0.7.3.tar.gz`, built with `uv build` (the `uv_build`
+  backend).  Upgrading from 0.7.2 is a plain reinstall into a clean
+  virtual environment (`pip install pyraimd2-0.7.3-py3-none-any.whl`);
+  existing run directories keep working under the same configuration
+  files, and the wheel contains only the published package (no tests,
+  examples or development files).
+
 ## 0.7.2
 
 Four fixes from real adoption feedback, on both pw.x paths (subprocess

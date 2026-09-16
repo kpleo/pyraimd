@@ -327,6 +327,84 @@ attempt behaves exactly as before (per-run `calculations/` scratch).
   root with `pyramid scratch inspect --root PATH` and
   `pyramid scratch clean --root PATH [--dry-run]`.
 
+### [density] (opt-in persistent density chain)
+
+`persist = true` (the only field) wires a run-owned, persistent density
+chain for one workflow shape: a plain serial reference MD run
+(`task.kind = "md"`, `task.mode = "reference"`) on the `qe` or `qe-ase`
+backend.  Every other combination — singlepoint, relax, surrogate or
+adaptive modes, non-QE backends, serial-recipe stage configurations, and
+`scratch.retention = "results"` — is refused at load/run time with the
+supported scope named.  Absent the section (or `persist = false`) every
+behavior is exactly as before, and old resolved configurations keep
+their exact recorded identity.
+
+- The run directory owns `restart/density/`: every successful evaluation
+  that produced a new charge density publishes it as one immutable,
+  content-verified generation; the attempt record notes the outcome, and
+  a publication failure never breaks the delivered label.
+- With `startpot_file = true` in `[reference]`, the next evaluation
+  warm-starts from the registry's latest verified generation (the
+  default `density_source_policy = "latest"` order: registry first, then
+  the previous in-memory/configured sources); `density_source_policy =
+  "fixed"` never consults the registry for the source — the configured
+  external `density_source` wins every evaluation, is never deleted, and
+  publications still land in the registry.  Without `startpot_file` the
+  chain is save-only.
+- Committed evaluations and checkpoints record the generation the run
+  state actually depends on.  `resume` binds exactly the generation of
+  the one authoritative restored boundary — the committed evaluation
+  whose row supplied the restored positions/forces (a crash-window heal
+  binds the healed evaluation's own record); only a zero-step resume,
+  which restores the checkpoint's own arrays, reads the checkpoint field.
+  A record that declares no reference (explicit null) or predates the
+  field (legacy) initializes externally; a referenced generation that is
+  missing or corrupt refuses the resume before anything is written or
+  computed — never a silent swap to a newer generation.  The `resumed`
+  event records the actual boundary evaluation and the bound density
+  generation and content digest.
+- With `[scratch]` (`retention = "all"`, required for this round), an
+  attempt's scratch is released only after a LATER ordinary calculation
+  has independently read that exact published seed and succeeded — and
+  "read" is proven by the consuming attempt's own raw output (QE's
+  `The initial density is read from file` marker naming its staged save
+  tree) together with the launch input's `startingpot = 'file'` and the
+  archived output's digest.  The consumed seed's generation, content
+  digest and reference settings are pinned at selection time and must
+  agree across the consumer's pin, the producer's persisted receipt and
+  the live registry manifest before anything is released — a
+  contradiction or a missing identity keeps the producer with the reason
+  named, and a damaged receipt is never rewritten to match.  A verified
+  publication alone is not a deletion credential, and neither is an
+  atomic fallback, a cache hit, a borrow from the producer's own tree,
+  or a successful run whose output carries no read marker: a silent or
+  unknown output format preserves every source with the reason
+  recorded.  The producer attempt carries a
+  pending release receipt on its authoritative record until then; an
+  unproven terminal seed keeps its scratch (a protected resource, not a
+  cleanup failure), as do failed publications and failed consumers.  A
+  committed evaluation that produced no density releases its scratch
+  directly.
+- Old generations are reclaimed by the driver after each step commit and
+  checkpoint retention update — and on demand through
+  `pyraimd2.runtime.restart.execute_density_reclaim` (dry-run first:
+  `plan_density_reclaim` reports per-generation keep/hold/reclaim reasons).
+  Only generations this run fully owns — once attached, validated,
+  unreferenced — are deleted: the latest pointer, retained checkpoints'
+  references, the committed recoverable boundary, in-flight inputs and
+  unconsumed producer seeds are always kept; publish leftovers, corrupt or
+  never-attached directories and anything not fully owned stay.  Each
+  deletion writes a durable tombstone first, so an interrupted or repeated
+  clean is resumable — a deletion stopped mid-tree completes only while a
+  readable manifest still CONFIRMS ownership (directory name, durable
+  tombstone and run_root/run_id must agree; payload already deleted needs
+  no re-validation), while a re-referenced tombstone stays suspended, a
+  manifest contradicting ownership (a foreign same-number tree) is held
+  forever, and a missing or unreadable manifest is never resumed — and a
+  reclaimed generation is never mistaken for corruption (its number is
+  never reused).  A plan computed before the run moved on is refused as
+  stale.
+
 ### [output]
 
 Derived, regenerable views over the authoritative store:

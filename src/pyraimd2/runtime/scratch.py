@@ -526,6 +526,40 @@ def mark_kept(handle: AttemptScratch) -> dict:
         return {"status": "keep_persist_failed", "error": repr(error)}
 
 
+def release_consumed(handle: AttemptScratch, *, evidence: dict) -> dict:
+    """Release a KEPT attempt's scratch back to the reclaimable ``archived``
+    state once its result and density are durably consumed.
+
+    This is the deliberate bridge between a ``kept`` retention-all
+    attempt and the existing cleanup machinery — never a bypass of the
+    state chain: the attempt's result was already archived (and is
+    re-verified by cleanup), and the caller has verified the attempt's
+    density product is durably safe — published AND, for the persistent
+    chain, independently consumed by a later successful calculation (or
+    that no density exists) — so the scratch subtree holds nothing
+    unique.  The evidence (at least the consuming ``evaluation_id``; the
+    chain records the input/output density generations, the seed content
+    digest and the release time) is written into the authoritative
+    record, the state returns to ``archived``, and the record's
+    ``density_generation`` is explicitly cleared — the in-flight input
+    protection ends once the attempt is consumed.  Any other state is
+    refused with the reason: a failed, in-flight or already-reclaimed
+    attempt is never moved here.
+    """
+    record = handle.load_record()
+    if record["state"] != "kept":
+        raise ScratchError(
+            f"cannot release a scratch attempt in state {record['state']!r}: "
+            "only a kept attempt whose result and density are durably "
+            "consumed is releasable")
+    if not isinstance(evidence, dict) or "evaluation_id" not in evidence:
+        raise ScratchError(
+            "release evidence must name at least the consuming evaluation "
+            "('evaluation_id')")
+    return handle.update_record(state="archived", density_generation=None,
+                                released_evidence=dict(evidence))
+
+
 class _AttemptLock:
     """A tiny per-attempt reclaimer mutex on a kernel-released lock
     (``fcntl.flock``): an active competitor is blocked, and the lock is

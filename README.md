@@ -30,7 +30,7 @@ the example plugins below come from that tag's source tree):
 
 ```sh
 python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
-pip install pyraimd2-0.7.2-py3-none-any.whl
+pip install pyraimd2-0.7.3-py3-none-any.whl
 ```
 
 A first run with the built-in harmonic model — the analytic demo needs no

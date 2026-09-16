@@ -57,6 +57,7 @@ from pyraimd2.loop.integrators import (
     derive_stream_seed,
     state_digest,
 )
+from pyraimd2.runtime import restart as restart_mod
 from pyraimd2.runtime.checkpoint import CheckpointManager
 from pyraimd2.runtime.context import EvaluationContext, EvaluationPhase
 from pyraimd2.runtime.events import (
@@ -80,6 +81,7 @@ from pyraimd2.surrogate.base import SurrogatePrediction
 from pyraimd2.workflows.setup import (
     RunOutputs,
     WorkflowError,
+    _is_controller_materialized_input,
     build_backends,
     check_run_directory_available,
     load_structure,
@@ -675,9 +677,66 @@ class _PlainDriver:
                        self.store.row_by_id(int(row_id)))}
         if self.spec.algorithm == "langevin":
             payload["thermostat_rng"] = self.integrator.thermostat_state()
+        if self.section == "reference" and getattr(
+                self.backend, "density_registry_enabled", False):
+            # the committed state binds the persistent density generation
+            # it actually depends on (explicit None = a declared "no
+            # registry reference"); a resume that adopts this boundary uses
+            # exactly this record, never the registry's latest pointer.
+            # Feature off: the key is absent — the pre-chain record format.
+            payload["density_generation"] = \
+                self.backend.current_density_generation()
         self.event_log.append_once(
             f"evaluation:{self.run_id}:{evaluation_id}", EVALUATION_COMMITTED,
             payload)
+
+    def _release_consumed_scratch(self, evaluation_id: int) -> None:
+        """Delayed-release bookkeeping after an evaluation commit
+        (persistent density chain).
+
+        Two things happen here, both receipt-based and never fatal: the
+        seed THIS evaluation independently consumed releases its
+        producer's scratch (the actual deletion gate), and this
+        evaluation's own attempt — when it published a verified seed —
+        records its pending release receipt and stays kept until a later
+        calculation consumes that seed.  The receipts stay on the
+        attempt records; a reclaim failure is recorded there and never
+        interrupts the run.
+        """
+        if self.section != "reference":
+            return
+        release = getattr(self.backend, "release_consumed_scratch", None)
+        if release is None or not getattr(self.backend,
+                                          "density_registry_enabled", False):
+            return
+        try:
+            release(evaluation_id=evaluation_id)
+        except Exception as error:  # noqa: BLE001 — reclaim bookkeeping never kills a run
+            _warn(f"scratch release after evaluation {evaluation_id} failed "
+                  f"({error}); the attempt scratch stays kept")
+
+    def _reclaim_density_generations(self) -> None:
+        """Reclaim unreferenced owned density generations after the step
+        commit and the checkpoint retention update (persistent density
+        chain).
+
+        Runs under the run's single-writer lock the driver already holds;
+        the executor re-reads every reference inside it, so a generation
+        the checkpoint manager still retains — or the just-committed
+        boundary, the latest pointer, an in-flight input or an unproven
+        producer seed — is never touched.  Reclaim bookkeeping never
+        kills a run: a failure is warned about and every unreclaimed
+        generation stays."""
+        if self.section != "reference":
+            return
+        if not getattr(self.backend, "density_registry_enabled", False):
+            return
+        try:
+            restart_mod.execute_density_reclaim(self.run_dir,
+                                                event_log=self.event_log)
+        except Exception as error:  # noqa: BLE001 — reclaim bookkeeping never kills a run
+            _warn(f"density generation reclaim failed ({error}); "
+                  "unreferenced generations stay in the registry")
 
     def _fail(self, error: Exception, evaluation_id: int) -> None:
         # The evaluation's own task record is already written by _evaluate's
@@ -722,7 +781,7 @@ class _PlainDriver:
             "driving_forces": np.asarray(self.atoms.calc.results["forces"],
                                          dtype=float),
         }
-        self._checkpoints.write(generation, state, arrays, {
+        manifest_extra = {
             "run_id": self.run_id,
             "nsteps": int(step),
             "physical_time_fs": step * self.config.dynamics.timestep_fs,
@@ -731,7 +790,21 @@ class _PlainDriver:
             "event_schema_version": EVENT_SCHEMA_VERSION,
             "attempt_ledger": ATTEMPT_LEDGER_PHYSICAL_V1,
             "software_version": __version__,
-        })
+        }
+        if self.section == "reference" and getattr(
+                self.backend, "density_registry_enabled", False):
+            # the checkpoint records which persistent density generation
+            # this run state depends on; explicit None is a declared "no
+            # density reference" (distinct from a legacy checkpoint without
+            # the field), per checkpoint_manifest_density_field's contract
+            head = self.backend.current_density_generation()
+            if head is not None:
+                manifest_extra.update(
+                    restart_mod.checkpoint_manifest_density_field(
+                        {"generation": head}))
+            else:
+                manifest_extra["density_generation"] = None
+        self._checkpoints.write(generation, state, arrays, manifest_extra)
         return generation
 
     def run(self, n_steps: int, outputs: RunOutputs, *, verbose: bool,
@@ -741,6 +814,7 @@ class _PlainDriver:
             self._emit_run_start()
             self._evaluate(0, lambda: self.atoms.get_forces())
             self._record_evaluation(0)
+            self._release_consumed_scratch(0)
             outputs.regenerate_trajectory()
         run_start = time.perf_counter()
         completed = start_step
@@ -757,6 +831,9 @@ class _PlainDriver:
                     lambda: self.dyn.step(self.atoms.calc.results["forces"]))
                 self.dyn.nsteps = step
                 self._record_evaluation(step)
+                # result committed, density published/verified: the consumed
+                # attempt scratch may be reclaimed (receipt on the record)
+                self._release_consumed_scratch(step)
                 # Commit the step only with the complete boundary state
                 # persisted and bound (M1): the step event names the
                 # integrator and the boundary content digest.
@@ -788,6 +865,10 @@ class _PlainDriver:
                 completed = step
                 if step % checkpoint_interval == 0 or self._stop_requested:
                     self._write_checkpoint(step)
+                # step committed, checkpoint retention updated: old
+                # unreferenced density generations may be reclaimed (the
+                # retained checkpoints' references are honored)
+                self._reclaim_density_generations()
                 outputs.append_trajectory_step(step)
                 if step % interval == 0:
                     outputs.write_summaries()
@@ -1277,6 +1358,15 @@ def run_workflow(config: PyramidConfig, *, verbose: bool = True,
         raise WorkflowError(
             f"task.kind {config.task.kind!r} is not supported; choose "
             "singlepoint, relax or md")
+    if config.density is not None and config.density.persist \
+            and _is_controller_materialized_input(config):
+        raise WorkflowError(
+            "density.persist does not compose with the serial-recipe "
+            "controller's materialized input (structure.file = "
+            f"{config.run.directory / 'initial.traj'}): this round supports "
+            "the persistent density chain for a plain serial reference MD "
+            "run only, not for recipe stages — remove [density] from the "
+            "stage configuration")
     validate_setup(config)  # dry pass: identical failures as `validate`
     atoms = load_structure(config)
     check_run_directory_available(config)
@@ -1605,13 +1695,20 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             int((e.get("context") or {})["evaluation_id"])
             for e in events if e.get("type") == EVALUATION_COMMITTED})
         n_committed = len(committed_evaluations)
+        # The crash-window heal is DECIDED in memory here; the step event is
+        # appended only after every dependency of the restored boundary —
+        # its density reference included — has been verified, so a refused
+        # resume leaves the run directory untouched (no heal event, no
+        # RESUMED, no cleanup action).
+        heal: tuple[str, dict] | None = None
+        boundary_commit = None
         if n_committed == current + 2:
             heal_id = current + 1
             heal_row = store.committed_row(events, config.run.id, heal_id)
-            commit = next(e for e in events
-                          if e.get("type") == EVALUATION_COMMITTED
-                          and int((e.get("context") or {})
-                                  ["evaluation_id"]) == heal_id)
+            boundary_commit = next(e for e in events
+                                   if e.get("type") == EVALUATION_COMMITTED
+                                   and int((e.get("context") or {})
+                                           ["evaluation_id"]) == heal_id)
             # The step commit names the full boundary state of the authoritative
             # row; its bath stream comes from the evaluation commit.  Resume
             # re-emits it idempotently instead of recomputing the step.  The
@@ -1625,37 +1722,39 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                             "state_digest": state_digest(
                                 heal_row.toatoms().positions,
                                 heal_row.toatoms().get_momenta())}
-            if commit.get("thermostat_rng") is not None:
-                heal_payload["thermostat_rng"] = commit["thermostat_rng"]
+            if boundary_commit.get("thermostat_rng") is not None:
+                heal_payload["thermostat_rng"] = boundary_commit["thermostat_rng"]
             heal_payload["boundary_digest"] = _boundary_from_event(
-                heal_row, heal_payload, commit).digest()
-            event_log.append_once(f"step:{config.run.id}:{current}",
-                                  STEP_COMPLETED, heal_payload)
-            current += 1
+                heal_row, heal_payload, boundary_commit).digest()
+            heal = (f"step:{config.run.id}:{current}", heal_payload)
+            boundary_id = heal_id
         elif n_committed > current + 2:
             raise WorkflowError(
                 f"the event log under {run_dir} has {n_committed} committed "
                 f"evaluations but only {current} complete steps; the run "
                 "directory is inconsistent — refusing to guess a boundary")
+        else:
+            boundary_id = current
         # The boundary is the last committed evaluation's row — never an orphan
         # and never a recomputed state (C1/R3).  NVT additionally restores the
         # bath stream from that commit; a step boundary digest, when present,
         # is verified against the row before use, by the semantics of the
         # format that wrote it (S0b).
-        if current >= 1:
-            row = store.committed_row(event_log, config.run.id, current)
+        if boundary_id >= 1:
+            row = store.committed_row(event_log, config.run.id, boundary_id)
             atoms = row.toatoms()
             driving_energy, driving_forces = store.driving_label_for_row(row)
             boundary_step = next((e for e in reversed(events)
                                   if e.get("type") == STEP_COMPLETED
-                                  and int(e["step_id"]) == current - 1), None)
+                                  and int(e["step_id"]) == boundary_id - 1), None)
             if boundary_step is not None:
-                commit = next(
-                    (e for e in reversed(events)
-                     if e.get("type") == EVALUATION_COMMITTED
-                     and int((e.get("context") or {})
-                             ["evaluation_id"]) == current), None)
-                _check_boundary_record(row, boundary_step, commit, spec)
+                if boundary_commit is None:
+                    boundary_commit = next(
+                        (e for e in reversed(events)
+                         if e.get("type") == EVALUATION_COMMITTED
+                         and int((e.get("context") or {})
+                                 ["evaluation_id"]) == boundary_id), None)
+                _check_boundary_record(row, boundary_step, boundary_commit, spec)
             # A boundary with no step summary at all is a 0.4.x record: the
             # committed-row binding above (row id + row digest) is the only
             # verification that format carries.
@@ -1670,6 +1769,12 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             driving_energy = float(state["driving_energy_eV"])
             driving_forces = np.array(arrays["driving_forces"], dtype=float)
             row = store._row_at_step(config.run.id, -1)  # the initial evaluation
+        if boundary_commit is None:
+            boundary_commit = next(
+                (e for e in reversed(events)
+                 if e.get("type") == EVALUATION_COMMITTED
+                 and int((e.get("context") or {})
+                         ["evaluation_id"]) == boundary_id), None)
         boundary_label = _label_from_row(row, config.task.mode)
         store.close()  # the boundary read is done; the driver owns its store
         constraint = state.get("constraint")
@@ -1683,12 +1788,55 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                                        int(str(event.get("task_id", "")).rsplit("-", 1)[1]))
                 except (ValueError, IndexError):
                     continue
+        # Density-chain resume binding: the continued chain starts from the
+        # persisted reference of the ONE authoritative restored boundary —
+        # the committed evaluation whose row supplied positions/forces and
+        # the driving label (normal tail, healed crash window and
+        # checkpoint-fallback tail all share this rule); a zero-step resume
+        # restores the selected checkpoint's own arrays, so there the
+        # checkpoint's recorded field decides.  The checkpoint's field is
+        # never consulted for a boundary it did not restore.  A record
+        # carrying the field — explicit null included — is authoritative; a
+        # legacy record without the field keeps the old
+        # external-initialization behavior (never a guess at a neighboring
+        # generation); a referenced generation that is missing or corrupt
+        # refuses the resume BEFORE anything is written or computed —
+        # never a silent swap to the registry latest.
+        density_summary = None
+        if config.task.mode == "reference" and getattr(
+                backend, "density_registry_enabled", False):
+            if boundary_id >= 1:
+                if boundary_commit is not None \
+                        and "density_generation" in boundary_commit:
+                    resolution = restart_mod.resolve_density_for_resume(
+                        run_dir,
+                        density_reference=boundary_commit["density_generation"])
+                else:
+                    resolution = {
+                        "branch": restart_mod.BRANCH_EXTERNAL_INIT,
+                        "reason": ("the resumed boundary's committed record "
+                                   "predates density tracking (no "
+                                   "density_generation field): initialize "
+                                   "from the configured external source")}
+            else:
+                resolution = restart_mod.resolve_density_for_resume(
+                    run_dir, checkpoint_generation=checkpoint.generation)
+            if resolution["branch"] == restart_mod.BRANCH_OK:
+                backend.pin_density_generation(resolution["generation"])
+            elif resolution["branch"] == restart_mod.BRANCH_UNRESOLVABLE:
+                raise WorkflowError(
+                    f"cannot resume the density chain of {run_dir}: "
+                    f"{resolution['reason']}; the run is preserved "
+                    "unchanged — restore the referenced generation or "
+                    "start a new run")
+            density_summary = {"branch": resolution["branch"],
+                               "generation": resolution.get("generation"),
+                               "boundary_evaluation": int(boundary_id)}
+            if resolution["branch"] == restart_mod.BRANCH_OK:
+                density_summary["content_digest"] = \
+                    resolution["manifest"]["content_digest"]
         resume_state = state
         if spec.algorithm == "langevin":
-            boundary_commit = next((e for e in reversed(events)
-                                    if e.get("type") == EVALUATION_COMMITTED
-                                    and int((e.get("context") or {})
-                                            ["evaluation_id"]) == current), None)
             thermostat_rng = (boundary_commit or {}).get("thermostat_rng")
             if thermostat_rng is None:
                 raise WorkflowError(
@@ -1697,6 +1845,12 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                     "and cannot be resumed without guessing — start a new run")
             resume_state = dict(state)
             resume_state["thermostat"] = {"rng": thermostat_rng}
+        # Every dependency of the restored boundary is now resolved — only
+        # here does the run directory change: first the idempotent
+        # crash-window heal, then (below) the RESUMED record.
+        if heal is not None:
+            event_log.append_once(heal[0], STEP_COMPLETED, heal[1])
+            current = boundary_id
         driver = _PlainDriver(config, atoms, backend, run_dir,
                               event_log=event_log, resume_state=resume_state)
         driver._task_counter = task_counter
@@ -1711,10 +1865,14 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
         # boundary), ASE legitimately skips calculate() and last_label would
         # stay unset; the committed boundary row is the same label.
         driver.atoms.calc.last_label = boundary_label
-        event_log.append(RESUMED, {
+        resumed_payload = {
             "run_id": config.run.id, "driver": f"plain-{config.dynamics.ensemble}",
             "from_event_seq": int(manifest["last_event_seq"]),
-            "checkpoint_generation": checkpoint.generation})
+            "checkpoint_generation": checkpoint.generation}
+        if density_summary is not None:
+            # which persistent density reference the resumed chain bound
+            resumed_payload["density"] = density_summary
+        event_log.append(RESUMED, resumed_payload)
         outputs = RunOutputs(
             run_dir, config.run.id,
             trajectory_interval_steps=config.output.trajectory_interval_steps,
