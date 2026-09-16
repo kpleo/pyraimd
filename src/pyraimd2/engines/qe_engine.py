@@ -140,6 +140,16 @@ _FORCE_LINE_RE = re.compile(
 # exit without it is a crash (segfault, launcher failure) and may be retried.
 _QE_ERROR_BANNER_RE = re.compile(r"Error in routine\s+\S+", re.IGNORECASE)
 
+# QE's own report that the wavefunctions were read from a staged file — the
+# only accepted evidence of a startingwfc='file' restart; the input line or
+# the .save tree's presence prove nothing.
+_WFC_READ_RE = re.compile(
+    r"reading wavefunctions?[^\n]*from file"
+    r"|starting wfcs? from file"
+    r"|wavefunctions?[^\n]*\bread in from file",
+    re.IGNORECASE,
+)
+
 # Short slugs so the engine name states the recipe (qe-pbe-d3, qe-pbe, ...).
 _DISPERSION_SLUGS = {
     "grimme-d3": "d3",
@@ -210,6 +220,7 @@ class QeConfig:
     diago_full_acc: bool = False  # tightly converge ALL bands each SCF step
     electron_maxstep: int = 200
     startpot_file: bool = False  # warm start from a compatible density when one exists
+    startingwfc_file: bool = False  # also restart wavefunctions from a staged .save
     density_source: str | None = None  # directory with a density manifest (known origin)
     density_source_policy: str = "latest"  # "latest": prefer the most recent successful density; "fixed": always prefer density_source (legacy)
     disk_io: str | None = None  # QE disk_io; "nowf" writes no wavefunction files (execution knob)
@@ -355,6 +366,8 @@ def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
         lines.append("  diago_full_acc = .true.\n")
     if cfg.startpot_file:
         lines.append("  startingpot = 'file'\n")
+    if cfg.startingwfc_file:
+        lines.append("  startingwfc = 'file'\n")
     lines.append(f"  electron_maxstep = {cfg.electron_maxstep}\n/\n")
     lines.append("ATOMIC_SPECIES\n")
     pseudo_dir = Path(cfg.pseudo_dir).expanduser().resolve()
@@ -382,6 +395,13 @@ def write_qe_input(path: Path, atoms: Atoms, cfg: QeConfig) -> None:
     else:
         lines.append(f"K_POINTS automatic\n  {cfg.kpts[0]} {cfg.kpts[1]} {cfg.kpts[2]} 0 0 0\n")
     path.write_text("".join(lines))
+
+
+def wfc_read_from_file(text: str) -> bool:
+    """True when the pw.x stdout itself reports wavefunctions read from file
+    (the only accepted restart evidence — never the input line, never the
+    staged tree's presence)."""
+    return _WFC_READ_RE.search(text) is not None
 
 
 def parse_qe_output(text: str) -> EngineResult:
@@ -517,7 +537,8 @@ def pseudo_identities(config: QeConfig) -> dict[str, dict[str, str | None]]:
 # parameters and platform profiles stay separate.
 _EXECUTION_FIELDS = frozenset(
     {"pw_cmd", "timeout_s", "max_retries", "density_source", "startpot_file",
-     "density_source_policy", "disk_io", "scratch_root", "retention"}
+     "startingwfc_file", "density_source_policy", "disk_io", "scratch_root",
+     "retention"}
 )
 
 
@@ -811,6 +832,10 @@ class QeEngine:
             raise QeEngineError(
                 f"unknown density_source_policy {config.density_source_policy!r} "
                 "(expected 'latest' or 'fixed')")
+        if not isinstance(config.startingwfc_file, bool):
+            raise QeEngineError(
+                f"startingwfc_file must be a bool, got "
+                f"{config.startingwfc_file!r}")
         self._scratch_run_uuid = uuid.uuid4().hex[:12]
         self._last_density_dir: Path | None = None
         self._io_counter = 0
@@ -864,6 +889,9 @@ class QeEngine:
                 "returncode": record.get("returncode"),
                 "directory": record["directory"],
                 "start": record["start"],
+                "startwfc": record.get("startwfc"),
+                "startwfc_reason": record.get("startwfc_reason"),
+                "wfc_read_from_file": record.get("wfc_read_from_file"),
                 "source": "qe-engine",
                 "error": record.get("error"),
             },
@@ -1133,10 +1161,22 @@ class QeEngine:
             attempt_dir.mkdir(parents=True, exist_ok=False)
         else:
             attempt_dir.mkdir(parents=True, exist_ok=True)
+        # startingwfc='file' only when this attempt actually staged a .save
+        # tree; the decision and its reason are recorded either way.
+        use_wfc = config.startingwfc_file and density is not None
+        if not config.startingwfc_file:
+            startwfc_reason = "startingwfc_file is off"
+        elif density is None:
+            startwfc_reason = "no staged density this attempt; nothing to read"
+        else:
+            startwfc_reason = "staged .save present; startingwfc='file'"
         record: dict = {
             "attempt": len(self.last_attempt_records) + 1,
             "directory": str(work_dir),
             "start": "density" if density is not None else "atomic",
+            "startwfc": "file" if use_wfc else "default",
+            "startwfc_reason": startwfc_reason,
+            "wfc_read_from_file": None,
             "status": "running",
             "failure_kind": None,
             "error": None,
@@ -1165,7 +1205,9 @@ class QeEngine:
             # relative run_root would otherwise stop resolving.
             in_path = (work_dir / "pw.in").resolve()
             out_path = (work_dir / "pw.out").resolve()
-            write_qe_input(in_path, atoms, config)
+            write_qe_input(in_path, atoms,
+                           config if use_wfc else
+                           dataclasses.replace(config, startingwfc_file=False))
         except QeEngineError:
             raise  # pre-launch input rejection; compute() terminates the record
         except Exception as error:
@@ -1219,6 +1261,8 @@ class QeEngine:
         phase = "read"
         try:
             text = out_path.read_text(errors="replace")
+            # QE's own output text is the only accepted restart evidence.
+            record["wfc_read_from_file"] = wfc_read_from_file(text)
             phase = "process"
             if proc.returncode != 0:
                 # Classify from the output first: a deterministic failure
