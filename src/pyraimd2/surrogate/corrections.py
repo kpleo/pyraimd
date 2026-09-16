@@ -37,8 +37,10 @@ stress.
 from __future__ import annotations
 
 import hashlib
+import io
 import math
 import struct
+from pathlib import Path
 
 import numpy as np
 from ase import Atoms
@@ -94,6 +96,34 @@ def _translation_residuals(
 
 def _base_identity(base: object) -> str:
     return fingerprint_of(base) or type(base).__qualname__
+
+
+def _load_parameters_npz(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+    """Read the q0/delta_f0/delta_h arrays of one .npz file, plus the file
+    provenance (path and content sha256) recorded on the instance."""
+    file_path = Path(path)
+    try:
+        content = file_path.read_bytes()
+    except OSError as error:
+        raise ValueError(f"parameters_npz {path} cannot be read: {error}") from error
+    try:
+        archive = np.load(io.BytesIO(content))
+    except Exception as error:
+        raise ValueError(
+            f"parameters_npz {path} is not a readable .npz archive: {error}"
+        ) from error
+    with archive:
+        missing = [key for key in ("q0", "delta_f0", "delta_h") if key not in archive]
+        if missing:
+            raise ValueError(
+                f"parameters_npz {path} lacks the required array(s) "
+                f"{', '.join(missing)} (expected q0, delta_f0, delta_h)")
+        q0 = archive["q0"]
+        delta_f0 = archive["delta_f0"]
+        delta_h = archive["delta_h"]
+    provenance = {"path": str(file_path),
+                  "sha256": hashlib.sha256(content).hexdigest()}
+    return q0, delta_f0, delta_h, provenance
 
 
 def _resolve_base(base: object) -> object:
@@ -234,7 +264,10 @@ class QuadraticCorrectedSurrogate:
     The content hashes of ``q0``, ``delta_f0``, the enforced ``delta_h``
     (symmetrized and translation-projected), the energy offset and the
     calibration note enter the fingerprint together with the base model's
-    identity.
+    identity.  When the parameters were loaded from an .npz file by the
+    registry factory, ``parameters_provenance`` records the path and the
+    file's content sha256 — documentation only, never fingerprinted (the
+    content already is); inline construction leaves it None.
     """
 
     def __init__(
@@ -246,6 +279,7 @@ class QuadraticCorrectedSurrogate:
         *,
         energy_offset: float = 0.0,
         calibration_note: str = "",
+        parameters_provenance: dict | None = None,
     ) -> None:
         if not callable(getattr(base, "predict", None)):
             raise TypeError(
@@ -273,6 +307,7 @@ class QuadraticCorrectedSurrogate:
         self._base = base
         self.energy_offset = energy_offset
         self.calibration_note = str(calibration_note)
+        self.parameters_provenance = parameters_provenance
         self.symmetrization_residual_before = float(
             np.linalg.norm(delta_h_checked - delta_h_checked.T)
         )
@@ -421,17 +456,36 @@ scaled_factory.backend_kind = "surrogate"
 def quadratic_corrected_factory(
     *,
     base: object,
-    q0: ArrayLike,
-    delta_f0: ArrayLike,
-    delta_h: ArrayLike,
+    q0: ArrayLike | None = None,
+    delta_f0: ArrayLike | None = None,
+    delta_h: ArrayLike | None = None,
     energy_offset: float = 0.0,
     calibration_note: str = "",
+    parameters_npz: str | None = None,
 ) -> QuadraticCorrectedSurrogate:
     """Registry factory for :class:`QuadraticCorrectedSurrogate`.
 
     ``base`` is a surrogate instance or a ``{"name": ..., "kwargs": {...}}``
     backend spec; unknown fields are rejected by the signature itself.
+    The correction parameters come either inline (``q0``/``delta_f0``/
+    ``delta_h``) or from ``parameters_npz`` — one .npz holding exactly
+    those three arrays, so large matrices stay out of the configuration
+    file; the two sources are mutually exclusive.  File origin rides on
+    the instance as ``parameters_provenance`` and never enters the
+    fingerprint (the content hashes already do).
     """
+    if parameters_npz is not None:
+        if q0 is not None or delta_f0 is not None or delta_h is not None:
+            raise ValueError(
+                "parameters_npz and inline q0/delta_f0/delta_h are mutually "
+                "exclusive; pass the correction parameters once")
+        q0, delta_f0, delta_h, provenance = _load_parameters_npz(parameters_npz)
+    else:
+        provenance = None
+    if q0 is None or delta_f0 is None or delta_h is None:
+        raise ValueError(
+            "quadratic-corrected needs q0, delta_f0 and delta_h — inline or "
+            "via parameters_npz")
     return QuadraticCorrectedSurrogate(
         _resolve_base(base),
         q0,
@@ -439,6 +493,7 @@ def quadratic_corrected_factory(
         delta_h,
         energy_offset=energy_offset,
         calibration_note=calibration_note,
+        parameters_provenance=provenance,
     )
 
 

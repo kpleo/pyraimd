@@ -15,6 +15,8 @@ and registry wiring.
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 import pytest
 from ase import Atoms
@@ -39,6 +41,7 @@ from pyraimd2.surrogate.base import (
 from pyraimd2.surrogate.corrections import (
     QuadraticCorrectedSurrogate,
     ScaledSurrogate,
+    quadratic_corrected_factory,
 )
 
 # Off-diagonally coupled x-y blocks of rank 2: the dimer's relative motion
@@ -632,3 +635,81 @@ def test_registry_rejects_unknown_fields_and_bad_specs():
     with pytest.raises(BackendRegistryError, match="registered as 'surrogate'"):
         create_backend("scaled", kind="engine",
                        base={"name": "harmonic-surrogate"}, scale=1.0)
+
+
+def _save_correction_npz(path, reference, base):
+    """The exact raw inputs _build_correction() passed inline, as one .npz;
+    returns the matching energy_offset.  Bit-identical inputs, so the
+    file-loaded and inline constructions enforce to the same values."""
+    atoms0 = _dimer(Q0)
+    np.savez(
+        path,
+        q0=Q0,
+        delta_f0=reference.predict(atoms0).forces - base.predict(atoms0).forces,
+        delta_h=_block_hessian(K_REFERENCE) - _block_hessian(K_BASE),
+    )
+    return reference.predict(atoms0).energy - base.predict(atoms0).energy
+
+
+def test_npz_parameters_match_the_inline_values(tmp_path):
+    reference, base, corrected = _build_correction()
+    path = tmp_path / "correction.npz"
+    energy_offset = _save_correction_npz(path, reference, base)
+    loaded = quadratic_corrected_factory(
+        base=base, parameters_npz=str(path),
+        energy_offset=energy_offset, calibration_note="unit-test calibration")
+    assert isinstance(loaded, QuadraticCorrectedSurrogate)
+    assert loaded.fingerprint == corrected.fingerprint
+    for displacement in DISPLACEMENTS:
+        atoms = _dimer(Q0 + displacement)
+        got, want = loaded.predict(atoms), corrected.predict(atoms)
+        assert got.energy == want.energy
+        np.testing.assert_array_equal(got.forces, want.forces)
+
+
+def test_npz_and_inline_parameters_are_mutually_exclusive(tmp_path):
+    _, base, corrected = _build_correction()
+    path = tmp_path / "correction.npz"
+    np.savez(path, q0=Q0, delta_f0=corrected.delta_f0, delta_h=corrected.delta_h)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        quadratic_corrected_factory(base=base, q0=Q0, parameters_npz=str(path))
+    with pytest.raises(ValueError, match="q0"):
+        quadratic_corrected_factory(base=base)
+
+
+def test_npz_missing_key_and_unreadable_files_are_rejected(tmp_path):
+    _, base, corrected = _build_correction()
+    incomplete = tmp_path / "incomplete.npz"
+    np.savez(incomplete, q0=Q0, delta_f0=corrected.delta_f0)
+    with pytest.raises(ValueError, match="delta_h"):
+        quadratic_corrected_factory(base=base, parameters_npz=str(incomplete))
+    corrupt = tmp_path / "corrupt.npz"
+    corrupt.write_bytes(b"not a zip archive at all")
+    with pytest.raises(ValueError, match="not a readable"):
+        quadratic_corrected_factory(base=base, parameters_npz=str(corrupt))
+    with pytest.raises(ValueError, match="cannot be read"):
+        quadratic_corrected_factory(
+            base=base, parameters_npz=str(tmp_path / "gone.npz"))
+
+
+def test_npz_provenance_records_path_and_sha256_outside_the_fingerprint(tmp_path):
+    reference, base, corrected = _build_correction()
+    path = tmp_path / "correction.npz"
+    energy_offset = _save_correction_npz(path, reference, base)
+    loaded = quadratic_corrected_factory(
+        base=base, parameters_npz=str(path),
+        energy_offset=energy_offset, calibration_note="unit-test calibration")
+    assert loaded.parameters_provenance == {
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    assert corrected.parameters_provenance is None  # inline construction
+    assert loaded.fingerprint == corrected.fingerprint
+    # Same bytes under another name: the provenance differs, the content
+    # fingerprint does not.
+    twin = tmp_path / "twin.npz"
+    twin.write_bytes(path.read_bytes())
+    reloaded = quadratic_corrected_factory(
+        base=base, parameters_npz=str(twin),
+        energy_offset=energy_offset, calibration_note="unit-test calibration")
+    assert reloaded.parameters_provenance["path"] == str(twin)
+    assert reloaded.fingerprint == loaded.fingerprint

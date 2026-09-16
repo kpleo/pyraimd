@@ -50,8 +50,9 @@ FORCE_METRICS = ("active_dofs_max_atom", "all_atoms_max_atom")
 RELAX_OPTIMIZERS = ("fire", "bfgs")
 
 # Backend option keys whose string values are filesystem paths, resolved
-# against the configuration file's directory and checked at validate time.
-_PATH_VALUE_KEYS = ("model", "density_source")
+# against the configuration file's directory; only ``model`` and
+# ``density_source`` are additionally existence-checked at validate time.
+_PATH_VALUE_KEYS = ("model", "density_source", "parameters_npz")
 _PSEUDO_DICT_KEY = "pseudos"  # QE species -> filename, resolved under pseudo_dir
 _MODEL_FILE_SUFFIXES = (".model", ".pt", ".pth", ".ckpt", ".json")
 
