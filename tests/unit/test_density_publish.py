@@ -376,7 +376,7 @@ def test_directory_request_id_encoding_unambiguous(tmp_path):
 
 @pytest.mark.parametrize("kind", ["qe", "ase"])
 def test_double_underscore_paths_never_share_identity(kind, tmp_path):
-    """The N036 sidecar repro: calculations/a__b and calculations/a/b must
+    """Paths calculations/a__b and calculations/a/b must
     not collapse into one request identity through the real compute entry."""
     owner = tmp_path / "run"
     owner.mkdir()
@@ -468,7 +468,7 @@ def test_directory_request_id_short_and_bounded(tmp_path):
     deep = owner / "calculations" / ("x" * 170) / "si-000000"
     request_id = density_publish.directory_request_id(owner, deep)
     # fixed purpose prefix plus the identity digest only: the path itself
-    # is never spliced into a file-name component (N038 length regression)
+    # is never spliced into a file-name component
     assert request_id.startswith("dir#")
     assert "calculations" not in request_id and "si-000000" not in request_id
     # bounded so the scratch record file and its atomic temp suffix stay
@@ -479,7 +479,7 @@ def test_directory_request_id_short_and_bounded(tmp_path):
 
 @pytest.mark.parametrize("kind", ["qe", "ase"])
 def test_long_directory_component_stays_publishable(kind, tmp_path):
-    """The N038 sidecar repro: a 170-character directory component ran fine
+    """A 170-character directory component ran fine
     on the pre-registry baseline, but the readable-prefix request id pushed
     the scratch record's atomic temp file name past the filesystem limit
     and failed the launch before any SCF."""
@@ -511,7 +511,7 @@ def test_long_directory_component_stays_publishable(kind, tmp_path):
 @pytest.mark.parametrize("kind", ["qe", "ase"])
 def test_metadata_query_failure_inside_publish_boundary(
         kind, tmp_path, monkeypatch):
-    """The N038 sidecar repro: an I/O error from the seed-metadata is_file
+    """An I/O error from the seed-metadata is_file
     query after a successful, archived SCF is a publication failure record
     — the delivered result, the source and the previous registry state are
     never sacrificed to a post-processing stat error."""

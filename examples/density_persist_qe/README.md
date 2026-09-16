@@ -2,8 +2,10 @@
 
 A small, runnable tour of the opt-in persistent density chain: every
 evaluation's charge density is published into the run-owned registry as
-an immutable generation, the next calculation warm-starts from the
-published seed, and disk use stays bounded by construction.
+an immutable generation. In the supplied configuration, the next
+calculation warm-starts from the published seed. Verified consumption and
+successful reclaim remove consumed scratch and old unreferenced seeds;
+logs, attempt archives and registry metadata continue to grow.
 
 Works with plain serial reference MD (`task.kind = "md"`,
 `task.mode = "reference"`) on the `qe` and `qe-ase` backends.  Recipe,
@@ -12,9 +14,13 @@ requires `[scratch] retention = "all"`.
 
 ## Enable
 
-See `run.toml` in this directory.  The two switches:
+See `run.toml` in this directory. The relevant settings are:
 
 ```toml
+[reference]
+startpot_file = true
+density_source_policy = "latest"
+
 [scratch]
 root = "./tmp"          # one managed scratch root
 retention = "all"       # required by the density chain
@@ -23,9 +29,11 @@ retention = "all"       # required by the density chain
 persist = true          # publish every density into restart/density/
 ```
 
-With `startpot_file = true` (the QE default in this mode) the next
-evaluation stages the published seed as its starting density.  Nothing
-changes for runs that leave `[density]` unset.
+The supplied `run.toml` explicitly enables file starts and the latest-source
+policy. Without file starts, the registry publishes seeds without using
+them to initialize the next evaluation; fixed external-source mode keeps
+its configured source. Nothing changes for runs that leave `[density]`
+unset.
 
 ## Observe the space
 
@@ -107,9 +115,11 @@ tree is held forever, a missing manifest is never resumed, and a
 re-referenced tombstone stays suspended.  Per-generation failures are
 reported in the receipt and never block the rest.
 
-Honest accounting: the seed generations plateau (latest + retained
-checkpoint references + boundary + one unconsumed producer), while
-lightweight results (events/trajectory/summaries), per-attempt
+With successful independent consumption, fixed checkpoint retention and
+timely reclaim, retained seed generations plateau. In this normal chain,
+the protected set includes latest, checkpoint and boundary references
+plus the terminal unconsumed producer. Unproven consumption can retain
+additional producers. Lightweight results (events/trajectory/summaries), per-attempt
 `pw.in`/`pw.out` archives and the registry state metadata still grow
 with the number of steps — no constant-whole-disk claim.
 

@@ -59,7 +59,8 @@ keep/hold/reclaim-candidate reasons); :func:`execute_density_reclaim` is the
 narrow execution entry — it holds the run's single-writer lock, re-reads
 every reference under it, refuses a stale caller-supplied plan, persists a
 durable tombstone in the state file BEFORE deleting each candidate, and
-resumes interrupted deletions by tombstone alone.  The registry accepts the
+resumes interrupted deletions only when the tombstone, readable ownership
+manifest and fresh unreferenced status agree. The registry accepts the
 caller's file role list verbatim: registering ``charge-density.dat``/
 ``charge-density.hdf5`` proves the files were located and copied — it does
 NOT claim the QE minimal seed is proven sufficient (that proof is the
@@ -1203,9 +1204,10 @@ def execute_density_reclaim(run_dir: str | Path, *,
     lock) refuses.  References are RE-READ under the lock and a caller
     supplied ``plan`` must match that fresh computation exactly — a stale
     plan is refused.  Per candidate, in order: the generation is
-    re-validated (a tombstoned one was validated before its tombstone —
-    that tombstone is the credential, so an interrupted deletion simply
-    resumes), the durable tombstone is persisted, then the tree is
+    re-validated (an interrupted deletion requires its tombstone, a
+    readable matching ownership manifest and fresh unreferenced status;
+    missing, unreadable or foreign ownership stays held), the durable
+    tombstone is persisted, then the tree is
     deleted.  A per-generation failure is recorded in the receipt and
     never blocks the others; the tombstone keeps an interrupted deletion
     resumable and a completed one forever distinguishable from

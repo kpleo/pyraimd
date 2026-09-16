@@ -4,10 +4,12 @@
 
 An opt-in persistent QE density chain for plain serial reference MD:
 every evaluation's charge density is published into a run-owned registry
-as one immutable, content-addressed generation; later calculations
-warm-start from the published seed; producer scratch and old generations
-are reclaimed under explicit safety contracts, so long runs no longer
-accumulate density data linearly (issue #7).  Runs that leave
+as one immutable, content-addressed generation. With file starts and the
+latest-source policy enabled, later calculations warm-start from the
+published seed. Verified independent consumption, fixed checkpoint
+retention and successful reclaim allow old seed generations and consumed
+producer scratch to be removed (issue #7). Logs and metadata still grow.
+Runs that leave
 `[density]` unset behave exactly as 0.7.2.
 
 ### Added
@@ -17,7 +19,10 @@ accumulate density data linearly (issue #7).  Runs that leave
   every produced charge density into `run/restart/density/` (charge
   density + schema XML, plus the PAW `paw.txt` when present), bind
   commits and checkpoints to the exact generation the state depends on,
-  and warm-start each following evaluation from the published seed.
+  and warm-start following evaluations when `startpot_file = true` and
+  `density_source_policy = "latest"` are set. Without file starts,
+  publication is save-only; fixed external-source mode retains its
+  configured source.
   Other workflow kinds and recipe/adaptive/surrogate combinations are
   refused at configuration time.
 - Resume binds the one authoritative restored boundary: the committed

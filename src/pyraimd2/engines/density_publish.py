@@ -4,8 +4,8 @@ Opt-in per engine: pass ``density_registry_run_dir`` naming the top-level
 run directory that owns ``restart/density``.  Without it every behavior is
 exactly as before — no registry is created, attempted or even looked at.
 
-This is the *save-only* integration stage of the run-owned density chain:
-a successful attempt that actually produced a new charge density publishes
+Publication itself preserves the source: a successful attempt that
+actually produced a new charge density publishes
 the candidate seed resource pack (the producing build's
 ``charge-density.dat``/``charge-density.hdf5`` plus the
 ``data-file-schema.xml`` next to it, and — when the attempt wrote one —
@@ -15,7 +15,7 @@ immutable generation through
 under ``density_publish``.  The pack is a *candidate* seed: name-level
 recognition proves the files exist; sufficiency for a warm start is
 build- and format-specific and is claimed only where actually verified
-(QE 7.5, HDF5, PAW, non-spin-polarized SCF restart — the A4 evidence).
+(QE 7.5, HDF5, PAW, non-spin-polarized SCF restart).
 The bridge also carries the DELAYED producer release: an attempt's
 scratch is released only after a later ordinary calculation has
 independently read that exact published seed and succeeded
@@ -63,18 +63,18 @@ def resolve_registry_owner(run_root: Path, density_registry_run_dir, *,
     the owner must be the top-level run directory whose subtree contains
     this engine's ``run_root`` — a shared parent directory is NOT enough —
     and the registry location must stay clear of the scratch root.  The
-    bridge currently composes only with ``retention="all"``: it is
-    save-only and no reclaim is wired yet, so a reclaiming mode is refused
-    up front (the existing ``results``/density-chain refusals stay as they
-    are).
+    bridge composes only with ``retention="all"`` so producer scratch is
+    retained until a later independent consumer proves it read the exact
+    published seed. Ordinary attempt-level cleanup modes are refused;
+    the density lifecycle handles delayed release after that proof.
     """
     if density_registry_run_dir is None:
         return None
     if retention != "all":
         raise ValueError(
             "density_registry_run_dir currently composes only with "
-            f"retention='all' (got retention={retention!r}): publication is "
-            f"save-only and no scratch reclaim is wired yet: {engine_name}")
+            f"retention='all' (got retention={retention!r}): producer scratch "
+            f"must remain until verified independent seed consumption: {engine_name}")
     owner = Path(density_registry_run_dir).resolve()
     root = Path(run_root).resolve()
     if root != owner and owner not in root.parents:
