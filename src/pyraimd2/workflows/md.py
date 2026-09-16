@@ -711,6 +711,16 @@ class _PlainDriver:
             # the verified association to the immutable resource baseline
             state["file_resource_baseline_sha256"] = \
                 self._file_resource_baseline_sha256
+        if self.section == "reference":
+            # the electronic parent state survives the process: a resume
+            # re-anchors the first SCF on this trajectory's own last
+            # density (optional key — old checkpoints simply lack it)
+            density_chain_state = getattr(self.backend, "density_chain_state",
+                                          None)
+            if density_chain_state is not None:
+                density_chain = density_chain_state()
+                if density_chain is not None:
+                    state["density_chain"] = density_chain
         arrays = {
             "numbers": self.atoms.numbers,
             "cell": self.atoms.cell.array,
@@ -1528,6 +1538,7 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                 f"checkpoint under {run_dir} has no persisted thermostat "
                 "state; this NVT run cannot be resumed honestly (an old or "
                 "torn checkpoint — start a new run)")
+    chain_restore: dict | None = None
     event_log = EventLog(run_dir, force=force_unlock)
     try:
         backend = _plain_backend(config, run_dir, event_log=event_log)
@@ -1572,6 +1583,14 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                 checkpoint_generation=resource_binding["generation"],
                 current=resource_binding["current"],
                 baseline=resource_binding["baseline"])
+        # The run's own last density re-anchors the electronic parent state
+        # across processes; the engine refuses a stale or tampered link
+        # (never raises) and the outcome rides on the resumed event below.
+        density_chain = state.get("density_chain")
+        restore_chain = getattr(backend, "restore_density_chain", None)
+        if density_chain is not None and restore_chain is not None:
+            restore_chain(density_chain)
+            chain_restore = getattr(backend, "last_density_chain_restore", None)
     except Exception:
         event_log.close()
         raise
@@ -1712,10 +1731,13 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
         # boundary), ASE legitimately skips calculate() and last_label would
         # stay unset; the committed boundary row is the same label.
         driver.atoms.calc.last_label = boundary_label
-        event_log.append(RESUMED, {
+        resumed_payload = {
             "run_id": config.run.id, "driver": f"plain-{config.dynamics.ensemble}",
             "from_event_seq": int(manifest["last_event_seq"]),
-            "checkpoint_generation": checkpoint.generation})
+            "checkpoint_generation": checkpoint.generation}
+        if chain_restore is not None:
+            resumed_payload["density_chain"] = chain_restore
+        event_log.append(RESUMED, resumed_payload)
         outputs = RunOutputs(
             run_dir, config.run.id,
             trajectory_interval_steps=config.output.trajectory_interval_steps,

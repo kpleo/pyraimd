@@ -87,6 +87,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -115,6 +116,8 @@ RY_BOHR3_TO_EV_A3 = RY_EV / units.Bohr**3
 QE_PREFIX = "pyraimd2"  # pw.x ``prefix``: the .save tree is tmp/<prefix>.save
 DENSITY_MANIFEST = "density_manifest.json"
 DENSITY_MANIFEST_SCHEMA = 1
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_PSEUDOS: dict[str, str] = {
     "H": "H.pbe-kjpaw_psl.1.0.0.UPF",
@@ -814,6 +817,7 @@ class QeEngine:
         self._request_counter = 0
         self.last_attempt_records: list[dict] = []
         self.last_density_decision: dict | None = None
+        self.last_density_chain_restore: dict | None = None
 
     @property
     def name(self) -> str:
@@ -1063,6 +1067,60 @@ class QeEngine:
             "reason": "; ".join(reasons) if reasons else "no density source configured",
         }
         return None
+
+    def density_chain_state(self) -> dict | None:
+        """The persistable link of this engine's density chain: the last
+        successful attempt's directory and the sha256 of its density
+        manifest, so a checkpoint can carry the electronic parent state
+        across processes.  None when no successful density exists — or
+        when its manifest is unreadable, an unverifiable link being no
+        link at all."""
+        if self._last_density_dir is None:
+            return None
+        try:
+            digest = hashlib.sha256(
+                (self._last_density_dir / DENSITY_MANIFEST).read_bytes()
+            ).hexdigest()
+        except OSError:
+            return None
+        return {"density_dir": str(self._last_density_dir),
+                "density_manifest_sha256": digest}
+
+    def restore_density_chain(self, state: dict) -> None:
+        """Reattach a checkpoint's density chain link in a fresh process.
+
+        The recorded directory must still exist with a density manifest
+        whose sha256 matches the checkpoint's record; a missing or changed
+        link is refused — never raised, so resume cannot crash on it —
+        with a warning logged and the outcome recorded on
+        ``last_density_chain_restore``.  The next evaluation then falls
+        back to the configured source or an atomic start with its usual
+        ``last_density_decision`` receipt."""
+        density_dir = state.get("density_dir")
+        expected = state.get("density_manifest_sha256")
+        reason: str | None = None
+        if not isinstance(density_dir, str) or not density_dir:
+            reason = "the checkpoint records no density directory"
+        elif not isinstance(expected, str) or not expected:
+            reason = "the checkpoint records no density manifest sha256"
+        elif not Path(density_dir).is_dir():
+            reason = f"density directory is gone: {density_dir}"
+        elif not (Path(density_dir) / DENSITY_MANIFEST).is_file():
+            reason = f"no density manifest in {density_dir}"
+        elif hashlib.sha256(
+                (Path(density_dir) / DENSITY_MANIFEST).read_bytes()
+        ).hexdigest() != expected:
+            reason = (f"the density manifest in {density_dir} changed since "
+                      "the checkpoint was written")
+        if reason is None:
+            self._last_density_dir = Path(density_dir)
+        else:
+            _log.warning("density chain not restored (%s); the next "
+                         "evaluation falls back to the configured density "
+                         "source or an atomic start", reason)
+        self.last_density_chain_restore = {
+            "density_dir": density_dir, "adopted": reason is None,
+            "reason": reason}
 
     def _attempt(self, atoms: Atoms, attempt_dir: Path, config: QeConfig, *,
                  density: DensitySource | None = None,
