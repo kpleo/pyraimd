@@ -12,6 +12,7 @@ from pyraimd2.surrogate.base import (
 )
 from pyraimd2.surrogate.committee import CommitteeSurrogate
 from pyraimd2.surrogate.corrections import (
+    CorrectionDomainError,
     QuadraticCorrectedSurrogate,
     ScaledSurrogate,
 )
@@ -20,6 +21,7 @@ from pyraimd2.surrogate.mace_surrogate import MaceSurrogate
 __all__ = [
     "AseSurrogate",
     "CommitteeSurrogate",
+    "CorrectionDomainError",
     "MaceSurrogate",
     "QuadraticCorrectedSurrogate",
     "ScaledSurrogate",

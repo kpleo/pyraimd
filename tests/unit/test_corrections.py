@@ -43,6 +43,7 @@ from pyraimd2.surrogate.base import (
     surrogate_capabilities,
 )
 from pyraimd2.surrogate.corrections import (
+    CorrectionDomainError,
     QuadraticCorrectedSurrogate,
     ScaledSurrogate,
     quadratic_corrected_factory,
@@ -605,68 +606,63 @@ def test_frozen_parameters_cannot_be_mutated():
 
 
 def test_periodic_chart_is_a_pure_function_of_positions():
-    _, base, corrected = _build_correction()
+    _, _, corrected = _build_correction()
     cell = [10.0, 10.0, 10.0]
     # the same positions give the same answer regardless of call history
     # — on one instance and across fresh instances (the resume case)
     near = _dimer(Q0 + DISPLACEMENTS[0], cell=cell, pbc=True)
     first = corrected.predict(near)
     assert np.isfinite(first.energy)
-    far = _dimer(Q0 + DISPLACEMENTS[0] + np.array([[5.3, 0.0, 0.0],
-                                                   [0.0, 0.0, 0.0]]),
-                 cell=cell, pbc=True)
-    far_after_near = corrected.predict(far)
+    farther_in_domain = _dimer(Q0 + DISPLACEMENTS[0]
+                               + np.array([[4.9, 0.0, 0.0], [0.0, 0.0, 0.0]]),
+                               cell=cell, pbc=True)
+    far_after_near = corrected.predict(farther_in_domain)
     _, _, fresh = _build_correction()
-    far_fresh = fresh.predict(far)
+    far_fresh = fresh.predict(farther_in_domain)
     assert far_fresh.energy == pytest.approx(far_after_near.energy, abs=1e-12)
     np.testing.assert_allclose(far_fresh.forces, far_after_near.forces,
                                atol=1e-12)
-    # the chart's documented boundary: 5.3 A on a 10 A cell wraps onto the
-    # nearest branch around q0 (the -4.7 A image) — the correction TERM
-    # equals the correction term of the wrapped image (the base model
-    # always sees the raw positions, so compare total-minus-base)
-    wrapped = _dimer(Q0 + DISPLACEMENTS[0] + np.array([[-4.7, 0.0, 0.0],
-                                                       [0.0, 0.0, 0.0]]))
-    _, plain_base, plain = _build_correction()
-    expected = plain.predict(wrapped)
-    correction_far = far_after_near.forces - base.predict(far).forces
-    correction_expected = expected.forces - plain_base.predict(wrapped).forces
-    np.testing.assert_allclose(correction_far, correction_expected, atol=1e-12)
-    correction_energy_far = (far_after_near.energy - base.predict(far).energy
-                             - corrected.energy_offset)
-    correction_energy_expected = (expected.energy - plain_base.predict(wrapped).energy
-                                  - plain.energy_offset)
-    assert correction_energy_far == pytest.approx(correction_energy_expected,
-                                                  abs=1e-12)
+    # past the half-cell boundary the answer is a controlled refusal, never
+    # a silently wrapped branch (see the counterexample pin below)
+    beyond = _dimer(Q0 + DISPLACEMENTS[0] + np.array([[5.3, 0.0, 0.0],
+                                                      [0.0, 0.0, 0.0]]),
+                    cell=cell, pbc=True)
+    with pytest.raises(CorrectionDomainError, match="local domain"):
+        corrected.predict(beyond)
+    with pytest.raises(CorrectionDomainError, match="local domain"):
+        fresh.predict(beyond)  # same refusal on a fresh instance
 
 
-def test_mixed_pbc_wraps_only_the_periodic_axes():
+def test_mixed_pbc_handles_only_the_periodic_axes():
     _, base, corrected = _build_correction()
     cell = np.diag([10.0, 10.0, 10.0])
     pbc = [True, True, False]
-    # +5.3 A on x (wraps to -4.7), +6.0 A on z (stays: z is not periodic)
-    positions = Q0 + DISPLACEMENTS[0] + np.array([[5.3, 0.0, 6.0],
+    # within the local domain on the periodic axes; the non-periodic z
+    # displacement is passed through untouched (no wrap ever applies there)
+    positions = Q0 + DISPLACEMENTS[0] + np.array([[4.0, 0.0, 6.0],
                                                   [0.0, 0.0, 0.0]])
     got = corrected.predict(_dimer(positions, cell=cell, pbc=pbc))
-    expected_positions = Q0 + DISPLACEMENTS[0] + np.array([[-4.7, 0.0, 6.0],
-                                                           [0.0, 0.0, 0.0]])
     _, plain_base, plain = _build_correction()
-    want = plain.predict(_dimer(expected_positions))
-    # compare the correction TERM (total minus base at the same raw
-    # positions): the wrapped x image and the untouched z displacement
+    want = plain.predict(_dimer(positions))  # non-periodic: same delta
     correction_got = got.forces - base.predict(
         _dimer(positions, cell=cell, pbc=pbc)).forces
     correction_want = want.forces - plain_base.predict(
-        _dimer(expected_positions)).forces
+        _dimer(positions)).forces
     np.testing.assert_allclose(correction_got, correction_want, atol=1e-12)
+    # a genuine crossing on a periodic axis refuses even with mixed pbc
+    beyond = Q0 + DISPLACEMENTS[0] + np.array([[5.3, 0.0, 0.0],
+                                               [0.0, 0.0, 0.0]])
+    with pytest.raises(CorrectionDomainError, match="local domain"):
+        corrected.predict(_dimer(beyond, cell=cell, pbc=pbc))
 
 
 def test_rigid_cell_shift_is_mapped_back_into_the_chart():
     _, _, corrected = _build_correction()
     cell = [10.0, 10.0, 10.0]
     # The whole configuration one full cell to the left (a trajectory
-    # crossing a periodic boundary): the minimum image maps every atom
-    # back into q0's chart, and the rigidly translation-invariant base
+    # crossing a periodic boundary): the uniform integer offsets map every
+    # atom back into q0's chart — an explicitly supported equivalent
+    # representation change, and the rigidly translation-invariant base
     # model sees an equivalent geometry.
     shifted_positions = Q0 + DISPLACEMENTS[0] - np.array([[10.0, 0.0, 0.0],
                                                           [10.0, 0.0, 0.0]])
@@ -691,15 +687,106 @@ def test_a_changed_cell_or_pbc_is_rejected():
     with pytest.raises(ValueError, match="pbc"):
         corrected.predict(changed_pbc)
     # and dropping to non-periodic after a periodic chart is a chart change
-    with pytest.raises(ValueError, match="non-periodic"):
+    with pytest.raises(ValueError, match="pbc mask"):
         corrected.predict(_dimer(Q0 + DISPLACEMENTS[0]))
 
 
-def test_a_nonperiodic_run_never_records_a_chart():
+def test_a_nonperiodic_first_call_records_the_environment():
     _, _, corrected = _build_correction()
     corrected.predict(_dimer(Q0 + DISPLACEMENTS[0]))
     corrected.predict(_dimer(Q0 + DISPLACEMENTS[1]))
-    assert corrected._chart_cell is None and corrected._chart_pbc is None
+    # the non-periodic environment is recorded from the first call: a
+    # later periodic call is a contract change and is refused
+    assert corrected._chart_pbc is not None
+    assert not np.any(corrected._chart_pbc)
+    with pytest.raises(ValueError, match="pbc mask"):
+        corrected.predict(_dimer(Q0 + DISPLACEMENTS[0],
+                                 cell=[10.0, 10.0, 10.0], pbc=True))
+
+
+# ---------------------------------------------------------------------------
+# the reported boundary counterexamples, pinned (red before the fix, green
+# after it)
+
+
+class _FlatModel:
+    """Zero base potential: energy 0, forces 0 everywhere."""
+
+    @property
+    def capabilities(self):
+        return SurrogateCapabilities(
+            energy_kind=EnergyKind.ENERGY, force_consistent=True,
+            forces_conservative=True, stress_available=False,
+            uncertainty_available=False)
+
+    @property
+    def fingerprint(self):
+        return "flat"
+
+    def predict(self, atoms):
+        return SurrogatePrediction(
+            energy=0.0, forces=np.zeros((len(atoms), 3)), stress=None,
+            uncertainty=np.full(len(atoms), np.nan),
+            energy_kind=EnergyKind.ENERGY, force_consistent=True)
+
+
+def _counterexample_wrapper():
+    """The reported minimal case: two atoms, flat base, zero Hessian, a
+    net-zero linear correction force ([+1, -1] eV/Å on x)."""
+    q0 = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    delta_f0 = np.array([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]])  # net zero
+    delta_h = np.zeros((6, 6))
+    return QuadraticCorrectedSurrogate(_FlatModel(), q0, delta_f0, delta_h,
+                                       species=("H", "H"))
+
+
+def test_counterexample_half_cell_crossing_is_a_controlled_refusal():
+    """Reported boundary case #1: moving 2e-6 A across the half-cell
+    boundary used to jump the energy by ~10 eV while the force stayed
+    1 eV/Å under a conservative declaration.  Now the crossing is refused
+    for the upper layer; within the domain the pair is exactly as
+    computed."""
+    corrected = _counterexample_wrapper()
+    cell = [10.0, 10.0, 10.0]
+    before = Atoms("H2", positions=[[4.999999, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                   cell=cell, pbc=True)
+    got = corrected.predict(before)
+    assert got.energy == pytest.approx(-4.999999, abs=1e-9)
+    assert got.forces[0, 0] == pytest.approx(1.0, abs=1e-12)
+    assert got.forces[1, 0] == pytest.approx(-1.0, abs=1e-12)
+    beyond = Atoms("H2", positions=[[5.000001, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                   cell=cell, pbc=True)
+    with pytest.raises(CorrectionDomainError, match="local domain"):
+        corrected.predict(beyond)
+    # a fresh instance (a resumed wrapper) refuses identically
+    with pytest.raises(CorrectionDomainError, match="local domain"):
+        _counterexample_wrapper().predict(beyond)
+    # and the refusal is not a branch swap: there is no code path in the
+    # wrapper that still returns the jumped +5 eV energy
+    assert corrected.capabilities.force_consistent is True
+
+
+def test_counterexample_nonperiodic_to_periodic_is_refused():
+    """Reported boundary case #2: a first non-periodic call followed by a
+    periodic one used to be accepted under an unchanged fingerprint
+    (the energy silently recomputed under a different chart).  The
+    environment contract now holds from the first call; the switch is
+    refused."""
+    corrected = _counterexample_wrapper()
+    plain = Atoms("H2", positions=[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    first = corrected.predict(plain)
+    assert np.isfinite(first.energy)
+    with pytest.raises(ValueError, match="pbc mask"):
+        corrected.predict(Atoms("H2",
+                                positions=[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                                cell=[10.0, 10.0, 10.0], pbc=True))
+    # and the reverse direction is refused too (covered by the same check)
+    periodic = _counterexample_wrapper()
+    periodic.predict(Atoms("H2", positions=[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                           cell=[10.0, 10.0, 10.0], pbc=True))
+    with pytest.raises(ValueError, match="pbc mask"):
+        periodic.predict(plain)
+
 
 
 # ---------------------------------------------------------------------------
@@ -993,3 +1080,48 @@ def test_quadratic_wrapper_with_npz_runs_through_the_workflow(tmp_path):
     assert Path(config.surrogate.options["parameters_npz"]).is_absolute()
     result = run_workflow(config, verbose=False, handle_sigint=False)
     assert result.steps_completed == 3
+
+
+def test_domain_exit_fails_the_run_visibly(tmp_path):
+    """A trajectory that leaves the correction's local domain stops the
+    run with the refusal recorded — never continues on a wrapped branch.
+    The first evaluation is already out of domain here (q0 offset by
+    more than half the cell on one atom)."""
+    from pyraimd2.config import load_config
+    from pyraimd2.workflows import run_workflow
+
+    root = tmp_path / "domain"
+    root.mkdir()
+    (root / "structure.extxyz").write_text(
+        '3\nLattice="10.0 0.0 0.0 0.0 10.0 0.0 0.0 0.0 10.0" '
+        'Properties=species:S:1:pos:R:3 pbc="T T T"\n'
+        "O 0.870 0.910 0.885\nH 0.945 0.862 0.918\nH 0.893 0.948 0.955\n")
+    npz = root / "correction.npz"
+    # q0 = structure with atom 0 shifted by 6 A: fractional 0.6 on the
+    # periodic x axis at the very first evaluation — out of domain
+    np.savez(npz,
+             q0=np.array([[6.87, 0.91, 0.885], [0.945, 0.862, 0.918],
+                          [0.893, 0.948, 0.955]]),
+             delta_f0=np.zeros((3, 3)), delta_h=np.zeros((9, 9)))
+    (root / "run.toml").write_text(
+        "schema_version = 1\n[run]\nid = \"t\"\ndirectory = \"run\"\n"
+        "seed = 42\n[task]\nkind = \"md\"\nmode = \"surrogate\"\n"
+        "[structure]\nfile = \"structure.extxyz\"\n"
+        "[dynamics]\nensemble = \"nve\"\ntimestep_fs = 0.5\nsteps = 3\n"
+        "temperature_K = 300.0\nvelocity_seed = 7\n"
+        "[surrogate]\nbackend = \"quadratic-corrected\"\n"
+        'species = ["O", "H", "H"]\nparameters_npz = "correction.npz"\n'
+        "[surrogate.base]\nname = \"harmonic-surrogate\"\n"
+        "[surrogate.base.kwargs]\nk = 1.0\nr0 = 0.9\nbias = 0.05\n")
+    config = load_config(root / "run.toml")
+    with pytest.raises(CorrectionDomainError, match="local domain"):
+        run_workflow(config, verbose=False, handle_sigint=False)
+    # the refusal is the record: no committed evaluation, no step, no
+    # success summary — the run never continued on a wrapped branch
+    events = [json.loads(line) for line in
+              (config.run.directory / "events.jsonl")
+              .read_text().splitlines() if line.strip()]
+    assert not [e for e in events if e.get("type") == "step_completed"]
+    assert not [e for e in events if e.get("type") == "evaluation_committed"]
+    assert not [e for e in events
+                if e.get("type") == "run_end" and e.get("status") != "failed"]

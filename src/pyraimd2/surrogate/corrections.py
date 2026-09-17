@@ -33,21 +33,21 @@ Stress is not implemented for either wrapper: capabilities declare
 base model's stress is never passed through as if it were a corrected
 stress.
 
-Periodic chart (this adaptation's deliberate contract): the displacement
-is ``q - q0`` taken on the minimum-image branch around ``q0`` per call —
-a pure function of the current positions, so a rebuilt wrapper in a
-fresh process computes byte-identical corrections and a resume can never
-silently select a different chart.  Only periodic axes are wrapped (a
-mixed-pbc cell wraps its periodic directions and leaves the rest
-unwrapped).  The cell and pbc are recorded at the first ``predict`` call
-and every later call must match them exactly — a changed cell or a pbc
-change (including dropping to non-periodic) is refused.  This replaces
-the source implementation's freeze-per-instance image offsets, which
-made ``predict`` depend on call history and let a resumed wrapper pick a
-different chart under an unchanged identity.  The documented boundary:
-an atom more than half a cell from ``q0`` on a periodic axis wraps onto
-the nearest branch — the correction is local and that is its visible
-validity edge.
+Periodic chart contract: the pbc mask and the cell are recorded at the
+first ``predict`` call (a non-periodic first call included) and every
+later call must match them — a pbc change in either direction or a cell
+change is refused.  The local validity domain is the half-cell
+neighborhood around ``q0`` on each periodic axis: a rigid integer-cell
+shift of the whole configuration is explicitly supported (uniform
+per-atom offsets map it back identically), while any atom wrapping
+relative to the others — a genuine exit from the local domain — raises
+:class:`CorrectionDomainError` for the upper layer to handle (re-center
+or refresh).  The wrapper never silently rounds onto another periodic
+branch: there the correction energy would jump while its force stayed
+smooth, an inconsistent energy/force pair under a conservative
+declaration.  Nothing about the chart depends on call history or process
+lifetime beyond the recorded environment, so a fresh-process resume
+reproduces the same corrections under the same fingerprint.
 """
 
 from __future__ import annotations
@@ -132,6 +132,15 @@ def _translation_residuals(
 
 def _base_identity(base: object) -> str:
     return fingerprint_of(base) or type(base).__qualname__
+
+
+class CorrectionDomainError(ValueError):
+    """The configuration left the correction's local validity domain (an
+    atom crossed the half-cell boundary around q0 on a periodic axis
+    relative to the others).  A controlled refusal for the upper layer to
+    handle — re-center or refresh the correction; the wrapper never
+    silently rounds onto another periodic branch and returns an
+    inconsistent energy/force pair."""
 
 
 def _load_parameters_npz(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
@@ -295,12 +304,16 @@ class QuadraticCorrectedSurrogate:
     ``species`` (required) pins the correction map to one fixed atom order
     and element list; every ``predict`` validates the atoms against it
     (order-sensitive), and it enters the fingerprint.  The periodic chart
-    is the stateless contract documented in the module docstring:
-    minimum image around ``q0`` per call on periodic axes only, with the
-    cell/pbc recorded at the first call and verified unchanged at every
-    later one.  Nothing about the chart depends on call history or
-    process lifetime, so a resume in a fresh process reproduces the same
-    corrections under the same fingerprint.
+    is the stateless contract documented in the module docstring: the
+    environment (pbc mask + cell) is recorded at the first call and
+    verified unchanged on every later one; inside the local domain
+    (half-cell around ``q0`` on periodic axes) the correction is exactly
+    force-consistent; a rigid integer-cell shift of the whole
+    configuration is explicitly supported; a genuine domain exit raises
+    :class:`CorrectionDomainError` instead of returning a discontinuous
+    energy/force pair.  Nothing about the chart depends on call history
+    or process lifetime, so a resume in a fresh process reproduces the
+    same corrections under the same fingerprint.
 
     ``energy_offset`` is the recorded constant zero point in eV: use
     ``U_r(q0) - U_b(q0)`` to anchor the corrected energy to the reference
@@ -313,8 +326,10 @@ class QuadraticCorrectedSurrogate:
     the base model's energy/force consistency declarations carry over
     unchanged; the deterministic, member-independent correction leaves an
     honest base spread unchanged, so the base uncertainty is forwarded
-    as-is.  Stress is not implemented: ``stress_available=False`` and
-    predictions return ``stress=None``, never the base model's stress.
+    as-is — it remains the BASE model's quantity: no recalibrated
+    confidence of the corrected potential exists (the wrapper never
+    recalibrates).  Stress is not implemented: ``stress_available=False``
+    and predictions return ``stress=None``, never the base model's stress.
     The content hashes of ``species``, ``q0``, ``delta_f0``, the enforced
     ``delta_h`` (symmetrized and translation-projected), the energy
     offset and the calibration note enter the fingerprint together with
@@ -480,44 +495,59 @@ class QuadraticCorrectedSurrogate:
     def _displacement(self, atoms: Atoms) -> np.ndarray:
         delta = np.asarray(atoms.get_positions(), dtype=float) - self._q0
         pbc = np.asarray(atoms.pbc, dtype=bool)
-        if not np.any(pbc):
-            if self._chart_pbc is not None and np.any(self._chart_pbc):
-                raise ValueError(
-                    "the correction chart was recorded on a periodic cell; "
-                    "a non-periodic configuration is a different chart — "
-                    "refusing to mix them")
-            return delta
         cell = np.asarray(atoms.cell, dtype=float)
-        if self._chart_cell is None:
-            # Record the chart of this process once: the periodic cell and
-            # the pbc mask.  Every later call must match them exactly.
-            try:
-                np.linalg.inv(cell)
-            except np.linalg.LinAlgError:
-                raise ValueError(
-                    "periodic correction chart needs an invertible cell, got "
-                    f"{cell.tolist()}"
-                ) from None
-            self._chart_cell = cell.copy()
+        if self._chart_pbc is None:
+            # The environment contract holds from the FIRST call, a
+            # non-periodic one included: the pbc mask and the cell are
+            # recorded once, and every later call must match them.
+            if np.any(pbc):
+                try:
+                    np.linalg.inv(cell)
+                except np.linalg.LinAlgError:
+                    raise ValueError(
+                        "periodic correction chart needs an invertible "
+                        f"cell, got {cell.tolist()}") from None
             self._chart_pbc = pbc.copy()
+            self._chart_cell = cell.copy()
         else:
             if not np.array_equal(pbc, self._chart_pbc):
                 raise ValueError(
-                    "the correction chart assumes a fixed pbc mask; the "
-                    "periodicity changed after the chart was recorded")
-            if not np.allclose(cell, self._chart_cell, rtol=0.0, atol=1e-10):
+                    "the correction chart fixes the pbc mask at the first "
+                    "call; the periodicity changed (either direction) — "
+                    "that is a different model state, not a resume")
+            if np.any(self._chart_pbc) and not np.allclose(
+                    cell, self._chart_cell, rtol=0.0, atol=1e-10):
                 raise ValueError(
                     "the correction chart assumes a fixed cell; the cell "
                     "changed after the chart was recorded")
+        if not np.any(pbc):
+            return delta
         inv_cell = np.linalg.inv(self._chart_cell)
         fractional = delta @ inv_cell
-        # Minimum image around q0, periodic axes only — a pure function of
-        # the current positions, identical in every process (no per-instance
-        # offset state; resume can never silently select a different chart).
+        offsets = np.zeros_like(fractional)
         for axis in range(3):
             if self._chart_pbc[axis]:
-                fractional[:, axis] -= np.round(fractional[:, axis])
-        return fractional @ self._chart_cell
+                offsets[:, axis] = np.round(fractional[:, axis])
+        # The local validity domain is the half-cell neighborhood around
+        # q0: a rigid integer-cell shift of the WHOLE configuration is the
+        # same physical state and maps back identically (uniform offsets
+        # per axis — explicitly supported, never confused with a real
+        # crossing); any atom wrapping relative to the others means the
+        # trajectory left the local domain.  Refuse that in a controlled
+        # way for the upper layer to handle — never silently round onto
+        # another branch, where the correction energy would jump while
+        # its force stayed smooth (an inconsistent energy/force pair).
+        for axis in range(3):
+            if self._chart_pbc[axis] and np.any(offsets[:, axis]
+                                              != offsets[0, axis]):
+                raise CorrectionDomainError(
+                    f"an atom crossed the correction's local domain on "
+                    f"periodic axis {axis} (more than half the cell from "
+                    "q0 relative to the others): the static quadratic "
+                    "correction is only valid on the recorded chart — "
+                    "re-center or refresh the correction instead of "
+                    "continuing on a wrapped branch")
+        return (fractional - offsets) @ self._chart_cell
 
     def predict(self, atoms: Atoms) -> SurrogatePrediction:
         if tuple(atoms.get_chemical_symbols()) != self._species:
