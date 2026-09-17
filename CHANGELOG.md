@@ -3,8 +3,8 @@
 ## 0.7.4.dev0 (unreleased development line)
 
 First development integration on top of 0.7.3, absorbing the reviewed
-SnSe improvements that fit the general software (not a release; no
-upgrade guarantees beyond what 0.7.3 documents).
+upstream-contributed improvements that fit the general software (not a
+release; no upgrade guarantees beyond what 0.7.3 documents).
 
 ### Added
 
@@ -41,11 +41,12 @@ upgrade guarantees beyond what 0.7.3 documents).
 
 ### Notes
 
-- The SnSe directory-based density-chain resume is deliberately omitted:
-  superseded by 0.7.3's run-owned generation registry with
-  committed-boundary binding, actual-read gating and ownership-checked
-  reclaim (its acceptance scenarios are covered by the existing
-  density-chain tests with stricter refusal semantics).
+- A directory-based checkpoint density-chain resume was proposed
+  upstream and is deliberately not integrated here: superseded by
+  0.7.3's run-owned generation registry with committed-boundary binding,
+  actual-read gating and ownership-checked reclaim (its acceptance
+  scenarios are covered by the existing density-chain tests with
+  stricter refusal semantics).
 
 ## 0.7.3 — 2026-09-17
 
