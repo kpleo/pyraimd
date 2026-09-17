@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.7.4.dev0 (unreleased development line)
+
+First development integration on top of 0.7.3, absorbing the reviewed
+SnSe improvements that fit the general software (not a release; no
+upgrade guarantees beyond what 0.7.3 documents).
+
+### Added
+
+- Frozen conservative correction wrappers around a base surrogate
+  (`scaled` / `quadratic-corrected` backends): `U_c = c U_b, F_c = c F_b`
+  with one frozen scalar, or the static quadratic Taylor correction of
+  the reference-minus-base difference at a fixed center with the
+  correction Hessian symmetrized and translation-projected (acoustic sum
+  rule; net `delta_f0` recorded, never silently removed).  Corrections
+  are value-fingerprinted with the required fixed atom order/elements
+  (`species`); frozen parameters are read-only; correction content loads
+  inline or from one `.npz` (`parameters_npz`, provenance recorded but
+  never fingerprinted).  The periodic chart is a pure function of the
+  current positions (minimum image around `q0`, periodic axes only,
+  cell/pbc changes refused) so a fresh-process resume reproduces
+  identical corrections.  Stress is never impersonated from the base
+  model.
+- `dynamics.max_wall_hours` (plain serial MD only): a soft per-process
+  walltime budget anchored at the workflow entry (initialization counts),
+  stopping only at complete-step boundaries with a checkpoint written
+  regardless of the interval; a resumed process re-arms it.  The reserve
+  for one more step follows the last measured step wall (or the backend's
+  declared timeout/retries before any measurement), never a hardcoded
+  ceiling.  Adaptive MD and recipe stages refuse the option explicitly.
+- `QeConfig.startingwfc_file` / `[reference] startingwfc_file`: an
+  explicit, default-off wavefunction-restart knob — the input is written
+  only when the attempt staged a `.save` tree, the receipt records the
+  decision with its reason, and the only recorded read observation is
+  parsed from QE's own stdout (plumbing-level until a real output fixture
+  pins the wording; it never authorizes anything).  Refused for
+  `disk_io` modes without wavefunction files, the `[density] persist`
+  registry combination (its seed pack carries no wavefunctions), and the
+  `qe-ase` adapter.
+
+### Notes
+
+- The SnSe directory-based density-chain resume is deliberately omitted:
+  superseded by 0.7.3's run-owned generation registry with
+  committed-boundary binding, actual-read gating and ownership-checked
+  reclaim (its acceptance scenarios are covered by the existing
+  density-chain tests with stricter refusal semantics).
+
 ## 0.7.3 — 2026-09-17
 
 An opt-in persistent QE density chain for plain serial reference MD:

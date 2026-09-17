@@ -168,6 +168,23 @@ Mode rules:
   restores the persisted stream and never uses this seed again. Changing
   algorithm, timestep, temperature or friction means a new run, not a
   resume.
+- `max_wall_hours` (number > 0, optional): a SOFT per-process walltime
+  budget for plain serial MD.  The clock anchors at the workflow entry —
+  backend construction and the initial evaluation count against it — and
+  the driver stops only at a complete-step boundary: when the remaining
+  budget falls below the reserve for one more step (1.5x the last
+  measured step wall plus a 300 s I/O margin; before any measurement, the
+  backend's declared per-attempt timeout times its configured retries
+  when available, else just the margin), the last complete boundary is
+  checkpointed regardless of the interval and the run ends
+  `stopped_early` with the budget numbers on the `run_end` event.  A
+  running step is never interrupted, and a sudden slow step is not
+  predicted by the estimate: this is a between-step scheduler, never a
+  guarantee that an in-flight SCF returns before the wall (the engine's
+  `timeout_s` bounds attempts; the scheduler's hard wall is external).  A
+  resumed process re-arms the budget, so a job chain can hand a long
+  trajectory across scheduler walls.  Adaptive MD and serial-recipe
+  stages refuse the option explicitly.
 
 NVT runs use ASE's Langevin with `fixcm=False` (the deprecated
 `fixcm=True` does not strictly sample the correct NVT distribution;
@@ -183,8 +200,9 @@ run requires a stateful updater.
 
 - `backend` (string, required): a registered name — `pyramid backends`
   lists them. Builtin: `qe`, `qe-ase`, `pyscf` (engines), `mace`
-  (surrogate), and the analytic toys `harmonic-reference` /
-  `harmonic-surrogate`.
+  (surrogate), the frozen correction wrappers `scaled` /
+  `quadratic-corrected` (surrogates, see below), and the analytic toys
+  `harmonic-reference` / `harmonic-surrogate`.
 - Every other key is passed to the backend factory verbatim as a keyword
   option; unknown options fail at the factory with the option named.
 - Path-like option values (keys ending in `_path`, `_file`, `_dir`, plus
@@ -197,6 +215,41 @@ run requires a stateful updater.
   the run's event log. Configuration files never name these themselves.
 - Missing optional dependencies are reported at selection time with the
   matching extra (`pip install 'pyraimd2[mace]'` / `[pyscf]`).
+
+#### Correction wrappers (`scaled` / `quadratic-corrected`, surrogates)
+
+Frozen, conservative corrections wrapped around a base surrogate — no
+retraining.  `scaled`: `U_c = c U_b`, `F_c = c F_b` with one frozen
+positive scalar.  `quadratic-corrected`: the static quadratic Taylor
+correction of the reference-minus-base difference at one fixed center
+`q0` (`U_c = U_b - dF0·u + 1/2 uᵀ dH u + E0`, `F_c = F_b + dF0 - dH u`),
+with `delta_h` symmetrized and translation-projected at construction
+(the acoustic sum rule on the correction matrix; the residuals are
+recorded, and a net `delta_f0` force is recorded but never silently
+removed).  Both wrappers declare no stress and never impersonate the
+base model's.
+
+- `base`: a `{"name", "kwargs"}` spec of the base surrogate backend;
+  path-like values inside `kwargs` resolve against the configuration
+  file's directory.
+- `quadratic-corrected` additionally requires `species` (the fixed atom
+  order and elements, validated on every prediction) and the correction
+  content — inline `q0`/`delta_f0`/`delta_h`, or `parameters_npz` naming
+  one `.npz` file with exactly those arrays (mutually exclusive; the
+  file's path and content digest are recorded as provenance, never
+  fingerprinted — the values are).  `energy_offset` anchors the corrected
+  energy zero at `q0` (a constant changes no forces).
+- The periodic chart is a pure function of the current positions:
+  minimum image around `q0` per call on periodic axes only, with the
+  cell and pbc recorded at the first call and every later call required
+  to match (a changed cell or pbc is refused) — a resumed run reproduces
+  identical corrections under an identical fingerprint.  An atom more
+  than half a cell from `q0` on a periodic axis wraps onto the nearest
+  branch: that is the local correction's visible validity edge.
+- The correction content, `species`, `energy_offset`, the calibration
+  note and the base identity all enter the fingerprint; the frozen
+  parameters are read-only (a resume with edited correction bytes refuses
+  on the identity mismatch).
 
 #### QE backends (`qe` / `qe-ase`)
 
@@ -224,6 +277,19 @@ reference fingerprint).
   true input origin), and the chain then falls back to the real source.
 - `startpot_file` / `density_source`: warm starts from a verified
   density of known origin (see the engine docstrings).
+- `startingwfc_file` (boolean, default `false`): also restart
+  wavefunctions from a staged `.save` tree (`startingwfc = 'file'` is
+  written only when this attempt actually staged one; the attempt record
+  and ledger carry the decision with its reason, and the only recorded
+  read observation comes from QE's own stdout — receipt-level
+  information, never an authorization input).  Refused clearly when the
+  combination cannot work: `disk_io = "nowf"`/`"minimal"`/`"none"`
+  (those write no wavefunction files), the `[density] persist` registry
+  (its published seed pack carries no wavefunctions), and the `qe-ase`
+  adapter (not implemented there).  The wavefunction-restart path is
+  plumbing-covered only until a real QE output fixture pins the read
+  evidence; the persistent density pack and its deletion permissions are
+  not expanded for it.
 - `density_source_policy` (`latest` default, or `fixed`): the
   density-chain trial order.  `latest` reuses the most recent successful
   density of the run and treats `density_source` as initialization (first
