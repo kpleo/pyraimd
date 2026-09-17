@@ -242,20 +242,21 @@ base model's.
 - The periodic chart is a fixed local coordinate domain: the pbc mask
   and cell are recorded at the first prediction (a non-periodic first
   call included) and every later call must match — a pbc change in
-  either direction or a cell change is refused.  The domain is the
-  half-cell neighborhood around `q0` on each periodic axis; a rigid
-  integer-cell shift of the whole configuration is explicitly supported
-  (uniform per-atom offsets map it back identically), while any atom
-  wrapping relative to the others raises `CorrectionDomainError` for the
-  upper layer — the run stops with the refusal recorded and the
-  correction must be re-centered or refreshed.  The wrapper never
-  silently rounds onto another periodic branch: there the correction
-  energy would jump while its force stayed smooth, an inconsistent
-  energy/force pair under a conservative declaration.  Nothing depends
-  on call history or process lifetime beyond the recorded environment,
-  so a fresh-process resume reproduces identical corrections under an
-  identical fingerprint.  NPT/variable-cell and general unwrapping are
-  not supported.
+  either direction or a cell change is refused.  `q0` and the input
+  positions must live in the same continuous coordinate representation:
+  on every periodic axis the raw fractional displacement
+  `(q - q0) @ cell⁻¹` must be strictly inside the half-cell around `q0`;
+  reaching or crossing the boundary raises `CorrectionDomainError` for
+  the upper layer — the run stops with the refusal recorded, and a
+  representation change means translating `q0` and the positions
+  together and building a new model state (there is no automatic
+  relocation API).  The wrapper never rounds, never applies a minimum
+  image and never accepts an integer-offset shift, so no discontinuous
+  energy/force pair is ever returned under a conservative declaration.
+  Nothing depends on call history or process lifetime beyond the
+  recorded environment, so a fresh-process resume reproduces identical
+  corrections under an identical fingerprint.  NPT/variable-cell and
+  general unwrapping are not supported.
 - The correction content, `species`, `energy_offset`, the calibration
   note and the base identity all enter the fingerprint; the frozen
   parameters are read-only (a resume with edited correction bytes refuses

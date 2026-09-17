@@ -17,11 +17,15 @@ release; no upgrade guarantees beyond what 0.7.3 documents).
   are value-fingerprinted with the required fixed atom order/elements
   (`species`); frozen parameters are read-only; correction content loads
   inline or from one `.npz` (`parameters_npz`, provenance recorded but
-  never fingerprinted).  The periodic chart is a pure function of the
-  current positions (minimum image around `q0`, periodic axes only,
-  cell/pbc changes refused) so a fresh-process resume reproduces
-  identical corrections.  Stress is never impersonated from the base
-  model.
+  never fingerprinted).  The periodic chart is a fixed atlas: the
+  environment (pbc mask + cell) is recorded at the first prediction and
+  verified unchanged on every call; positions and `q0` must share one
+  continuous representation and stay strictly inside the half-cell
+  around `q0` on periodic axes (no rounding, no minimum image, no
+  integer-shift exception) — reaching or crossing the boundary is a
+  controlled refusal for the upper layer, so a fresh-process resume
+  reproduces identical corrections.  Stress is never impersonated from
+  the base model.
 - `dynamics.max_wall_hours` (plain serial MD only): a soft per-process
   walltime budget anchored at the workflow entry (initialization counts),
   stopping only at complete-step boundaries with a checkpoint written
