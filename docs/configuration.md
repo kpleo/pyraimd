@@ -239,17 +239,48 @@ base model's.
   file's path and content digest are recorded as provenance, never
   fingerprinted — the values are).  `energy_offset` anchors the corrected
   energy zero at `q0` (a constant changes no forces).
-- The periodic chart is a pure function of the current positions:
-  minimum image around `q0` per call on periodic axes only, with the
-  cell and pbc recorded at the first call and every later call required
-  to match (a changed cell or pbc is refused) — a resumed run reproduces
-  identical corrections under an identical fingerprint.  An atom more
-  than half a cell from `q0` on a periodic axis wraps onto the nearest
-  branch: that is the local correction's visible validity edge.
+- The periodic chart is a fixed local coordinate domain: the pbc mask
+  and cell are recorded at the first prediction (a non-periodic first
+  call included) and every later call must match — a pbc change in
+  either direction or a cell change is refused.  The domain is the
+  half-cell neighborhood around `q0` on each periodic axis; a rigid
+  integer-cell shift of the whole configuration is explicitly supported
+  (uniform per-atom offsets map it back identically), while any atom
+  wrapping relative to the others raises `CorrectionDomainError` for the
+  upper layer — the run stops with the refusal recorded and the
+  correction must be re-centered or refreshed.  The wrapper never
+  silently rounds onto another periodic branch: there the correction
+  energy would jump while its force stayed smooth, an inconsistent
+  energy/force pair under a conservative declaration.  Nothing depends
+  on call history or process lifetime beyond the recorded environment,
+  so a fresh-process resume reproduces identical corrections under an
+  identical fingerprint.  NPT/variable-cell and general unwrapping are
+  not supported.
 - The correction content, `species`, `energy_offset`, the calibration
   note and the base identity all enter the fingerprint; the frozen
   parameters are read-only (a resume with edited correction bytes refuses
   on the identity mismatch).
+- `uncertainty` forwarded by the wrappers is the BASE model's spread,
+  unchanged: no recalibrated confidence of the corrected potential
+  exists (the wrappers never recalibrate).
+
+A minimal plain surrogate-MD configuration with a quadratic correction
+loaded from an `.npz` (parameters of one H-O dimer `params.npz` holding
+arrays `q0` (N,3), `delta_f0` (N,3), `delta_h` (3N,3N)):
+
+```toml
+[surrogate]
+backend = "quadratic-corrected"
+species = ["H", "O"]           # the fixed atom order of structure file
+parameters_npz = "params.npz"  # relative to this configuration file
+energy_offset = 0.0
+[surrogate.base]
+name = "harmonic-surrogate"
+[surrogate.base.kwargs]
+k = 1.0
+r0 = 0.9
+bias = 0.05
+```
 
 #### QE backends (`qe` / `qe-ase`)
 
