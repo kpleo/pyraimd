@@ -33,21 +33,21 @@ Stress is not implemented for either wrapper: capabilities declare
 base model's stress is never passed through as if it were a corrected
 stress.
 
-Periodic chart contract: the pbc mask and the cell are recorded at the
-first ``predict`` call (a non-periodic first call included) and every
-later call must match them — a pbc change in either direction or a cell
-change is refused.  The local validity domain is the half-cell
-neighborhood around ``q0`` on each periodic axis: a rigid integer-cell
-shift of the whole configuration is explicitly supported (uniform
-per-atom offsets map it back identically), while any atom wrapping
-relative to the others — a genuine exit from the local domain — raises
-:class:`CorrectionDomainError` for the upper layer to handle (re-center
-or refresh).  The wrapper never silently rounds onto another periodic
-branch: there the correction energy would jump while its force stayed
-smooth, an inconsistent energy/force pair under a conservative
-declaration.  Nothing about the chart depends on call history or process
-lifetime beyond the recorded environment, so a fresh-process resume
-reproduces the same corrections under the same fingerprint.
+Periodic chart contract (fixed atlas): the pbc mask and the cell are
+recorded at the first ``predict`` call (a non-periodic first call
+included) and every later call must match them — a pbc change in either
+direction or a cell change is refused.  ``q0`` and the input positions
+must live in the SAME continuous coordinate representation: on every
+periodic axis the raw fractional displacement ``(q - q0) @ cell⁻¹`` must
+be strictly inside the half-cell around ``q0``; reaching or crossing the
+boundary raises :class:`CorrectionDomainError` for the upper layer
+(translate ``q0`` and the positions together and build a new model
+state).  There is no rounding, no minimum image, no integer-offset
+exception and no dependence on call history or process lifetime — a
+fresh-process resume reproduces the same corrections under the same
+fingerprint, and no discontinuous energy/force pair is ever returned
+under a conservative declaration.  Non-periodic axes are never limited.
+NPT/variable-cell and general unwrapping are not supported.
 """
 
 from __future__ import annotations
@@ -135,12 +135,12 @@ def _base_identity(base: object) -> str:
 
 
 class CorrectionDomainError(ValueError):
-    """The configuration left the correction's local validity domain (an
-    atom crossed the half-cell boundary around q0 on a periodic axis
-    relative to the others).  A controlled refusal for the upper layer to
-    handle — re-center or refresh the correction; the wrapper never
-    silently rounds onto another periodic branch and returns an
-    inconsistent energy/force pair."""
+    """The configuration reached or crossed the correction's fixed-atlas
+    boundary (half a cell from q0 on a periodic axis).  A controlled
+    refusal for the upper layer: translate q0 and the positions together
+    and build a new model state — the wrapper never rounds, never applies
+    a minimum image and never accepts an integer-offset shift, so no
+    discontinuous energy/force pair is ever returned."""
 
 
 def _load_parameters_npz(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
@@ -304,13 +304,13 @@ class QuadraticCorrectedSurrogate:
     ``species`` (required) pins the correction map to one fixed atom order
     and element list; every ``predict`` validates the atoms against it
     (order-sensitive), and it enters the fingerprint.  The periodic chart
-    is the stateless contract documented in the module docstring: the
+    is the fixed-atlas contract documented in the module docstring: the
     environment (pbc mask + cell) is recorded at the first call and
-    verified unchanged on every later one; inside the local domain
-    (half-cell around ``q0`` on periodic axes) the correction is exactly
-    force-consistent; a rigid integer-cell shift of the whole
-    configuration is explicitly supported; a genuine domain exit raises
-    :class:`CorrectionDomainError` instead of returning a discontinuous
+    verified unchanged on every later one; inside the half-cell domain
+    around ``q0`` (periodic axes) the raw displacement is used verbatim —
+    the correction is exactly force-consistent; reaching or crossing the
+    boundary raises :class:`CorrectionDomainError` (before any base
+    prediction is paid for) instead of returning a discontinuous
     energy/force pair.  Nothing about the chart depends on call history
     or process lifetime, so a resume in a fresh process reproduces the
     same corrections under the same fingerprint.
@@ -522,32 +522,28 @@ class QuadraticCorrectedSurrogate:
                     "changed after the chart was recorded")
         if not np.any(pbc):
             return delta
+        # The fixed-atlas contract: q0 and the input positions must live
+        # in the SAME continuous coordinate representation — on every
+        # periodic axis the raw fractional displacement must be strictly
+        # inside the half-cell around q0.  At or beyond the boundary the
+        # correction refuses: there is no rounding, no minimum image and
+        # no integer-offset exception (a full-cell shift of the positions
+        # alone is refused too).  A representation change means
+        # translating q0 AND the positions together and building a new
+        # model state.
         inv_cell = np.linalg.inv(self._chart_cell)
         fractional = delta @ inv_cell
-        offsets = np.zeros_like(fractional)
         for axis in range(3):
-            if self._chart_pbc[axis]:
-                offsets[:, axis] = np.round(fractional[:, axis])
-        # The local validity domain is the half-cell neighborhood around
-        # q0: a rigid integer-cell shift of the WHOLE configuration is the
-        # same physical state and maps back identically (uniform offsets
-        # per axis — explicitly supported, never confused with a real
-        # crossing); any atom wrapping relative to the others means the
-        # trajectory left the local domain.  Refuse that in a controlled
-        # way for the upper layer to handle — never silently round onto
-        # another branch, where the correction energy would jump while
-        # its force stayed smooth (an inconsistent energy/force pair).
-        for axis in range(3):
-            if self._chart_pbc[axis] and np.any(offsets[:, axis]
-                                              != offsets[0, axis]):
+            if self._chart_pbc[axis] and np.any(
+                    np.abs(fractional[:, axis]) >= 0.5):
                 raise CorrectionDomainError(
-                    f"an atom crossed the correction's local domain on "
-                    f"periodic axis {axis} (more than half the cell from "
-                    "q0 relative to the others): the static quadratic "
-                    "correction is only valid on the recorded chart — "
-                    "re-center or refresh the correction instead of "
-                    "continuing on a wrapped branch")
-        return (fractional - offsets) @ self._chart_cell
+                    f"the configuration reached or crossed the half-cell "
+                    f"boundary of the correction's fixed atlas on periodic "
+                    f"axis {axis}: the local quadratic expansion is only "
+                    "valid on the recorded representation — translate q0 "
+                    "and the positions together and build a new model "
+                    "state instead of continuing across the boundary")
+        return delta
 
     def predict(self, atoms: Atoms) -> SurrogatePrediction:
         if tuple(atoms.get_chemical_symbols()) != self._species:
@@ -555,8 +551,10 @@ class QuadraticCorrectedSurrogate:
                 f"the correction map is defined for {self._species} in one "
                 f"fixed order, got {list(atoms.get_chemical_symbols())}"
             )
-        base = self._base.predict(atoms)
+        # the domain/boundary checks run before the (potentially expensive)
+        # base prediction: an out-of-domain call never pays for it
         u = self._displacement(atoms).reshape(-1)  # atom-major, matching delta_h
+        base = self._base.predict(atoms)
         correction_force = (self._delta_h @ u).reshape(-1, 3)
         return SurrogatePrediction(
             energy=(

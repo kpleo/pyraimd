@@ -627,9 +627,9 @@ def test_periodic_chart_is_a_pure_function_of_positions():
     beyond = _dimer(Q0 + DISPLACEMENTS[0] + np.array([[5.3, 0.0, 0.0],
                                                       [0.0, 0.0, 0.0]]),
                     cell=cell, pbc=True)
-    with pytest.raises(CorrectionDomainError, match="local domain"):
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
         corrected.predict(beyond)
-    with pytest.raises(CorrectionDomainError, match="local domain"):
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
         fresh.predict(beyond)  # same refusal on a fresh instance
 
 
@@ -652,24 +652,39 @@ def test_mixed_pbc_handles_only_the_periodic_axes():
     # a genuine crossing on a periodic axis refuses even with mixed pbc
     beyond = Q0 + DISPLACEMENTS[0] + np.array([[5.3, 0.0, 0.0],
                                                [0.0, 0.0, 0.0]])
-    with pytest.raises(CorrectionDomainError, match="local domain"):
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
         corrected.predict(_dimer(beyond, cell=cell, pbc=pbc))
 
 
-def test_rigid_cell_shift_is_mapped_back_into_the_chart():
+def test_a_pure_position_shift_by_one_cell_is_also_refused():
+    """The fixed-atlas contract has no integer-offset exception: shifting
+    only the positions by one full cell (q0 left behind) is a different
+    representation and is refused like any other boundary crossing."""
     _, _, corrected = _build_correction()
     cell = [10.0, 10.0, 10.0]
-    # The whole configuration one full cell to the left (a trajectory
-    # crossing a periodic boundary): the uniform integer offsets map every
-    # atom back into q0's chart — an explicitly supported equivalent
-    # representation change, and the rigidly translation-invariant base
-    # model sees an equivalent geometry.
+    corrected.predict(_dimer(Q0 + DISPLACEMENTS[0], cell=cell, pbc=True))
     shifted_positions = Q0 + DISPLACEMENTS[0] - np.array([[10.0, 0.0, 0.0],
                                                           [10.0, 0.0, 0.0]])
-    atoms = _dimer(shifted_positions, cell=cell, pbc=True)
-    got = corrected.predict(atoms)
-    _, _, plain = _build_correction()  # a fresh instance never mixing charts
-    want = plain.predict(_dimer(Q0 + DISPLACEMENTS[0]))
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
+        corrected.predict(_dimer(shifted_positions, cell=cell, pbc=True))
+
+
+def test_translating_q0_and_positions_together_is_consistent():
+    """The supported representation change: translate q0 AND the positions
+    by the same cell vector — a new model state built from the translated
+    q0 reproduces the original predictions exactly."""
+    _, _, corrected = _build_correction()
+    cell = [10.0, 10.0, 10.0]
+    q = Q0 + DISPLACEMENTS[0]
+    want = corrected.predict(_dimer(q, cell=cell, pbc=True))
+    base = corrected._base
+    q0_shifted = Q0 - np.array([[10.0, 0.0, 0.0], [10.0, 0.0, 0.0]])
+    moved = QuadraticCorrectedSurrogate(
+        base, q0_shifted, corrected.delta_f0, corrected.delta_h,
+        species=SPECIES_DIMER, energy_offset=corrected.energy_offset,
+        calibration_note=corrected.calibration_note)
+    q_shifted = q - np.array([[10.0, 0.0, 0.0], [10.0, 0.0, 0.0]])
+    got = moved.predict(_dimer(q_shifted, cell=cell, pbc=True))
     assert got.energy == pytest.approx(want.energy, abs=1e-12)
     np.testing.assert_allclose(got.forces, want.forces, atol=1e-12)
 
@@ -756,10 +771,10 @@ def test_counterexample_half_cell_crossing_is_a_controlled_refusal():
     assert got.forces[1, 0] == pytest.approx(-1.0, abs=1e-12)
     beyond = Atoms("H2", positions=[[5.000001, 0.0, 0.0], [2.0, 0.0, 0.0]],
                    cell=cell, pbc=True)
-    with pytest.raises(CorrectionDomainError, match="local domain"):
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
         corrected.predict(beyond)
     # a fresh instance (a resumed wrapper) refuses identically
-    with pytest.raises(CorrectionDomainError, match="local domain"):
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
         _counterexample_wrapper().predict(beyond)
     # and the refusal is not a branch swap: there is no code path in the
     # wrapper that still returns the jumped +5 eV energy
@@ -1114,7 +1129,7 @@ def test_domain_exit_fails_the_run_visibly(tmp_path):
         "[surrogate.base]\nname = \"harmonic-surrogate\"\n"
         "[surrogate.base.kwargs]\nk = 1.0\nr0 = 0.9\nbias = 0.05\n")
     config = load_config(root / "run.toml")
-    with pytest.raises(CorrectionDomainError, match="local domain"):
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
         run_workflow(config, verbose=False, handle_sigint=False)
     # the refusal is the record: no committed evaluation, no step, no
     # success summary — the run never continued on a wrapped branch
@@ -1125,3 +1140,55 @@ def test_domain_exit_fails_the_run_visibly(tmp_path):
     assert not [e for e in events if e.get("type") == "evaluation_committed"]
     assert not [e for e in events
                 if e.get("type") == "run_end" and e.get("status") != "failed"]
+
+
+def test_counterexample_uniform_crossing_is_a_controlled_refusal():
+    """The newly reported boundary case: BOTH atoms drifting together from
+    4.999999 A to 5.000001 A (10 A cell, a nonzero total delta_f0 — the
+    uniform-offset acceptance used to pass this as a "rigid shift" and the
+    energy jumped ~10 eV with the force unchanged).  Under the fixed atlas
+    the boundary refusal fires for uniform drift exactly as for a relative
+    crossing."""
+    q0 = np.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    delta_f0 = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])  # net 1 eV/Å
+    corrected = QuadraticCorrectedSurrogate(
+        _FlatModel(), q0, delta_f0, np.zeros((6, 6)), species=("H", "H"))
+    cell = [10.0, 10.0, 10.0]
+    within = Atoms("H2", positions=q0 + [4.999999, 0.0, 0.0],
+                   cell=cell, pbc=True)
+    got = corrected.predict(within)
+    assert got.energy == pytest.approx(-4.999999, abs=1e-9)
+    assert got.forces[0, 0] == pytest.approx(1.0, abs=1e-12)
+    beyond = Atoms("H2", positions=q0 + [5.000001, 0.0, 0.0],
+                   cell=cell, pbc=True)
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
+        corrected.predict(beyond)
+    # at the boundary exactly: refused as well (the domain is |f| < 0.5)
+    at = Atoms("H2", positions=q0 + [5.0, 0.0, 0.0], cell=cell, pbc=True)
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
+        corrected.predict(at)
+    # and on a fresh instance (a resumed wrapper) identically
+    fresh = QuadraticCorrectedSurrogate(
+        _FlatModel(), q0, delta_f0, np.zeros((6, 6)), species=("H", "H"))
+    with pytest.raises(CorrectionDomainError, match="fixed atlas"):
+        fresh.predict(beyond)
+
+
+def test_periodic_fd_consistency_within_the_domain():
+    """Energy/gradient agreement with pbc on, well inside the half-cell
+    domain — the boundary refusal never disturbs the interior physics."""
+    _, _, corrected = _build_correction()
+    cell = [10.0, 10.0, 10.0]
+    eps = 1e-6
+    q = Q0 + DISPLACEMENTS[0]
+    forces = corrected.predict(_dimer(q, cell=cell, pbc=True)).forces
+    gradient = np.zeros(6)
+    for j in range(6):
+        step = np.zeros(6)
+        step[j] = eps
+        plus = corrected.predict(
+            _dimer(q + step.reshape(2, 3), cell=cell, pbc=True)).energy
+        minus = corrected.predict(
+            _dimer(q - step.reshape(2, 3), cell=cell, pbc=True)).energy
+        gradient[j] = (plus - minus) / (2 * eps)
+    np.testing.assert_allclose(gradient, -forces.reshape(-1), atol=1e-8)
