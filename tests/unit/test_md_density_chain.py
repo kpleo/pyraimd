@@ -1698,3 +1698,33 @@ def test_normal_read_still_releases_with_matching_identity(kind, tmp_path):
     assert evidence["seed_content_digest"] == manifest["content_digest"]
     assert evidence["reference_fingerprint"] == \
         manifest["reference_fingerprint"]
+
+
+@pytest.mark.parametrize("backend", ["qe", "qe-ase"])
+def test_wavefunction_read_text_is_not_density_read_evidence(backend,
+                                                            tmp_path):
+    """A solver output carrying only a WAVEFUNCTION-read line (never QE's
+    density-read marker) proves nothing for the density gate: the producer
+    stays kept.  The two evidence channels never cross-authorize."""
+    root = tmp_path / backend
+    config_path = _qe_persist_toml(root, steps=1, extra=DENSITY_EXTRA)
+    config_path.write_text(config_path.read_text().replace(
+        'backend = "qe"', f'backend = "{backend}"'))
+    script = root / "script" / "fake_pwx.sh"
+    script.write_text(
+        "#!/bin/bash\nset -eu\n"
+        "mkdir -p tmp/pyraimd2.save\n"
+        "echo fresh-density > tmp/pyraimd2.save/charge-density.dat\n"
+        "echo '<xml/>' > tmp/pyraimd2.save/data-file-schema.xml\n"
+        "echo '     Reading wavefunction from file "
+        "tmp/pyraimd2.save/wfc1.dat'\n"
+        f"cat {FIXTURE.resolve()}\n")
+    config = load_config(config_path)
+    result = run_workflow(config, verbose=False, handle_sigint=False)
+    assert result.steps_completed == 1
+    records = _records(config.run.directory)
+    # every attempt stays kept: no density-read evidence anywhere, and the
+    # wavefunction line never substitutes for it
+    assert all(r["state"] == "kept" for r in records)
+    assert all(r["released_evidence"]["proof"]
+               == "pending_independent_consumption" for r in records)

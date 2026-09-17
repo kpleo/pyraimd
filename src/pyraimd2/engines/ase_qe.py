@@ -190,6 +190,12 @@ class AseQeEngine(AseEngine):
         config = normalize_config_paths(config)
         check_scratch_options(config, engine_name=recipe_name(config))
         check_execution_options(config, engine_name=recipe_name(config))
+        if config.startingwfc_file:
+            raise QeEngineError(
+                "startingwfc_file is not implemented on the ASE espresso "
+                "adapter (no per-attempt wavefunction staging or read "
+                "evidence parse there); leave it off or use the handwritten "
+                "qe backend")
         if config.timeout_s != _TIMEOUT_DEFAULT:
             raise EngineError(
                 "AseQeEngine cannot enforce timeout_s through ASE's FileIO "
@@ -339,6 +345,9 @@ class AseQeEngine(AseEngine):
                 "returncode": record.get("returncode"),
                 "directory": record["directory"],
                 "start": record["start"],
+                "startwfc": record.get("startwfc"),
+                "startwfc_reason": record.get("startwfc_reason"),
+                "wfc_read_from_file": record.get("wfc_read_from_file"),
                 "source": "qe-engine",
                 "error": record.get("error"),
             },
@@ -367,6 +376,9 @@ class AseQeEngine(AseEngine):
                 "directory": record["directory"],
                 "started_unix": record["started_unix"],
                 "start": record["start"],
+                "startwfc": record.get("startwfc"),
+                "startwfc_reason": record.get("startwfc_reason"),
+                "wfc_read_from_file": record.get("wfc_read_from_file"),
                 "source": "qe-engine",
                 **extra,
             },

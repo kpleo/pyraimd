@@ -712,3 +712,148 @@ def test_compute_engine_error_on_atom_count_mismatch(tmp_path: Path) -> None:
     si = Atoms("Si2", positions=[[0, 0, 0], [1.36, 1.36, 1.36]], cell=[5.43] * 3, pbc=True)
     with pytest.raises(EngineError, match=r"force shape.*!= \(2, 3\)"):
         engine.compute(si, label="nat")
+
+
+# ---------------------------------------------------------------------------
+# startingwfc='file': an explicit, default-off execution knob; unsupported
+# combinations are refused clearly, and the only read evidence is QE's own
+# output line.  The fake's flag-triggered line is plumbing coverage only —
+# it is not a real-QE read proof (no real fixture pins the wording yet).
+
+_WFC_AWARE = (
+    _READ_INPUT
+    + "if grep -q \"startingwfc = 'file'\" \"$in\"; then"
+    " echo '     Reading wavefunction from file tmp/pyraimd2.save/wfc1.dat'; fi\n"
+)
+_SEED_SAVE = _MAKE_SAVE + "echo fake-wfc > tmp/pyraimd2.save/wfc1.dat\n"
+
+
+def test_startingwfc_file_defaults_off_and_must_be_bool(tmp_path: Path) -> None:
+    assert QeConfig(pseudo_dir="/pseudo").startingwfc_file is False
+    engine = QeEngine(QeConfig(pseudo_dir="/pseudo", startingwfc_file=True),
+                      run_root=tmp_path / "runs")
+    assert engine.config.startingwfc_file is True
+    with pytest.raises(EngineError, match="startingwfc_file"):
+        QeEngine(QeConfig(pseudo_dir="/pseudo", startingwfc_file="yes"),
+                 run_root=tmp_path / "bad")
+
+
+def test_startingwfc_written_and_read_with_a_staged_source(tmp_path: Path) -> None:
+    """With a staged .save the attempt writes startingwfc='file', the
+    parent's wfc files ride the density staging tree, and the output-text
+    observation is recorded as receipt-level evidence (plumbing)."""
+    seed = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path / "seed",
+                                  "#!/bin/bash\n" + _SEED_SAVE
+                                  + f"cat {FIXTURE.resolve()}\n")),
+        run_root=tmp_path / "seed" / "runs")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "seed" / "runs" / "seed-000000" / "attempt-1")
+
+    child = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path / "child",
+                                  "#!/bin/bash\n" + _WFC_AWARE + _MAKE_SAVE
+                                  + f"cat {FIXTURE.resolve()}\n"),
+                 startpot_file=True, startingwfc_file=True,
+                 density_source=source_dir),
+        run_root=tmp_path / "child" / "runs")
+    child.compute(_si(), label="child")
+    attempt_dir = tmp_path / "child" / "runs" / "child-000000" / "attempt-1"
+    assert "startingwfc = 'file'" in (attempt_dir / "pw.in").read_text()
+    # the parent's wavefunction file was staged along with the density (the
+    # child's own script never writes wfc1.dat)
+    assert (attempt_dir / "tmp" / "pyraimd2.save" / "wfc1.dat").is_file()
+    record = child.last_attempt_records[-1]
+    assert record["start"] == "density"
+    assert record["startwfc"] == "file"
+    assert record["wfc_read_from_file"] is True
+
+
+def test_startingwfc_left_default_without_a_staged_source(tmp_path: Path) -> None:
+    """startingwfc_file=True alone changes nothing on an atomic start: no
+    staged .save, no input line, and the receipt says default + why."""
+    engine = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path, "#!/bin/bash\n" + _WFC_AWARE
+                                  + _MAKE_SAVE + f"cat {FIXTURE.resolve()}\n"),
+                 startpot_file=True, startingwfc_file=True),
+        run_root=tmp_path / "runs")
+    engine.compute(_si(), label="fresh")
+    attempt_dir = tmp_path / "runs" / "fresh-000000" / "attempt-1"
+    assert "startingwfc" not in (attempt_dir / "pw.in").read_text()
+    record = engine.last_attempt_records[-1]
+    assert record["start"] == "atomic"
+    assert record["startwfc"] == "default"
+    assert "no staged density" in record["startwfc_reason"]
+    assert record["wfc_read_from_file"] is False
+
+
+def test_startingwfc_off_by_default_even_with_a_staged_source(tmp_path: Path) -> None:
+    """The density chain alone never opts the wavefunction restart in."""
+    seed = _density_engine(tmp_path / "a")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "a" / "runs" / "seed-000000" / "attempt-1")
+    engine = _density_engine(tmp_path / "b", source=source_dir)
+    engine.compute(_si(), label="chain")
+    text = (tmp_path / "b" / "runs" / "chain-000000" / "attempt-1"
+            / "pw.in").read_text()
+    assert "startingwfc" not in text
+    record = engine.last_attempt_records[-1]
+    assert record["start"] == "density"
+    assert record["startwfc"] == "default"
+    assert record["startwfc_reason"] == "startingwfc_file is off"
+    assert record["wfc_read_from_file"] is False
+
+
+def test_wfc_read_evidence_comes_from_the_output_text() -> None:
+    from pyraimd2.engines.qe_engine import wfc_read_from_file
+
+    assert wfc_read_from_file(
+        "     Reading wavefunction from file tmp/pyraimd2.save/wfc1.dat\n")
+    assert wfc_read_from_file("     Starting wfc from file\n")
+    assert wfc_read_from_file("collected wavefunctions read in from file\n")
+    assert not wfc_read_from_file(FIXTURE.read_text())  # atomic-start fixture
+    assert not wfc_read_from_file(
+        "     Starting wfcs are    8 randomized atomic wfcs\n")
+
+
+def test_startingwfc_file_does_not_change_reference_identity(tmp_path: Path) -> None:
+    """Execution knob, not physics: same reference fingerprint either way."""
+    base = QeConfig(pseudo_dir="/pseudo", startpot_file=True)
+    variant = QeConfig(pseudo_dir="/pseudo", startpot_file=True,
+                       startingwfc_file=True)
+    assert QeEngine(base, run_root=tmp_path / "a").fingerprint == \
+        QeEngine(variant, run_root=tmp_path / "b").fingerprint
+
+
+def test_startingwfc_refused_with_density_only_or_missing_wfc(tmp_path: Path):
+    """Unsupported combinations are refused clearly at construction:
+    disk_io modes that write no wavefunctions, and the persistent density
+    registry (its published seed pack carries no wavefunctions)."""
+    from pyraimd2.engines.qe_engine import QeEngineError
+
+    for mode in ("nowf", "minimal", "none"):
+        with pytest.raises(QeEngineError, match="disk_io"):
+            QeEngine(QeConfig(pseudo_dir="/pseudo", startpot_file=True,
+                              startingwfc_file=True, disk_io=mode),
+                     run_root=tmp_path / mode)
+    # the persistent density chain publishes density-only seed packs
+    with pytest.raises(QeEngineError, match="never wavefunctions"):
+        QeEngine(QeConfig(pseudo_dir="/pseudo", startpot_file=True,
+                          startingwfc_file=True,
+                          scratch_root=str(tmp_path / "sc")),
+                 run_root=tmp_path / "run" / "calculations",
+                 density_registry_run_dir=tmp_path / "run")
+
+
+def test_startingwfc_refused_on_the_ase_adapter(tmp_path: Path) -> None:
+    """qe-ase does not implement the wavefunction restart: an explicit
+    rejection, never a silently ignored option."""
+    from pyraimd2.engines.ase_qe import AseQeEngine
+    from pyraimd2.engines.qe_engine import QeEngineError
+
+    with pytest.raises(QeEngineError, match="not implemented on the ASE"):
+        AseQeEngine(QeConfig(pseudo_dir="/pseudo", startingwfc_file=True),
+                    run_root=tmp_path / "runs")
