@@ -168,6 +168,18 @@ def wfc_read_from_file(text: str) -> bool:
     never the staged tree's presence)."""
     return _WFC_READ_RE.search(text) is not None
 
+
+def _staged_wfc_files(save_dir: Path) -> list[Path]:
+    """The wavefunction files of a .save tree: QE writes one per k-point
+    (``wfcN``, ``wfcN.dat`` or ``wfcN.hdf5`` by build — QE 7.5 HDF5 writes
+    ``wfcN.hdf5``).  Only confined regular files count; an unrecognized
+    layout answers empty and is never guessed."""
+    if not save_dir.is_dir():
+        return []
+    return sorted(p for p in save_dir.iterdir()
+                  if p.is_file() and not p.is_symlink()
+                  and p.name.startswith("wfc"))
+
 # Short slugs so the engine name states the recipe (qe-pbe-d3, qe-pbe, ...).
 _DISPERSION_SLUGS = {
     "grimme-d3": "d3",
@@ -1234,6 +1246,19 @@ class QeEngine:
             decision = self.last_density_decision or {}
             if decision.get("via") == "density_registry":
                 density_input_generation = decision.get("generation")
+        if density is not None and self.config.startingwfc_file:
+            # startingwfc='file' needs actual wavefunction files in the
+            # staged tree — a staged density is not a complete seed.
+            # Refuse before any launch (never silently downgrade to a
+            # wavefunction-less input); an unrecognized layout is never
+            # guessed as wavefunctions.
+            if not _staged_wfc_files(density.save_dir):
+                raise QeEngineError(
+                    f"startingwfc_file was requested but the selected "
+                    f"seed tree {density.save_dir} holds no wavefunction "
+                    "files (wfc*): a staged density alone is not a "
+                    "complete restart seed — provide a seed with "
+                    "wavefunctions or leave startingwfc_file off")
 
         retries_done = 0
         attempt = 1

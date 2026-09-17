@@ -857,3 +857,57 @@ def test_startingwfc_refused_on_the_ase_adapter(tmp_path: Path) -> None:
     with pytest.raises(QeEngineError, match="not implemented on the ASE"):
         AseQeEngine(QeConfig(pseudo_dir="/pseudo", startingwfc_file=True),
                     run_root=tmp_path / "runs")
+
+
+def test_startingwfc_refused_when_the_seed_has_no_wavefunctions(
+        tmp_path: Path) -> None:
+    """A staged density is not a complete wavefunction seed: with
+    startingwfc_file on, a staged tree without wfc* files is refused
+    before any launch — never a silent wavefunction-less input, never an
+    atomic downgrade."""
+    # the seed's tree holds a density but no wavefunction files
+    seed = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path / "seed",
+                                  "#!/bin/bash\n" + _MAKE_SAVE
+                                  + f"cat {FIXTURE.resolve()}\n")),
+        run_root=tmp_path / "seed" / "runs")
+    seed.compute(_si(), label="seed")
+    source_dir = str(tmp_path / "seed" / "runs" / "seed-000000" / "attempt-1")
+
+    child = QeEngine(
+        QeConfig(pseudo_dir="/pseudo",
+                 pw_cmd=_fake_pwx(tmp_path / "child",
+                                  "#!/bin/bash\n" + _MAKE_SAVE
+                                  + f"cat {FIXTURE.resolve()}\n"),
+                 startpot_file=True, startingwfc_file=True,
+                 density_source=source_dir),
+        run_root=tmp_path / "child" / "runs")
+    with pytest.raises(EngineError, match="no wavefunction files"):
+        child.compute(_si(), label="child")
+    # nothing launched: no attempt directory, no input file
+    assert not (tmp_path / "child" / "runs" / "child-000000"
+                / "attempt-1" / "pw.in").exists()
+    assert child.last_attempt_records == []
+
+
+def test_staged_wfc_files_recognizes_only_real_layouts(tmp_path: Path):
+    from pyraimd2.engines.qe_engine import _staged_wfc_files
+
+    save = tmp_path / "tree.save"
+    save.mkdir()
+    assert _staged_wfc_files(save) == []
+    (save / "wfc1.hdf5").write_bytes(b"wfc-bytes")
+    assert [p.name for p in _staged_wfc_files(save)] == ["wfc1.hdf5"]
+    (save / "wfc12.dat").write_bytes(b"wfc")
+    assert [p.name for p in _staged_wfc_files(save)] == \
+        ["wfc1.hdf5", "wfc12.dat"]
+    (save / "charge-density.dat").write_bytes(b"not a wfc")
+    assert len(_staged_wfc_files(save)) == 2
+    # a symlinked wfc name never counts (foreign content)
+    (save / "wfc2").unlink(missing_ok=True)
+    target = tmp_path / "elsewhere.bin"
+    target.write_bytes(b"foreign")
+    (save / "wfc2").symlink_to(target)
+    assert [p.name for p in _staged_wfc_files(save)] == \
+        ["wfc1.hdf5", "wfc12.dat"]
