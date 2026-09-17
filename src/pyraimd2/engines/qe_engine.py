@@ -1246,19 +1246,19 @@ class QeEngine:
             decision = self.last_density_decision or {}
             if decision.get("via") == "density_registry":
                 density_input_generation = decision.get("generation")
-        if density is not None and self.config.startingwfc_file:
+        if density is not None and self.config.startingwfc_file \
+                and not _staged_wfc_files(density.save_dir):
             # startingwfc='file' needs actual wavefunction files in the
             # staged tree — a staged density is not a complete seed.
             # Refuse before any launch (never silently downgrade to a
             # wavefunction-less input); an unrecognized layout is never
             # guessed as wavefunctions.
-            if not _staged_wfc_files(density.save_dir):
-                raise QeEngineError(
-                    f"startingwfc_file was requested but the selected "
-                    f"seed tree {density.save_dir} holds no wavefunction "
-                    "files (wfc*): a staged density alone is not a "
-                    "complete restart seed — provide a seed with "
-                    "wavefunctions or leave startingwfc_file off")
+            raise QeEngineError(
+                f"startingwfc_file was requested but the selected "
+                f"seed tree {density.save_dir} holds no wavefunction "
+                "files (wfc*): a staged density alone is not a "
+                "complete restart seed — provide a seed with "
+                "wavefunctions or leave startingwfc_file off")
 
         retries_done = 0
         attempt = 1
