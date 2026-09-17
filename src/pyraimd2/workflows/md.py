@@ -179,6 +179,19 @@ def _complete_steps(run_dir: Path, run_id: str) -> int:
     return int(inspect_run(run_dir, run_id=run_id)["n_complete_steps"] or 0)
 
 
+# dynamics.max_wall_hours: a SOFT between-step scheduling budget (never a
+# mid-step interruption and never a guarantee that an in-flight SCF returns
+# before the wall).  The reserve for starting one more step is
+# factor x the last measured step wall plus a fixed I/O margin once this
+# process has measured a step; before any measurement (a resumed process
+# that has not stepped yet) it follows the backend's declared per-attempt
+# timeout times its configured retries when available, else just the
+# margin.  Both constants are scheduling heuristics, documented here and
+# in docs/configuration.md — a sudden slow step is not predicted by them.
+_BUDGET_STEP_FACTOR = 1.5
+_BUDGET_IO_MARGIN_S = 300.0
+
+
 def _stopped_early(run_dir: Path, run_id: str) -> bool:
     """Did THIS invocation end on a stop request?  The latest RUN_SUMMARY
     carries its own invocation's flag — an older ``stopped`` RUN_END left by
@@ -489,7 +502,8 @@ class _PlainDriver:
     def __init__(self, config: PyramidConfig, atoms: Atoms, backend: object,
                  run_dir: Path, *, event_log: EventLog | None = None,
                  resume_state: dict | None = None,
-                 file_resource_baseline_sha256: str | None = None) -> None:
+                 file_resource_baseline_sha256: str | None = None,
+                 budget_t0: float | None = None) -> None:
         self.config = config
         self.atoms = atoms
         self.backend = backend
@@ -498,6 +512,12 @@ class _PlainDriver:
         self.run_id = config.run.id
         self._stop_requested = False
         self._task_counter = 0
+        # the soft walltime budget (dynamics.max_wall_hours) is anchored at
+        # the workflow's entry — initialization (backend construction, the
+        # first evaluation) counts against it; a resumed process re-arms it
+        # at the resume entry
+        self._budget_t0 = (budget_t0 if budget_t0 is not None
+                           else time.perf_counter())
         self.projection = validate_constraints(atoms)
         self.store = Store(run_dir / "trajectory.db")
         self.event_log = event_log if event_log is not None else EventLog(run_dir)
@@ -537,6 +557,23 @@ class _PlainDriver:
 
     def request_stop(self) -> None:
         self._stop_requested = True
+
+    def _step_reserve(self, last_step_wall: float | None) -> float:
+        """The wall reserve required before starting one more step under the
+        soft budget: factor x the last measured step plus a fixed I/O margin
+        once this process has measured a step (the initial evaluation
+        counts).  Before any measurement — a resumed process that has not
+        stepped yet — the backend's declared per-attempt timeout times its
+        configured retries when available, else just the margin.  This is a
+        scheduling estimate, never a bound on the next SCF itself."""
+        if last_step_wall is not None:
+            return _BUDGET_STEP_FACTOR * last_step_wall + _BUDGET_IO_MARGIN_S
+        backend_config = getattr(self.backend, "config", None)
+        timeout_s = getattr(backend_config, "timeout_s", None)
+        if timeout_s is not None:
+            retries = int(getattr(backend_config, "max_retries", 0) or 0)
+            return float(timeout_s) * (1 + retries) + _BUDGET_IO_MARGIN_S
+        return _BUDGET_IO_MARGIN_S
 
     def close(self) -> None:
         self.event_log.close()
@@ -810,12 +847,23 @@ class _PlainDriver:
     def run(self, n_steps: int, outputs: RunOutputs, *, verbose: bool,
             start_step: int = 0) -> dict:
         interval = outputs.summary_interval
+        # the soft walltime budget (dynamics.max_wall_hours): a resumed
+        # process re-arms it from the resume's own entry
+        budget_s = (None if self.config.dynamics.max_wall_hours is None
+                    else self.config.dynamics.max_wall_hours * 3600.0)
+        last_step_wall: float | None = None
+        budget_stop: dict | None = None
         if start_step == 0 and self._resume_state is None:
             self._emit_run_start()
+            init_t0 = time.perf_counter()
             self._evaluate(0, lambda: self.atoms.get_forces())
             self._record_evaluation(0)
             self._release_consumed_scratch(0)
             outputs.regenerate_trajectory()
+            # the initial evaluation (and its bookkeeping) is the first
+            # measured step cost: the budget's first reserve derives from
+            # it, never from a hardcoded ceiling
+            last_step_wall = time.perf_counter() - init_t0
         run_start = time.perf_counter()
         completed = start_step
         checkpoint_interval = self.config.checkpoint.interval_steps
@@ -823,6 +871,23 @@ class _PlainDriver:
             for step in range(start_step + 1, start_step + n_steps + 1):
                 if self._stop_requested:
                     break
+                if budget_s is not None:
+                    # soft decision at the boundary only: the remaining
+                    # budget (initialization included) vs the reserve for
+                    # one more step; a running step is never interrupted
+                    remaining = budget_s - (time.perf_counter()
+                                            - self._budget_t0)
+                    reserve = self._step_reserve(last_step_wall)
+                    if remaining < reserve:
+                        # clean exit at the last complete boundary:
+                        # checkpoint regardless of the interval, then stop
+                        self._write_checkpoint(completed)
+                        budget_stop = {"step": completed,
+                                       "remaining_s": remaining,
+                                       "reserve_s": reserve,
+                                       "last_step_wall_s": last_step_wall}
+                        break
+                step_start = time.perf_counter()
                 # ASE's VelocityVerlet evaluates the new-step forces inside
                 # step(): exactly one evaluation per step.  The committed
                 # record afterwards reads the calculator cache.
@@ -870,6 +935,7 @@ class _PlainDriver:
                 # retained checkpoints' references are honored)
                 self._reclaim_density_generations()
                 outputs.append_trajectory_step(step)
+                last_step_wall = time.perf_counter() - step_start
                 if step % interval == 0:
                     outputs.write_summaries()
                     if verbose:
@@ -879,16 +945,23 @@ class _PlainDriver:
         except Exception as error:
             self._fail(error, completed + 1)
             raise
-        stopped = bool(self._stop_requested)
+        stopped = bool(self._stop_requested) or budget_stop is not None
         wall = time.perf_counter() - run_start
         if stopped:
             # A stop received on the final step is still a received stop:
             # the run's own records say so (the adaptive runner does the
             # same), and the recipe layer ends the invocation there.
-            self.event_log.append(RUN_END, {
-                "run_id": self.run_id, "status": "stopped",
-                "reason": "stop requested; checkpoint saved at the last "
-                          "complete step"})
+            if budget_stop is None:
+                stop_payload = {"run_id": self.run_id, "status": "stopped",
+                                "reason": "stop requested; checkpoint saved "
+                                          "at the last complete step"}
+            else:
+                stop_payload = {"run_id": self.run_id, "status": "stopped",
+                                "reason": "walltime budget exhausted; "
+                                          "checkpoint saved at the last "
+                                          "complete step",
+                                **budget_stop}
+            self.event_log.append(RUN_END, stop_payload)
         self.event_log.append(RUN_SUMMARY, {
             "run_id": self.run_id, "n_steps": completed,
             "n_evaluations": completed + 1, "n_accepted": completed + 1,
@@ -900,6 +973,9 @@ class _PlainDriver:
 
 def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
                verbose: bool, handle_sigint: bool) -> WorkflowResult:
+    # the soft walltime budget anchors at the workflow entry: backend
+    # construction and the initial evaluation count against it
+    budget_t0 = time.perf_counter()
     event_log = EventLog(run_dir)
     driver = None
     try:
@@ -912,7 +988,8 @@ def _run_plain(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
         driver = _PlainDriver(config, atoms, backend, run_dir,
                               event_log=event_log,
                               file_resource_baseline_sha256=(
-                                  file_resource_baseline_sha256(run_dir)))
+                                  file_resource_baseline_sha256(run_dir)),
+                              budget_t0=budget_t0)
         # Outputs construction joins the ownership scope: any setup failure
         # releases the log AND the driver's store before the error
         # continues (R4/S0a).
@@ -1367,6 +1444,14 @@ def run_workflow(config: PyramidConfig, *, verbose: bool = True,
             "the persistent density chain for a plain serial reference MD "
             "run only, not for recipe stages — remove [density] from the "
             "stage configuration")
+    if config.dynamics.max_wall_hours is not None \
+            and _is_controller_materialized_input(config):
+        raise WorkflowError(
+            "dynamics.max_wall_hours does not compose with the "
+            "serial-recipe controller's materialized input (structure.file = "
+            f"{config.run.directory / 'initial.traj'}): the soft budget is "
+            "wired only to a plain serial MD run, not to recipe stages — "
+            "remove the option from the stage configuration")
     validate_setup(config)  # dry pass: identical failures as `validate`
     atoms = load_structure(config)
     check_run_directory_available(config)
@@ -1618,6 +1703,9 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                 "state; this NVT run cannot be resumed honestly (an old or "
                 "torn checkpoint — start a new run)")
     event_log = EventLog(run_dir, force=force_unlock)
+    # a resumed process re-arms the soft walltime budget from the resume's
+    # own entry (the restore machinery counts against it)
+    budget_t0 = time.perf_counter()
     try:
         backend = _plain_backend(config, run_dir, event_log=event_log)
         if resource_binding is not None:
@@ -1852,7 +1940,8 @@ def _resume_plain(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             event_log.append_once(heal[0], STEP_COMPLETED, heal[1])
             current = boundary_id
         driver = _PlainDriver(config, atoms, backend, run_dir,
-                              event_log=event_log, resume_state=resume_state)
+                              event_log=event_log, resume_state=resume_state,
+                              budget_t0=budget_t0)
         driver._task_counter = task_counter
         driver.dyn.nsteps = current
         driver.atoms.calc.atoms = atoms.copy()

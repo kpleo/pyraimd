@@ -101,6 +101,7 @@ class DynamicsConfig:
     integrator: str = "verlet"
     friction_per_fs: float | None = None
     thermostat_seed: int | None = None
+    max_wall_hours: float | None = None  # soft per-process budget; None = off
 
 
 @dataclass(frozen=True)
@@ -251,7 +252,8 @@ class PyramidConfig:
                          "temperature_K": self.dynamics.temperature_K,
                          "velocity_seed": self.dynamics.velocity_seed,
                          "friction_per_fs": self.dynamics.friction_per_fs,
-                         "thermostat_seed": self.dynamics.thermostat_seed},
+                         "thermostat_seed": self.dynamics.thermostat_seed,
+                         "max_wall_hours": self.dynamics.max_wall_hours},
             "reference": backend_section(self.reference),
             "surrogate": backend_section(self.surrogate),
             "policy": (None if self.policy is None else {
@@ -403,6 +405,20 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
                               verification_present=verification_table is not None)
     _check_density_compatibility(density, task=task, reference=reference,
                                  scratch=scratch)
+    if dynamics.max_wall_hours is not None:
+        # the soft per-process budget is wired only to the plain serial MD
+        # driver; everywhere else it is refused at parse time, never
+        # silently ignored
+        if task.kind != "md":
+            raise ConfigError(
+                "dynamics.max_wall_hours applies only to task.kind = 'md' "
+                f"runs (got {task.kind!r}); singlepoint and relax have no "
+                "between-step loop — remove the option")
+        if task.mode == "adaptive":
+            raise ConfigError(
+                "dynamics.max_wall_hours is wired only to the plain serial "
+                "MD driver (reference/surrogate mode); the adaptive runner "
+                "does not honor it — remove the option or run plain")
     return PyramidConfig(
         schema_version=version, run=run, task=task, structure=structure,
         dynamics=dynamics, reference=reference, surrogate=surrogate,
@@ -588,7 +604,7 @@ def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
     _reject_unknown(table,
                     ("ensemble", "timestep_fs", "steps", "temperature_K",
                      "velocity_seed", "integrator", "friction_per_fs",
-                     "thermostat_seed"),
+                     "thermostat_seed", "max_wall_hours"),
                     "dynamics", "field")
     ensemble = _str_field(table, "ensemble", "dynamics", default="nve",
                           choices=ENSEMBLES)
@@ -619,6 +635,16 @@ def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
             f"dynamics.thermostat_seed must be nonnegative, got {seed_raw}; "
             "NumPy generators require a nonnegative seed")
     thermostat_seed = None if seed_raw is None else int(seed_raw)
+    wall_raw = table.pop("max_wall_hours", None)
+    if wall_raw is not None:
+        if not _is_number(wall_raw) or not math.isfinite(float(wall_raw)) \
+                or float(wall_raw) <= 0:
+            raise ConfigError(
+                f"dynamics.max_wall_hours must be a positive finite number "
+                f"of hours, got {wall_raw!r}")
+        max_wall_hours = float(wall_raw)
+    else:
+        max_wall_hours = None
     if ensemble == "nvt":
         if integrator != "langevin":
             raise ConfigError(
@@ -642,7 +668,8 @@ def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
                           steps=steps, temperature_K=temperature_K,
                           velocity_seed=velocity_seed, integrator=integrator,
                           friction_per_fs=friction_per_fs,
-                          thermostat_seed=thermostat_seed)
+                          thermostat_seed=thermostat_seed,
+                          max_wall_hours=max_wall_hours)
 
 
 def _parse_backend(table: dict | None, prefix: str, base_dir: Path) -> BackendConfig | None:
