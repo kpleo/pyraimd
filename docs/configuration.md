@@ -247,10 +247,13 @@ base model's.
   on every periodic axis the raw fractional displacement
   `(q - q0) @ cell⁻¹` must be strictly inside the half-cell around `q0`;
   reaching or crossing the boundary raises `CorrectionDomainError` for
-  the upper layer — the run stops with the refusal recorded, and a
-  representation change means translating `q0` and the positions
-  together and building a new model state (there is no automatic
-  relocation API).  The wrapper never rounds, never applies a minimum
+  the upper layer — the run stops with the refusal recorded.  A genuine
+  domain exit is a model problem, not a representation problem:
+  translating `q0` and the positions together keeps `q - q0` fixed and
+  cannot recover an out-of-domain point; continue only from correction
+  parameters regenerated around a NEW calibration center (a new model),
+  or stop and hand the refusal to the caller.  There is no automatic
+  relocation API.  The wrapper never rounds, never applies a minimum
   image and never accepts an integer-offset shift, so no discontinuous
   energy/force pair is ever returned under a conservative declaration.
   Nothing depends on call history or process lifetime beyond the

@@ -40,13 +40,17 @@ direction or a cell change is refused.  ``q0`` and the input positions
 must live in the SAME continuous coordinate representation: on every
 periodic axis the raw fractional displacement ``(q - q0) @ cell⁻¹`` must
 be strictly inside the half-cell around ``q0``; reaching or crossing the
-boundary raises :class:`CorrectionDomainError` for the upper layer
-(translate ``q0`` and the positions together and build a new model
-state).  There is no rounding, no minimum image, no integer-offset
-exception and no dependence on call history or process lifetime — a
-fresh-process resume reproduces the same corrections under the same
-fingerprint, and no discontinuous energy/force pair is ever returned
-under a conservative declaration.  Non-periodic axes are never limited.
+boundary raises :class:`CorrectionDomainError` for the upper layer.
+There is no rounding, no minimum image, no integer-offset exception and
+no dependence on call history or process lifetime — a fresh-process
+resume reproduces the same corrections under the same fingerprint, and
+no discontinuous energy/force pair is ever returned under a conservative
+declaration.  A genuine domain exit is a model problem, not a
+representation problem: continue only from parameters regenerated around
+a NEW calibration center (a new model), or stop and hand the refusal to
+the caller.  Translating ``q0`` and the positions together keeps
+``q - q0`` fixed — a pure representation change that cannot recover an
+out-of-domain point.  Non-periodic axes are never limited.
 NPT/variable-cell and general unwrapping are not supported.
 """
 
@@ -137,10 +141,14 @@ def _base_identity(base: object) -> str:
 class CorrectionDomainError(ValueError):
     """The configuration reached or crossed the correction's fixed-atlas
     boundary (half a cell from q0 on a periodic axis).  A controlled
-    refusal for the upper layer: translate q0 and the positions together
-    and build a new model state — the wrapper never rounds, never applies
+    refusal for the upper layer — the wrapper never rounds, never applies
     a minimum image and never accepts an integer-offset shift, so no
-    discontinuous energy/force pair is ever returned."""
+    discontinuous energy/force pair is ever returned.  A genuine domain
+    exit is a model problem, not a representation problem: continue only
+    from parameters regenerated around a NEW calibration center (a new
+    model), or stop and hand the refusal to the caller.  Translating q0
+    and the positions together keeps q - q0 fixed — a pure representation
+    change that cannot recover an out-of-domain point."""
 
 
 def _load_parameters_npz(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
@@ -528,9 +536,9 @@ class QuadraticCorrectedSurrogate:
         # inside the half-cell around q0.  At or beyond the boundary the
         # correction refuses: there is no rounding, no minimum image and
         # no integer-offset exception (a full-cell shift of the positions
-        # alone is refused too).  A representation change means
-        # translating q0 AND the positions together and building a new
-        # model state.
+        # alone is refused too).  A genuine exit needs the parameters
+        # regenerated around a NEW calibration center (a new model), not
+        # a representation tweak.
         inv_cell = np.linalg.inv(self._chart_cell)
         fractional = delta @ inv_cell
         for axis in range(3):
@@ -540,9 +548,13 @@ class QuadraticCorrectedSurrogate:
                     f"the configuration reached or crossed the half-cell "
                     f"boundary of the correction's fixed atlas on periodic "
                     f"axis {axis}: the local quadratic expansion is only "
-                    "valid on the recorded representation — translate q0 "
-                    "and the positions together and build a new model "
-                    "state instead of continuing across the boundary")
+                    "valid on the recorded representation.  A genuine exit "
+                    "is a model problem, not a representation problem: "
+                    "regenerate the correction parameters around a new "
+                    "calibration center, or stop and hand the refusal to "
+                    "the caller — translating q0 and the positions "
+                    "together leaves q - q0 unchanged and cannot recover "
+                    "an out-of-domain point")
         return delta
 
     def predict(self, atoms: Atoms) -> SurrogatePrediction:

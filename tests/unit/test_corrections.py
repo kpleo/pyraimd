@@ -670,9 +670,11 @@ def test_a_pure_position_shift_by_one_cell_is_also_refused():
 
 
 def test_translating_q0_and_positions_together_is_consistent():
-    """The supported representation change: translate q0 AND the positions
-    by the same cell vector — a new model state built from the translated
-    q0 reproduces the original predictions exactly."""
+    """A joint translation is a pure representation change (q - q0 is
+    unchanged): a new model state built from the translated q0 reproduces
+    the original predictions exactly.  Note this can never recover a
+    point that already left the local domain — that needs parameters
+    regenerated around a new calibration center, or a stop."""
     _, _, corrected = _build_correction()
     cell = [10.0, 10.0, 10.0]
     q = Q0 + DISPLACEMENTS[0]
