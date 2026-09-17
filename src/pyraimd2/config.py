@@ -51,7 +51,7 @@ RELAX_OPTIMIZERS = ("fire", "bfgs")
 
 # Backend option keys whose string values are filesystem paths, resolved
 # against the configuration file's directory and checked at validate time.
-_PATH_VALUE_KEYS = ("model", "density_source")
+_PATH_VALUE_KEYS = ("model", "density_source", "parameters_npz")
 _PSEUDO_DICT_KEY = "pseudos"  # QE species -> filename, resolved under pseudo_dir
 _MODEL_FILE_SUFFIXES = (".model", ".pt", ".pth", ".ckpt", ".json")
 
@@ -675,7 +675,39 @@ def _parse_backend(table: dict | None, prefix: str, base_dir: Path) -> BackendCo
         elif key == _PSEUDO_DICT_KEY and isinstance(value, dict):
             options[key] = _resolve_pseudos(value, table_pseudo_dir=options.get("pseudo_dir"),
                                             base_dir=base_dir, dotted=dotted)
+        elif isinstance(value, dict):
+            # a nested backend spec (a correction wrapper's base backend):
+            # its kwargs resolve path-like values against the configuration
+            # file's directory too — never against the process cwd
+            options[key] = _resolve_nested_spec_paths(value, base_dir,
+                                                      dotted=dotted)
     return BackendConfig(name=name, options=options)
+
+
+def _resolve_nested_spec_paths(value: dict, base_dir: Path, *,
+                               dotted: str) -> dict:
+    """Resolve path-like strings inside a nested backend spec
+    (``{name, kwargs}`` — a wrapper's base backend) against the
+    configuration file's directory, one level deep.  Anything else in the
+    spec passes through untouched; a spec without a ``name`` string is the
+    factory's problem, not the parser's."""
+    spec_keys = set(value)
+    if "name" not in spec_keys or not isinstance(value.get("name"), str):
+        return value
+    resolved = dict(value)
+    kwargs = value.get("kwargs")
+    if kwargs is None:
+        return resolved
+    if not isinstance(kwargs, dict):
+        return resolved
+    nested = dict(kwargs)
+    for key, item in kwargs.items():
+        if isinstance(item, str) and (
+                key.endswith(("_path", "_file", "_dir"))
+                or (key in _PATH_VALUE_KEYS and _looks_like_path(key, item))):
+            nested[key] = str(_resolve_path(item, base_dir))
+    resolved["kwargs"] = nested
+    return resolved
 
 
 def _looks_like_path(key: str, value: str) -> bool:

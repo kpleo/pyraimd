@@ -11,12 +11,18 @@ from pyraimd2.surrogate.base import (
     surrogate_capabilities,
 )
 from pyraimd2.surrogate.committee import CommitteeSurrogate
+from pyraimd2.surrogate.corrections import (
+    QuadraticCorrectedSurrogate,
+    ScaledSurrogate,
+)
 from pyraimd2.surrogate.mace_surrogate import MaceSurrogate
 
 __all__ = [
     "AseSurrogate",
     "CommitteeSurrogate",
     "MaceSurrogate",
+    "QuadraticCorrectedSurrogate",
+    "ScaledSurrogate",
     "Surrogate",
     "SurrogateCapabilities",
     "SurrogatePrediction",

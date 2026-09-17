@@ -84,6 +84,10 @@ _BUILTINS: dict[str, tuple[str, str, str]] = {
     # underscores) never collides with builtins.
     "harmonic-reference": (ENGINE, "pyraimd2.backends.harmonic", "reference_factory"),
     "harmonic-surrogate": (SURROGATE, "pyraimd2.backends.harmonic", "surrogate_factory"),
+    # Frozen conservative correction wrappers around a base surrogate (D1)
+    "scaled": (SURROGATE, "pyraimd2.surrogate.corrections", "scaled_factory"),
+    "quadratic-corrected": (SURROGATE, "pyraimd2.surrogate.corrections",
+                            "quadratic_corrected_factory"),
 }
 
 _entry_point_cache: dict[str, BackendRegistration] | None = None
