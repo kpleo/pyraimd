@@ -1,0 +1,59 @@
+# Sanitized fragment of a REAL Quantum ESPRESSO 7.5 pw.x stdout
+# (Si8, PBE+D3, 50/400 Ry, 4x4x4, warm start from a manually staged
+# complete .save tree with startingwfc='file'; produced 2026-09-18
+# during the cold/warm restart-evidence pair).  Private paths, host
+# names and run identifiers removed; QE's own wording kept verbatim.
+# The engine accepts ONLY this class of stdout evidence for a
+# wavefunction restart ('Starting wfcs from file' / collected
+# wavefunctions), never the input line or the staged tree's presence.
+
+     Program PWSCF v.7.5 starts on 18Sep2026 at 21:47: 1 
+        k(    7) = (   0.2500000   0.2500000   0.2500000), wk =   0.0625000
+        k(    8) = (   0.2500000   0.2500000  -0.5000000), wk =   0.0625000
+        k(    9) = (   0.2500000  -0.5000000  -0.5000000), wk =   0.0625000
+        k(   10) = (  -0.5000000  -0.5000000  -0.5000000), wk =   0.0312500
+        k(   11) = (   0.2500000   0.0000000   0.0000000), wk =   0.0625000
+        k(   12) = (   0.0000000   0.2500000   0.0000000), wk =   0.0625000
+        k(   13) = (  -0.5000000   0.0000000   0.0000000), wk =   0.0312500
+        k(   14) = (   0.0000000  -0.5000000   0.0000000), wk =   0.0312500
+        k(   15) = (   0.0000000  -0.2500000   0.2500000), wk =   0.0625000
+        k(   16) = (   0.2500000   0.0000000  -0.2500000), wk =   0.0625000
+        k(   17) = (  -0.2500000   0.0000000  -0.2500000), wk =   0.0625000
+        k(   18) = (   0.2500000  -0.2500000   0.0000000), wk =   0.0625000
+        k(   19) = (  -0.2500000  -0.2500000   0.0000000), wk =   0.0625000
+        k(   20) = (   0.2500000   0.0000000   0.5000000), wk =   0.0625000
+        k(   21) = (  -0.5000000  -0.2500000   0.0000000), wk =   0.0625000
+        k(   22) = (   0.0000000  -0.5000000   0.2500000), wk =   0.0625000
+        k(   23) = (   0.2500000  -0.5000000   0.0000000), wk =   0.0625000
+        k(   24) = (  -0.5000000   0.0000000   0.2500000), wk =   0.0625000
+        k(   25) = (  -0.5000000   0.0000000   0.5000000), wk =   0.0312500
+        k(   26) = (  -0.5000000   0.5000000   0.0000000), wk =   0.0312500
+        k(   27) = (  -0.2500000  -0.2500000   0.2500000), wk =   0.0625000
+        k(   28) = (  -0.2500000   0.2500000  -0.2500000), wk =   0.0625000
+        k(   29) = (   0.2500000  -0.2500000  -0.2500000), wk =   0.0625000
+        k(   30) = (  -0.2500000   0.2500000   0.5000000), wk =   0.0625000
+        k(   31) = (  -0.5000000  -0.2500000   0.2500000), wk =   0.0625000
+        k(   32) = (   0.5000000  -0.2500000  -0.2500000), wk =   0.0625000
+        k(   33) = (  -0.2500000  -0.5000000   0.2500000), wk =   0.0625000
+        k(   34) = (  -0.2500000   0.5000000  -0.2500000), wk =   0.0625000
+        k(   35) = (  -0.5000000   0.2500000   0.5000000), wk =   0.0625000
+        k(   36) = (  -0.5000000   0.5000000   0.2500000), wk =   0.0625000
+
+     Dense  grid:   146125 G-vectors     FFT dimensions: (  72,  72,  72)
+
+     Smooth grid:    51627 G-vectors     FFT dimensions: (  48,  48,  48)
+
+     Estimated max dynamical RAM per process >      27.85 MB
+
+     Estimated total dynamical RAM >     744.20 MB
+
+     The initial density is read from file :
+     ./tmp/pyraimd2.save/charge-density
+
+     Starting wfcs from file
+     Checking if some PAW data can be deallocated... 
+
+     total cpu time spent up to now is        1.2 secs
+
+     per-process dynamical memory:    94.2 Mb
+

@@ -819,6 +819,22 @@ def test_wfc_read_evidence_comes_from_the_output_text() -> None:
         "     Starting wfcs are    8 randomized atomic wfcs\n")
 
 
+def test_wfc_read_evidence_real_qe75_fixture() -> None:
+    """Regression on output from a real QE 7.5 warm start (sanitized
+    fragment of an actual pw.x stdout, tests/data).  The parser must
+    accept the real wording — and the same text without the read line
+    must stay a non-read (a paraphrased mock would not exercise this)."""
+    from pyraimd2.engines.qe_engine import wfc_read_from_file
+
+    real = (Path(__file__).parents[1] / "data"
+            / "qe75_warm_start_wfc_read.out").read_text()
+    assert wfc_read_from_file(real)
+    assert not wfc_read_from_file(
+        real.replace("Starting wfcs from file",
+                     "Starting wfcs elsewhere"))
+    assert "convergence has been achieved" not in real  # fragment: pre-SCF
+
+
 def test_startingwfc_file_does_not_change_reference_identity(tmp_path: Path) -> None:
     """Execution knob, not physics: same reference fingerprint either way."""
     base = QeConfig(pseudo_dir="/pseudo", startpot_file=True)
