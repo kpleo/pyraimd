@@ -491,7 +491,13 @@ their exact recorded identity.
   checkpoint retention update — and on demand through
   `pyraimd2.runtime.restart.execute_density_reclaim` (dry-run first:
   `plan_density_reclaim` reports per-generation keep/hold/reclaim reasons).
-  Only generations this run fully owns — once attached, validated,
+  To see the same decision picture from the shell without writing
+  anything, run `pyramid density inspect RUN_DIR` (read-only JSON: every
+  generation's keep / reclaim-candidate / hold decision with its concrete
+  reasons, blocked references and the space report).  It is a snapshot of
+  the current registry — `reclaim_candidate` there is a preview, not a
+  deletion authorization, and the space report claims no bound on the
+  run's whole-disk usage.  Only generations this run fully owns — once attached, validated,
   unreferenced — are deleted: the latest pointer, retained checkpoints'
   references, the committed recoverable boundary, in-flight inputs and
   unconsumed producer seeds are always kept; publish leftovers, corrupt or

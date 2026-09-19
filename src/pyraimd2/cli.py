@@ -122,6 +122,17 @@ def build_parser() -> argparse.ArgumentParser:
                              help="with clean: only report what would be "
                                   "reclaimed")
     scratch_cmd.set_defaults(func=_cmd_scratch)
+
+    density = commands.add_parser(
+        "density", help="inspect a run's persistent density registry "
+                        "(read-only; no clean/delete/apply commands)")
+    density.add_argument(
+        "action", choices=("inspect",),
+        help="inspect lists every density generation with its keep / "
+             "reclaim-candidate / hold decision, the concrete reasons, "
+             "blocked references and the space report")
+    density.add_argument("run_dir", help="the run directory to inspect")
+    density.set_defaults(func=_cmd_density)
     return parser
 
 
@@ -295,6 +306,27 @@ def _cmd_scratch(args: argparse.Namespace) -> int:
         return EXIT_OK
     result = scratch_mod.clean_pending(root, dry_run=args.dry_run)
     print(json.dumps(result, indent=2, default=str))
+    return EXIT_OK
+
+
+def _cmd_density(args: argparse.Namespace) -> int:
+    from pyraimd2.runtime.restart import plan_density_reclaim
+
+    run_dir = Path(args.run_dir).expanduser()
+    if not run_dir.is_absolute():
+        run_dir = Path.cwd() / run_dir
+    run_dir = run_dir.resolve()
+    if not run_dir.is_dir():
+        print(f"error: run directory does not exist: {run_dir}",
+              file=sys.stderr)
+        return EXIT_USAGE
+    plan = plan_density_reclaim(run_dir)
+    plan["notice"] = (
+        "snapshot of the current registry only; 'reclaim_candidate' is a "
+        "preview, not a deletion authorization; the space report lists "
+        "classes separately and claims no bound on whole-run total disk "
+        "usage")
+    print(json.dumps(plan, indent=2, default=str))
     return EXIT_OK
 
 
