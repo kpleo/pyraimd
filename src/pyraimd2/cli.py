@@ -310,7 +310,7 @@ def _cmd_scratch(args: argparse.Namespace) -> int:
 
 
 def _cmd_density(args: argparse.Namespace) -> int:
-    from pyraimd2.runtime.restart import plan_density_reclaim
+    from pyraimd2.runtime.restart import RestartError, plan_density_reclaim
 
     run_dir = Path(args.run_dir).expanduser()
     if not run_dir.is_absolute():
@@ -320,7 +320,14 @@ def _cmd_density(args: argparse.Namespace) -> int:
         print(f"error: run directory does not exist: {run_dir}",
               file=sys.stderr)
         return EXIT_USAGE
-    plan = plan_density_reclaim(run_dir)
+    try:
+        plan = plan_density_reclaim(run_dir)
+    except (RestartError, OSError, UnicodeError) as error:
+        # expected read failures at this command boundary: readable
+        # message, non-zero status, no traceback, nothing written
+        print(f"error: density inspection failed: {error}",
+              file=sys.stderr)
+        return EXIT_FAILURE
     plan["notice"] = (
         "snapshot of the current registry only; 'reclaim_candidate' is a "
         "preview, not a deletion authorization; the space report lists "
