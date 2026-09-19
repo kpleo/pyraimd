@@ -7,7 +7,7 @@ try:
     # pyproject.toml is the single source of truth for the version.
     __version__ = _package_version("pyraimd2")
 except PackageNotFoundError:  # running from a source tree without metadata
-    __version__ = "0.7.4"
+    __version__ = "0.7.5"
 
 
 def main() -> None:

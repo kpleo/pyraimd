@@ -312,6 +312,16 @@ reference fingerprint).
   true input origin), and the chain then falls back to the real source.
 - `startpot_file` / `density_source`: warm starts from a verified
   density of known origin (see the engine docstrings).
+- Validation has three explicit scopes:
+  `pyramid validate run.toml` checks the configuration only (never the
+  machine); `pyramid validate run.toml --check-environment` adds a
+  read-only, zero-computation preflight of local runtime prerequisites
+  (direct `pw_cmd` executable resolution, pseudopotential file presence,
+  optional packages probed via import metadata without importing, local
+  model files; launcher compositions and unconfirmable caches report
+  `unverified`, never `ready`); and `--probe-backends` explicitly
+  evaluates the structure once per backend.  `--json` emits one
+  machine-readable report object for any of the three scopes.
 - `startingwfc_file` (boolean, default `false`): also restart
   wavefunctions from a staged `.save` tree (`startingwfc = 'file'` is
   written only when this attempt actually staged one; the attempt record
@@ -465,7 +475,7 @@ their exact recorded identity.
   computed — never a silent swap to a newer generation.  The `resumed`
   event records the actual boundary evaluation and the bound density
   generation and content digest.
-- With `[scratch]` (`retention = "all"`, required for this round), an
+- With `[scratch]` (`retention = "all"`, as the persistent chain requires), an
   attempt's scratch is released only after a LATER ordinary calculation
   has independently read that exact published seed and succeeded — and
   "read" is proven by the consuming attempt's own raw output (QE's

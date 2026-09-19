@@ -30,20 +30,38 @@ the example plugins below come from that tag's source tree):
 
 ```sh
 python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
-pip install pyraimd2-0.7.3-py3-none-any.whl
+pip install pyraimd2-0.7.5-py3-none-any.whl
 ```
 
 A first run with the built-in harmonic model — the analytic demo needs no
-backend installation and finishes in seconds:
+backend installation and finishes in seconds.  Validation has three
+separate layers, and the CLI keeps them explicit:
+
+1. `pyramid validate run.toml` — is the configuration well-formed?  This
+   never touches the machine's programs or packages.
+2. `pyramid validate run.toml --check-environment` — are the local
+   runtime prerequisites present (executables, optional packages, local
+   model files)?  Read-only and zero-computation: it starts no backend,
+   runs no command, loads no weights, downloads nothing.  A
+   `reclaim_candidate`/`unverified` answer explains what it could and
+   could not confirm.
+3. `pyramid validate run.toml --probe-backends` — explicitly evaluate the
+   structure once per backend (the only layer that computes).
 
 ```sh
 pyramid init --template harmonic --output my_run
 pyramid validate my_run/run.toml
+pyramid validate my_run/run.toml --check-environment   # harmonic: ready
 pyramid run my_run/run.toml
 pyramid inspect my_run/runs/harmonic-demo
 pyramid resume my_run/runs/harmonic-demo --steps 5
 pyramid export my_run/runs/harmonic-demo --force-source driving
 ```
+
+All three validation scopes also accept `--json`, which writes one
+machine-readable report object to stdout (handy for submission scripts:
+a blocked environment is distinguishable from an invalid configuration
+by exit status and by `readiness`).
 
 Optional backends install separately and are only imported when selected:
 
@@ -122,7 +140,13 @@ Before `pyramid run` works you need, on that machine:
   name that MACE itself downloads on first use).
 
 Without them, `pyramid validate run.toml` still parses the configuration and
-reports exactly which pieces are missing. With them,
+reports exactly which pieces are missing — and
+`pyramid validate run.toml --check-environment` reports the prerequisites
+themselves before any run is committed (a missing `pw.x`, a missing
+optional package, a not-yet-downloaded foundation-model name, or a
+launcher command such as `srun -n 4 pw.x` whose solver layer cannot be
+confirmed statically are reported as `blocked` or `unverified`, with the
+remedy spelled out). With them,
 `pyramid validate run.toml --probe-backends` evaluates the structure once with
 each backend before committing to a run.
 
@@ -168,6 +192,27 @@ each backend before committing to a run.
   checkpoint resume under identical dependencies.
 - Changing settings means a new run, or a library-level `fork` that inherits
   the physical state and model chain under a new check stream.
+
+### Understand persistent-density retention (read-only)
+
+Plain serial reference MD runs can opt into the persistent density chain
+(`[density] persist = true`): every successful evaluation publishes one
+immutable, content-verified generation under `restart/density/` in the run
+directory.  To see why each generation is kept — without changing
+anything — run:
+
+```sh
+pyramid density inspect RUN_DIR
+```
+
+The JSON answer lists every generation with its decision
+(`keep` / `reclaim_candidate` / `hold` / `reclaimed`), the concrete
+reasons (latest pointer, retained checkpoints, committed boundary,
+in-flight inputs, unconsumed producer seeds, tombstones), any blocked
+references, and the space report per class.  `reclaim_candidate` there
+is a preview, not a deletion authorization, and the report claims no
+bound on the run's whole-disk usage.  The command is strictly read-only
+and applies to the plain serial reference-MD workflow shape.
 
 ### Plug in your own ASE calculator
 

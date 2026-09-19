@@ -106,7 +106,8 @@ def write_config(tmp_path: Path, text: str) -> Path:
 def test_validate_ok(tmp_path, capsys) -> None:
     config = write_config(tmp_path, HARMONIC_CONFIG)
     output = run_cli_and_out(capsys, "validate", str(config))
-    assert "validate: OK" in output
+    assert "configuration valid" in output
+    assert "environment NOT checked" in output
     assert "harmonic-reference" in output
 
 
@@ -222,7 +223,8 @@ def test_validate_qe_backend_constructs_without_pw(tmp_path, capsys) -> None:
     config = qe_config(tmp_path, with_pseudos=True)
     output = run_cli_and_out(capsys, "validate", str(config))
     assert "reference   : qe" in output
-    assert "validate: OK" in output
+    assert "configuration valid" in output
+    assert "environment NOT checked" in output
 
 
 def test_validate_probe_reports_missing_optional_dependency(tmp_path, capsys) -> None:

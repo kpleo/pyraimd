@@ -50,10 +50,21 @@ def build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser(
         "validate", help="check a configuration without running it")
     validate.add_argument("config", help="path to the TOML configuration")
-    validate.add_argument(
+    validate_mode = validate.add_mutually_exclusive_group()
+    validate_mode.add_argument(
         "--probe-backends", action="store_true",
         help="also run one small backend self-check on the structure "
              "(executes the reference/surrogate once; off by default)")
+    validate_mode.add_argument(
+        "--check-environment", action="store_true",
+        help="read-only static check of local runtime prerequisites "
+             "(executables, optional packages, local model files); never "
+             "starts a backend, executes a command, loads weights or "
+             "downloads anything")
+    validate.add_argument(
+        "--json", action="store_true",
+        help="write a single JSON report to stdout (works for all three "
+             "validation scopes; handled errors are reported as JSON too)")
     validate.set_defaults(func=_cmd_validate)
 
     run = commands.add_parser("run", help="execute a configuration")
@@ -153,6 +164,47 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     from pyraimd2.workflows import validate_setup
+    from pyraimd2.workflows.preflight import check_environment
+
+    scope = ("probe" if args.probe_backends else
+             "environment" if args.check_environment else "configuration")
+
+    def _json_error(error: BaseException) -> int:
+        print(json.dumps({
+            "schema_version": 1,
+            "validation_scope": scope,
+            "configuration_valid": False,
+            "readiness": "not_checked",
+            "checks": [],
+            "error": {"code": type(error).__name__,
+                      "message": str(error)},
+        }, allow_nan=False))
+        return EXIT_USAGE
+
+    if args.json:
+        try:
+            config = load_config(args.config)
+            report = validate_setup(config, probe=args.probe_backends)
+        except _usage_errors() as error:
+            return _json_error(error)
+        if args.check_environment:
+            env = check_environment(config, report)
+            print(json.dumps(env, allow_nan=False))
+            return (EXIT_OK if env["readiness"] == "ready"
+                    else EXIT_FAILURE)
+        payload = {
+            "schema_version": 1,
+            "validation_scope": scope,
+            "configuration_valid": True,
+            "readiness": "ready" if args.probe_backends else "not_checked",
+            "checks": [],
+            "structure": report.get("structure"),
+            "capabilities": report.get("capabilities"),
+        }
+        if args.probe_backends:
+            payload["probes"] = report.get("probes", {})
+        print(json.dumps(payload, allow_nan=False))
+        return EXIT_OK
 
     config = load_config(args.config)
     report = validate_setup(config, probe=args.probe_backends)
@@ -187,10 +239,25 @@ def _cmd_validate(args: argparse.Namespace) -> int:
               f"(seed {checks.seed})")
     else:
         print("verification  : independent checks disabled (probability 0)")
+    if args.check_environment:
+        env = check_environment(config, report)
+        print(f"environment   : {env['readiness']}")
+        for check in env["checks"]:
+            print(f"  [{check['status']}] {check['id']}: "
+                  f"{check['message']}")
+            if check["status"] != "pass" and check.get("remedy"):
+                print(f"      remedy: {check['remedy']}")
+        return (EXIT_OK if env["readiness"] == "ready" else EXIT_FAILURE)
     for section, probe in report["probes"].items():
         print(f"probe {section:9s}: energy {probe['energy_eV']:.6f} eV "
               f"({probe['elapsed_s']:.3f} s)")
-    print("validate: OK")
+    if args.probe_backends:
+        print("validate: OK (configuration valid; one backend evaluation "
+              "per section completed)")
+    else:
+        print("configuration valid — environment NOT checked; verify local "
+              "prerequisites without computing via "
+              "`pyramid validate <config> --check-environment`")
     return EXIT_OK
 
 

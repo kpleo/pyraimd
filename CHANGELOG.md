@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.5 (unreleased candidate)
+
+Usability candidate on top of 0.7.4:
+
+- `pyramid validate` now states explicitly that a successful run checks
+  the configuration only — the environment is not checked.
+- New `pyramid validate CONFIG --check-environment`: a read-only,
+  zero-computation preflight of local runtime prerequisites (executable
+  resolution for direct `pw_cmd`, pseudopotential file presence,
+  optional-package availability probed without importing, local model
+  file presence; wrapper/launcher commands and unconfirmable caches are
+  reported `unverified`, never silently ready).  Exit status 0 only when
+  every check this version knows passes; `blocked`/`unverified` exit 1.
+- New `--json` for validate (all three scopes: configuration /
+  environment / probe) emitting one machine-readable report object;
+  handled configuration errors are reported as JSON as well.
+- New `pyramid density inspect RUN_DIR`: read-only JSON view of the
+  persistent density registry's keep / reclaim-candidate / hold
+  decisions, blocked references and space report (plain serial
+  reference MD scope; preview only, never a deletion authorization).
+
 ## 0.7.4 (2026-09-19)
 
 Stable integration release on top of 0.7.3, absorbing the reviewed
