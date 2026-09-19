@@ -1,10 +1,10 @@
 # Changelog
 
-## 0.7.4.dev0 (unreleased development line)
+## 0.7.4 (2026-09-19)
 
-First development integration on top of 0.7.3, absorbing the reviewed
-upstream-contributed improvements that fit the general software (not a
-release; no upgrade guarantees beyond what 0.7.3 documents).
+Stable integration release on top of 0.7.3, absorbing the reviewed
+upstream-contributed improvements that fit the general software (same
+scope and guarantees as the 0.7.3 line documents).
 
 ### Added
 
@@ -37,8 +37,10 @@ release; no upgrade guarantees beyond what 0.7.3 documents).
   explicit, default-off wavefunction-restart knob — the input is written
   only when the attempt staged a `.save` tree, the receipt records the
   decision with its reason, and the only recorded read observation is
-  parsed from QE's own stdout (plumbing-level until a real output fixture
-  pins the wording; it never authorizes anything).  Refused for
+  parsed from QE's own stdout.  The read path is pinned by a regression
+  fixture recorded from a real QE 7.5 native manual complete stage
+  (`tests/data/qe75_warm_start_wfc_read.out`); the observation stays
+  receipt-level and never authorizes anything.  Refused for
   `disk_io` modes without wavefunction files, the `[density] persist`
   registry combination (its seed pack carries no wavefunctions), and the
   `qe-ase` adapter.

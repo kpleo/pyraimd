@@ -321,9 +321,10 @@ reference fingerprint).
   combination cannot work: `disk_io = "nowf"`/`"minimal"`/`"none"`
   (those write no wavefunction files), the `[density] persist` registry
   (its published seed pack carries no wavefunctions), and the `qe-ase`
-  adapter (not implemented there).  The wavefunction-restart path is
-  plumbing-covered only until a real QE output fixture pins the read
-  evidence; the persistent density pack and its deletion permissions are
+  adapter (not implemented there).  The wavefunction-restart read path is
+  pinned by a regression fixture recorded from a real QE 7.5 native
+  manual complete stage (`tests/data/qe75_warm_start_wfc_read.out`);
+  the persistent density pack and its deletion permissions are
   not expanded for it.
 - `density_source_policy` (`latest` default, or `fixed`): the
   density-chain trial order.  `latest` reuses the most recent successful
