@@ -50,17 +50,20 @@ def build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser(
         "validate", help="check a configuration without running it")
     validate.add_argument("config", help="path to the TOML configuration")
-    validate_mode = validate.add_mutually_exclusive_group()
-    validate_mode.add_argument(
+    # --probe-backends / --check-environment are parsed independently and
+    # the conflict is rejected inside _cmd_validate, so --json callers get
+    # one parseable error object instead of argparse's stderr text.
+    validate.add_argument(
         "--probe-backends", action="store_true",
         help="also run one small backend self-check on the structure "
-             "(executes the reference/surrogate once; off by default)")
-    validate_mode.add_argument(
+             "(executes the reference/surrogate once; off by default; "
+             "not combinable with --check-environment)")
+    validate.add_argument(
         "--check-environment", action="store_true",
         help="read-only static check of local runtime prerequisites "
              "(executables, optional packages, local model files); never "
              "starts a backend, executes a command, loads weights or "
-             "downloads anything")
+             "downloads anything (not combinable with --probe-backends)")
     validate.add_argument(
         "--json", action="store_true",
         help="write a single JSON report to stdout (works for all three "
@@ -168,6 +171,24 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
     scope = ("probe" if args.probe_backends else
              "environment" if args.check_environment else "configuration")
+
+    if args.probe_backends and args.check_environment:
+        message = ("--probe-backends and --check-environment are mutually "
+                   "exclusive: one executes each backend once, the other is "
+                   "strictly read-only; run them as two separate validate "
+                   "calls")
+        if args.json:
+            print(json.dumps({
+                "schema_version": 1,
+                "validation_scope": "configuration",
+                "configuration_valid": False,
+                "readiness": "not_checked",
+                "checks": [],
+                "error": {"code": "UsageError", "message": message},
+            }, allow_nan=False))
+        else:
+            print(f"error: validate: {message}", file=sys.stderr)
+        return EXIT_USAGE
 
     def _json_error(error: BaseException) -> int:
         print(json.dumps({

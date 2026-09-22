@@ -73,6 +73,58 @@ class ConfigError(ValueError):
     """
 
 
+def normalize_pw_cmd(raw: object, *, field: str = "pw_cmd") -> tuple[str, ...]:
+    """Normalize a ``pw_cmd`` option to the one shared argv form.
+
+    The contract below is the single source of truth — configuration
+    checks, ``--check-environment`` preflight and the executors all use
+    this function, so a form that validates is the form that runs:
+
+    - a TOML list is literal argv, verbatim: every element stays one argv
+      word, including paths with spaces or parentheses;
+    - a string naming an existing file is that literal path (one argv
+      word); any other string is split with POSIX :func:`shlex.split`
+      (quotes group words, e.g. ``pw_cmd = "'/opt/QE 7.5/bin/pw.x' -nk 2"``);
+      no shell is ever invoked and nothing is expanded, so shell operators
+      would have no effect — write plain argv words instead;
+    - anything else (empty value, non-string element, wrong type) is
+      refused here with the correct syntax spelled out.
+    """
+    import shlex
+
+    if isinstance(raw, str):
+        if Path(raw).expanduser().is_file():
+            return (raw,)  # the string names one literal executable path
+        try:
+            tokens = tuple(shlex.split(raw, posix=True))
+        except ValueError as error:
+            raise ConfigError(
+                f"{field}: cannot parse the command string ({error}); quote "
+                "paths containing spaces, e.g. pw_cmd = \"'/opt/QE 7.5/pw.x' "
+                '-nk 2", or use the list form pw_cmd = ["/opt/QE 7.5/pw.x", '
+                '"-nk", "2"]') from error
+        if not tokens:
+            raise ConfigError(
+                f'{field}: empty command string; set the solver path or a '
+                'launcher argv, e.g. pw_cmd = ["pw.x"]')
+        return tokens
+    if isinstance(raw, (list, tuple)):
+        tokens = tuple(str(t) for t in raw)
+        if not tokens:
+            raise ConfigError(
+                f'{field}: empty argv list; set the solver path or a '
+                'launcher argv, e.g. pw_cmd = ["pw.x"]')
+        if any(not t.strip() for t in tokens):
+            raise ConfigError(
+                f"{field}: argv words must be non-empty strings, got "
+                f"{list(raw)!r}")
+        return tokens
+    raise ConfigError(
+        f"{field}: must be a string or a list of strings, got "
+        f"{type(raw).__name__}; e.g. pw_cmd = [\"pw.x\"] or "
+        'pw_cmd = "pw.x"')
+
+
 @dataclass(frozen=True)
 class RunConfig:
     id: str

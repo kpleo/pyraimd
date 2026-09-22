@@ -24,13 +24,14 @@ pip install .            # user install
 pip install -e '.[dev]'  # development: adds pytest and ruff
 ```
 
-Or install a release wheel into a clean virtual environment (the wheel and
-sdist are attached to the GitHub Release of the same tag; the examples and
-the example plugins below come from that tag's source tree):
+Or install the latest released wheel into a clean virtual environment (the
+wheel and sdist are attached to the GitHub Release of the same tag — shown
+here with the current public release, 0.7.4; the examples and the example
+plugins below come from that tag's source tree):
 
 ```sh
 python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
-pip install pyraimd2-0.7.5-py3-none-any.whl
+pip install pyraimd2-0.7.4-py3-none-any.whl
 ```
 
 A first run with the built-in harmonic model — the analytic demo needs no
@@ -43,7 +44,7 @@ separate layers, and the CLI keeps them explicit:
    runtime prerequisites present (executables, optional packages, local
    model files)?  Read-only and zero-computation: it starts no backend,
    runs no command, loads no weights, downloads nothing.  A
-   `reclaim_candidate`/`unverified` answer explains what it could and
+   `blocked`/`unverified` answer explains what it could and
    could not confirm.
 3. `pyramid validate run.toml --probe-backends` — explicitly evaluate the
    structure once per backend (the only layer that computes).
@@ -140,9 +141,9 @@ Before `pyramid run` works you need, on that machine:
   name that MACE itself downloads on first use).
 
 Without them, `pyramid validate run.toml` still parses the configuration and
-reports exactly which pieces are missing — and
-`pyramid validate run.toml --check-environment` reports the prerequisites
-themselves before any run is committed (a missing `pw.x`, a missing
+reports configuration problems — and
+`pyramid validate run.toml --check-environment` is the layer that reports the
+local prerequisites themselves before any run is committed (a missing `pw.x`, a missing
 optional package, a not-yet-downloaded foundation-model name, or a
 launcher command such as `srun -n 4 pw.x` whose solver layer cannot be
 confirmed statically are reported as `blocked` or `unverified`, with the

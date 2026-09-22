@@ -966,6 +966,14 @@ def create_ase_qe_engine(*, run_root: str | Path, command: str | None = None,
                          density_registry_run_dir: str | Path | None = None,
                          **config_kwargs) -> AseQeEngine:
     """Registry factory: build an AseQeEngine from plain keyword settings."""
+    from pyraimd2.config import ConfigError
+
+    if command is not None and not isinstance(command, str):
+        raise ConfigError(
+            "qe-ase command: must be a string launch template (ASE's "
+            "FileIO layer takes one string), got "
+            f"{type(command).__name__}; e.g. command = \"mpirun -np 4 pw.x "
+            '-in espresso.pwi" or leave it unset to use pw_cmd')
     return AseQeEngine(QeConfig(**config_kwargs), run_root, command=command,
                        event_log=event_log,
                        density_registry_run_dir=density_registry_run_dir)

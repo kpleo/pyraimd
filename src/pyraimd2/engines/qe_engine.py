@@ -270,6 +270,13 @@ class QeConfig:
     retention: str = "all"  # or "results": archive the label, reclaim scratch
     pseudos: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_PSEUDOS))
 
+    def __post_init__(self) -> None:
+        # one shared argv semantics: the same normalized tuple drives
+        # validation, preflight and execution (pyraimd2.config contract)
+        from pyraimd2.config import normalize_pw_cmd
+
+        object.__setattr__(self, "pw_cmd", normalize_pw_cmd(self.pw_cmd))
+
 
 class QeEngineError(EngineError):
     """An EngineError that states whether rerunning the attempt can help."""

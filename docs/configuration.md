@@ -293,6 +293,20 @@ execution knobs below change how pw.x runs, never the physical recipe
 (they are recorded in `resolved_config.json` but excluded from the
 reference fingerprint).
 
+- `pw_cmd` (string or list of strings, default `"pw.x"`): how pw.x is
+  launched.  One shared argv contract everywhere — configuration
+  validation, `--check-environment` and the executor all see the same
+  normalized form.  A TOML list is literal argv, verbatim (`pw_cmd =
+  ["mpirun", "-np", "4", "pw.x"]`; each element stays one argv word,
+  including paths with spaces or parentheses).  A string naming an
+  existing file is that literal path; any other string is split with
+  POSIX `shlex` rules — quote a path containing spaces
+  (`pw_cmd = "'/opt/QE 7.5/pw.x' -nk 2"`).  Nothing is shell-expanded:
+  no shell ever runs the command, so shell operators
+  (`|`, `>`, `&&`, `$(...)`) would have no effect and are refused as
+  usage errors at validation.  For `qe-ase`, an explicit `command`
+  string (ASE's FileIO layer) overrides `pw_cmd`; the preflight checks
+  exactly the effective one.
 - `disk_io` (string, optional): QE's own `disk_io` (INPUT_PW, QE 7.5).
   One of `high` / `medium` / `low` / `nowf` / `minimal` / `none`; an
   unsupported value fails at validation, before any SCF.  Absent (TOML)
@@ -316,12 +330,17 @@ reference fingerprint).
   `pyramid validate run.toml` checks the configuration only (never the
   machine); `pyramid validate run.toml --check-environment` adds a
   read-only, zero-computation preflight of local runtime prerequisites
-  (direct `pw_cmd` executable resolution, pseudopotential file presence,
+  (the effective `pw_cmd`/`command` argv[0] resolution — a direct
+  executable with arguments passes statically, a missing one is
+  `blocked`, launchers such as `srun`/`mpirun` and shell-style
+  compositions stay `unverified` — pseudopotential file presence,
   optional packages probed via import metadata without importing, local
-  model files; launcher compositions and unconfirmable caches report
-  `unverified`, never `ready`); and `--probe-backends` explicitly
+  model files, and wrapper backends checked through their declared base
+  backend; unknown plugin backends report `unverified`, never `ready`);
+  and `--probe-backends` explicitly
   evaluates the structure once per backend.  `--json` emits one
-  machine-readable report object for any of the three scopes.
+  machine-readable report object for any of the three scopes, including
+  a usage conflict between `--probe-backends` and `--check-environment`.
 - `startingwfc_file` (boolean, default `false`): also restart
   wavefunctions from a staged `.save` tree (`startingwfc = 'file'` is
   written only when this attempt actually staged one; the attempt record

@@ -471,15 +471,49 @@ def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
     return report
 
 
+def _readonly_run_ids(db_path: Path) -> set[str] | None:
+    """run ids recorded in an existing trajectory database.
+
+    Strictly read-only: opened with sqlite ``mode=ro`` so no schema is
+    created or migrated, no WAL/SHM/journal file appears, and the file's
+    content/size/mtime stay untouched.  Returns ``None`` when the file
+    is not a readable ASE SQLite database (empty, corrupt, wrong
+    schema) — the caller then refuses on occupancy alone, with the
+    unreadable state named; nothing is repaired or removed.
+    """
+    import sqlite3
+
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = con.execute(
+                "SELECT value FROM text_key_values WHERE key = 'run_id'"
+            ).fetchall()
+        finally:
+            con.close()
+    except (sqlite3.Error, OSError):
+        return None
+    return {str(value) for (value,) in rows}
+
+
 def check_run_directory_available(config: PyramidConfig) -> None:
     """Refuse to mix runs: an existing event log or trajectory database in
-    the run directory means a deliberate resume/fork, never a fresh run."""
+    the run directory means a deliberate resume/fork, never a fresh run.
+
+    Read-only: occupancy is decided from file presence and a read-only
+    query; no database is created, migrated or repaired here.
+    """
     run_dir = config.run.directory
     db_path = run_dir / "trajectory.db"
     if db_path.is_file():
-        with Store(db_path) as _store:
-            existing = {str(row.key_value_pairs.get("run_id"))
-                        for row in _store._db.select()}
+        existing = _readonly_run_ids(db_path)
+        if existing is None:
+            raise WorkflowError(
+                f"run directory {run_dir} already contains "
+                f"trajectory.db, which is not readable as a trajectory "
+                f"database ({db_path.stat().st_size} bytes on disk); it is "
+                "treated as occupied and left untouched — choose a new "
+                "run.directory or inspect/restore the existing file")
         if config.run.id in existing:
             raise WorkflowError(
                 f"run.id {config.run.id!r} already exists in {db_path}; a "
