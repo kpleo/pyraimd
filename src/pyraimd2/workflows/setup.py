@@ -471,31 +471,6 @@ def validate_setup(config: PyramidConfig, *, probe: bool = False) -> dict:
     return report
 
 
-def _readonly_run_ids(db_path: Path) -> set[str] | None:
-    """run ids recorded in an existing trajectory database.
-
-    Strictly read-only: opened with sqlite ``mode=ro`` so no schema is
-    created or migrated, no WAL/SHM/journal file appears, and the file's
-    content/size/mtime stay untouched.  Returns ``None`` when the file
-    is not a readable ASE SQLite database (empty, corrupt, wrong
-    schema) — the caller then refuses on occupancy alone, with the
-    unreadable state named; nothing is repaired or removed.
-    """
-    import sqlite3
-
-    try:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        try:
-            rows = con.execute(
-                "SELECT value FROM text_key_values WHERE key = 'run_id'"
-            ).fetchall()
-        finally:
-            con.close()
-    except (sqlite3.Error, OSError):
-        return None
-    return {str(value) for (value,) in rows}
-
-
 def check_run_directory_available(config: PyramidConfig) -> None:
     """Refuse to mix runs: an existing event log or trajectory database in
     the run directory means a deliberate resume/fork, never a fresh run.
@@ -506,15 +481,21 @@ def check_run_directory_available(config: PyramidConfig) -> None:
     run_dir = config.run.directory
     db_path = run_dir / "trajectory.db"
     if db_path.is_file():
-        existing = _readonly_run_ids(db_path)
-        if existing is None:
-            raise WorkflowError(
-                f"run directory {run_dir} already contains "
-                f"trajectory.db, which is not readable as a trajectory "
-                f"database ({db_path.stat().st_size} bytes on disk); it is "
-                "treated as occupied and left untouched — choose a new "
-                "run.directory or inspect/restore the existing file")
-        if config.run.id in existing:
+        # Presence alone is the occupancy fact; the database is never
+        # opened here — even a read-only SQLite connection can create
+        # WAL/SHM side files on a WAL-mode database, and validation must
+        # leave the directory byte-for-byte untouched.  The same-run
+        # variant is told apart from the plain-text resolved_config.json
+        # (a plain file read, no SQLite) when one is available.
+        same_run = None
+        resolved = run_dir / "resolved_config.json"
+        if resolved.is_file():
+            try:
+                same_run = (json.loads(resolved.read_text())
+                            .get("run", {}).get("id")) == config.run.id
+            except (OSError, ValueError):
+                same_run = None
+        if same_run:
             raise WorkflowError(
                 f"run.id {config.run.id!r} already exists in {db_path}; a "
                 "direct restart would silently lose anchors, check counts "
@@ -522,9 +503,11 @@ def check_run_directory_available(config: PyramidConfig) -> None:
                 f"`pyramid resume {run_dir} --steps N`, or choose a new "
                 "run.id for a fresh run")
         raise WorkflowError(
-            f"run directory {run_dir} already belongs to run(s) "
-            f"{sorted(existing)}; choose a new run.directory (one directory "
-            "per run keeps inspect/resume unambiguous)")
+            f"run directory {run_dir} already contains a trajectory "
+            "database; occupied directories are refused without opening "
+            "them. Choose a new run.directory for a fresh run, or "
+            f"continue the existing one with `pyramid resume {run_dir} "
+            "--steps N`")
     if (run_dir / "events.jsonl").exists():
         raise WorkflowError(
             f"run directory {run_dir} already contains an event log; choose "
