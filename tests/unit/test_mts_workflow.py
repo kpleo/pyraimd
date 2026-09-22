@@ -363,8 +363,8 @@ def test_mts_endpoint_failure_keeps_prefix(tmp_path):
     assert resumed.steps_completed == 32
 
 
-# --- N060 regressions: B-R1 final checkpoint, B-R2 unique identity,
-# --- B-R3 declared conventions and cache identity ---------------------------
+# --- final-checkpoint completeness, unique task identity, declared
+# --- conventions and cache identity ---------------------------------------
 
 
 def test_normal_short_run_always_leaves_a_final_checkpoint(tmp_path):
@@ -545,3 +545,144 @@ def test_fingerprintless_backend_refused_before_evaluation(tmp_path):
         MtsDriver(config, load_structure(config), reference,
                   AnonymousSurrogate(), tmp_path / "run", event_log=log)
     log.close()
+
+
+# --- commit order: a failed store write never claims an uncommitted
+# --- boundary (the checkpoint carries the last COMMITTED boundary) ---------
+
+
+def test_store_append_failure_checkpoints_only_the_committed_prefix(
+        tmp_path):
+    """m=4, interval 8, planned 12 inner steps; OSError at the outer-step-8
+    store append (committed prefix [-1, 4])."""
+    from pyraimd2.runtime.events import EventLog
+    from pyraimd2.workflows.mts_md import MtsDriver
+    from pyraimd2.workflows.setup import (
+        RunOutputs,
+        build_backends,
+        load_structure,
+        prepare_run_directory,
+    )
+    case = tmp_path / "case"
+    case.mkdir()
+    config = load_config(mts_case(case, steps=12))
+    engine, surrogate = build_backends(config, run_dir=case / "run")
+    prepare_run_directory(config, engine=engine, surrogate=surrogate)
+    log = EventLog(case / "run")
+    driver = MtsDriver(config, load_structure(config), engine, surrogate,
+                       case / "run", event_log=log)
+    outputs = RunOutputs(case / "run", config.run.id)
+
+    real_append = driver.store.append
+    calls = {"n": 0}
+
+    def flaky_append(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 3:          # initial + outer-4 committed; 8 fs fails
+            raise OSError("injected store write failure")
+        return real_append(*args, **kwargs)
+
+    driver.store.append = flaky_append
+    with pytest.raises(OSError, match="injected store write failure"):
+        driver.run(3, outputs, verbose=False)
+    driver.close()
+
+    from pyraimd2.runtime.checkpoint import CheckpointManager
+    ck = CheckpointManager(case / "run").read_latest_valid()
+    # the failure checkpoint carries the last COMMITTED boundary (4 fs),
+    # not the uncommitted 8 fs state
+    assert ck is not None
+    assert ck.state["inner_done"] == 4
+    assert ck.state["outer_done"] == 1
+    steps = [int(r.key_value_pairs["step"]) for r in rows_of(case / "run")]
+    assert steps == [-1, 4]
+    # spent backend calls are never rolled back
+    events = [json.loads(l) for l in
+              (case / "run" / "events.jsonl").read_text().splitlines()]
+    tasks = [e for e in events if e.get("type") == "task"]
+    assert len(tasks) > 0
+
+    # resume +8 inner steps -> 12 fs, identical to a continuous 12-fs run
+    continuous = tmp_path / "continuous"
+    continuous.mkdir()
+    run_workflow(load_config(mts_case(continuous, steps=12)),
+                 verbose=False, handle_sigint=False)
+    resume_workflow(case / "run", 8, verbose=False, handle_sigint=False)
+    r1 = rows_of(continuous / "run")
+    r2 = rows_of(case / "run")
+    assert [int(r.key_value_pairs["step"]) for r in r2] == [-1, 4, 8, 12]
+    assert len(r1) == len(r2)
+    for a, b in zip(r1, r2):
+        assert np.allclose(a.toatoms().positions, b.toatoms().positions,
+                           atol=1e-10, rtol=1e-10)
+        assert np.allclose(a.toatoms().get_momenta(),
+                           b.toatoms().get_momenta(), atol=1e-10,
+                           rtol=1e-10)
+    ck = CheckpointManager(case / "run").read_latest_valid()
+    assert ck.state["inner_done"] == 12
+    task_ids = [e["task_id"] for e in
+                (case / "run" / "events.jsonl").read_text()
+                .splitlines() for e in [json.loads(e)]
+                if e.get("type") == "task"]
+    assert len(task_ids) == len(set(task_ids))
+
+
+# --- export keeps the selected labels' physical meaning --------------------
+
+
+def test_export_preserves_label_conventions_and_readback(tmp_path):
+    """free_energy reference + energy surrogate run; both exports read back
+    the distinct declarations (ASE-level readback)."""
+    from ase.io import read as ase_read
+
+    from pyraimd2.runtime.checkpoint import CheckpointManager
+    from pyraimd2.workflows.setup import build_backends
+
+    config = load_config(mts_case(tmp_path, steps=8))
+    reference, surrogate = build_backends(config,
+                                          run_dir=tmp_path / "run")
+    _drive_with(config, _FreeEnergyReference(reference), surrogate,
+                tmp_path / "run")
+
+    ref_path = tmp_path / "ref.extxyz"
+    base_path = tmp_path / "base.extxyz"
+    export_run(tmp_path / "run", force_source="reference",
+               output=ref_path)
+    export_run(tmp_path / "run", force_source="base",
+               output=base_path)
+    ref_frames = ase_read(ref_path, index=":")
+    base_frames = ase_read(base_path, index=":")
+    assert len(ref_frames) == 3 and len(base_frames) == 3
+    for frame in ref_frames:
+        assert frame.info["energy_kind"] == "free_energy"
+        assert frame.info["force_consistent"] is True
+    for frame in base_frames:
+        assert frame.info["energy_kind"] == "energy"
+        assert frame.info["force_consistent"] is True
+    ck = CheckpointManager(tmp_path / "run").read_latest_valid()
+    assert ck.state["energy_kinds"]["reference"] == "free_energy"
+
+    # the REAL resume path with a convention-changed backend at the same
+    # fingerprint: refused at the energy_kind gate before any evaluation
+    kind_case = tmp_path / "kind-change"
+    kind_case.mkdir()
+    config2 = load_config(mts_case(kind_case, steps=8))
+    ref2, sur2 = build_backends(config2, run_dir=kind_case / "run")
+
+    class SameIdFreeEnergy:
+        def __init__(self, base):
+            import dataclasses
+            self._base = base
+            self.capabilities = dataclasses.replace(
+                base.capabilities, energy_kind="free_energy")
+            self.fingerprint = base.fingerprint   # same content identity
+
+        def compute(self, atoms):
+            import dataclasses
+            return dataclasses.replace(self._base.compute(atoms),
+                                       energy_kind="free_energy")
+
+    _drive_with(config2, SameIdFreeEnergy(ref2), sur2, kind_case / "run")
+    with pytest.raises(WorkflowError, match="energy_kind"):
+        resume_workflow(kind_case / "run", 4, verbose=False,
+                        handle_sigint=False)

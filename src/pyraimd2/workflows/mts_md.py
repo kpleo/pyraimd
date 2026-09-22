@@ -175,17 +175,22 @@ class MtsDriver:
         self.store.close()
 
     # -- per-boundary commits ----------------------------------------------
-    def _record_boundary(self, boundary, *, initial: bool = False) -> None:
+    def _record_boundary(self, boundary, *, initial: bool = False,
+                         positions=None, momenta=None,
+                         inner_step: int | None = None,
+                         outer_index: int | None = None) -> None:
         """Commit one outer boundary: store row (both labels, driving
         absent) + commit event + step event with inner/outer identity.
 
         The initial boundary stores at step -1 (the shared initial-row
         convention); outer boundary k stores at its inner step k*m.
+        The commit is all-or-nothing for the physical state: the
+        evaluation counter advances only after the store row exists, so
+        a failed append never claims an uncommitted boundary.
         """
-        self._evaluation_counter += 1
-        evaluation_id = self._evaluation_counter - 1
-        inner_step = 0 if initial else self.inner_done
-        outer = self.outer_done
+        inner_step = 0 if initial else int(inner_step)
+        outer = 0 if initial else int(outer_index)
+        evaluation_id = self._evaluation_counter + 1
         ctx = EvaluationContext(
             run_id=self.run_id, step_id=(-1 if initial else inner_step),
             evaluation_id=evaluation_id,
@@ -197,6 +202,9 @@ class MtsDriver:
         label_id = f"{self.run_id}-label-{evaluation_id}"
         frame = self.atoms.copy()
         frame.calc = None
+        if not initial:
+            frame.positions = np.array(positions, dtype=float)
+            frame.set_momenta(np.array(momenta, dtype=float))
         row_id = self.store.append(
             self.run_id, ctx.step_id, frame, "mts",
             surrogate=_surrogate_result(
@@ -215,6 +223,7 @@ class MtsDriver:
                               "outer_ratio": self.m}},
             driving=None,  # MTS has no single driving force
             label_id=label_id)
+        self._evaluation_counter += 1   # the row exists: the id is used
         self.event_log.append_once(
             f"evaluation:{self.run_id}:{evaluation_id}",
             EVALUATION_COMMITTED,
@@ -293,7 +302,7 @@ class MtsDriver:
         stopped = False
         # the kernel keeps this list updated with the highest emitted task
         # number — even when a segment dies mid-call, so a failure/resume
-        # never reuses a task identity (B-R2)
+        # never reuses a task identity
         self._counter_holder: list = []
         try:
             for _ in range(n_outer):
@@ -329,12 +338,21 @@ class MtsDriver:
                     self._record_boundary(result.boundaries[0],
                                           initial=True)
                 endpoint = result.boundaries[-1]
-                self.outer_done += 1
-                self.inner_done += self.m
+                new_outer = self.outer_done + 1
+                new_inner = self.inner_done + self.m
+                # commit FIRST: only a committed boundary advances the
+                # physical state (a failed store write leaves the driver's
+                # state at the last committed boundary — the checkpoint
+                # then carries exactly that)
+                self._record_boundary(
+                    endpoint, positions=result.final_positions_A,
+                    momenta=result.final_momenta_ase,
+                    inner_step=new_inner, outer_index=new_outer)
+                self.outer_done = new_outer
+                self.inner_done = new_inner
                 self.atoms.positions = np.array(result.final_positions_A)
                 self.atoms.set_momenta(result.final_momenta_ase)
                 self._carried = result.final_labels
-                self._record_boundary(endpoint)
                 if self.inner_done % checkpoint_interval == 0:
                     self._write_checkpoint()
                 if self.inner_done % max(self.m, interval) == 0:
@@ -359,7 +377,7 @@ class MtsDriver:
                 "reason": repr(error)})
             raise
         wall = time.perf_counter() - run_start
-        # B-R1: a completed/stopped run ALWAYS leaves a checkpoint at the
+        # a completed/stopped run ALWAYS leaves a checkpoint at the
         # last committed outer boundary (never interval-dependent); the
         # exception path checkpoints in its own handler
         if self._carried is not None:
@@ -518,7 +536,7 @@ def _resume_mts(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                 f"{model_id_for(surrogate, 0)!r}); resume requires the "
                 "same model — start a new run, or fork")
         # declared energy conventions must be the checkpoint's ones —
-        # a convention change invalidates the carried labels (B-R3)
+        # a convention change invalidates the carried labels
         kinds = state.get("energy_kinds") or {}
         if engine_capabilities(reference).energy_kind != \
                 kinds.get("reference") or \
@@ -549,7 +567,7 @@ def _resume_mts(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             # resuming from here would duplicate already-committed frames
             # (e.g. a run killed between a boundary commit and its
             # checkpoint write).  Refuse BEFORE any write/evaluation —
-            # never silently re-add rows (B-R1)
+            # never silently re-add rows
             raise WorkflowError(
                 f"the committed trajectory ({current} complete outer "
                 f"boundaries) is ahead of the last valid checkpoint "

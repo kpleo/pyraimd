@@ -36,12 +36,18 @@ FORCE_SOURCES = ("driving", "reference", "base")
 
 
 def _select_forces(data: dict, route: str, force_source: str):
-    """(energy, forces, available, label_id) for one store row."""
+    """(energy, forces, available, label_id, energy_kind,
+    force_consistent) for one store row.
+
+    The selected label's declared energy convention and force consistency
+    ride along verbatim; a label recorded before those fields existed
+    (or without them) reports ``"unknown"``/``None`` — never defaulted
+    to a known value."""
     if force_source == "driving" and route == "mts":
         # an MTS outer step has no single driving force (slow-residual
         # kicks bracket inner fast steps); never substitute the surrogate
         # label — the frame honestly reports forces missing
-        return None, None, False, None
+        return None, None, False, None, "unknown", None
     if force_source == "driving":
         payload = data.get("driving")
         if payload is None:
@@ -50,14 +56,18 @@ def _select_forces(data: dict, route: str, force_source: str):
             raise ExportError(
                 f"store row has no {route!r} payload to drive from; the "
                 "trajectory database looks corrupt")
-        return float(payload["energy"]), np.asarray(payload["forces"], float), True, None
+        return (float(payload["energy"]),
+                np.asarray(payload["forces"], float), True, None,
+                payload.get("energy_kind") or "unknown",
+                payload.get("force_consistent"))
     key = "engine" if force_source == "reference" else "surrogate"
     payload = data.get(key)
     if payload is None:
-        return None, None, False, None
+        return None, None, False, None, "unknown", None
     label_id = data.get("engine_label_id") if force_source == "reference" else None
     return (float(payload["energy"]), np.asarray(payload["forces"], float),
-            True, label_id)
+            True, label_id, payload.get("energy_kind") or "unknown",
+            payload.get("force_consistent"))
 
 
 def _row_timestep_fs(row) -> float | None:
@@ -107,8 +117,8 @@ def frame_from_row(row, run_id: str, *, force_source: str,
     data = row.data
     route = str(row.key_value_pairs["route"])
     step = int(row.key_value_pairs["step"])
-    energy, forces, available, label_id = _select_forces(data, route,
-                                                         force_source)
+    (energy, forces, available, label_id, energy_kind,
+     force_consistent) = _select_forces(data, route, force_source)
     if store is not None:
         atoms = store.complete_step_frame(row, timestep_fs
                                           if timestep_fs is not None
@@ -136,6 +146,8 @@ def frame_from_row(row, run_id: str, *, force_source: str,
         "force_source": force_source,
         "forces_available": bool(available),
     })
+    atoms.info["energy_kind"] = energy_kind
+    atoms.info["force_consistent"] = force_consistent
     if available:
         atoms.info["energy"] = float(energy)
     if label_id:
