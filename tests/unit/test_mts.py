@@ -1,7 +1,7 @@
 """Unit and numerics tests for the experimental fixed-model MTS kernel
 (pyraimd2.loop.mts) on analytic doubles — no real engines ever launch.
 
-The two-body harmonic model is the N058-B fixed analytic case: N=2,
+The two-body harmonic model is the fixed analytic case: N=2,
 masses 28.085 amu, r0=(2.35,0,0) A, K=diag(1,4,16) eV/A^2,
 U = 1/2 q^T K q with q = x2 - x1 - r0.  The fast double scales the
 reference by c (energy and forces together, so metadata stays
@@ -394,9 +394,9 @@ def test_total_momentum_and_com_conservation():
 
 
 # ---------------------------------------------------------------------------
-# N059-B1 ledger regressions (reviews/N058-r1/B): request association,
-# unique task identity, the run_start protocol marker and label validity
-# as part of the logical task.
+# Ledger regressions: request association, unique task identity, the
+# run_start protocol marker and label validity as part of the logical
+# task.
 
 from pyraimd2.runtime.costs import summarize_tasks
 from pyraimd2.runtime.events import EventLog

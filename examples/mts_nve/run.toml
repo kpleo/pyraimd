@@ -1,0 +1,41 @@
+schema_version = 1
+# Experimental fixed-model MTS (respa) NVE demo on the builtin analytic
+# harmonic backends — no external program, no model download.
+#
+# task.mode "mts" integrates the slow residual F_ref - F_fast with
+# symmetric outer kicks around outer_ratio inner velocity-Verlet steps;
+# timestep_fs is the INNER step and steps count inner steps: this file
+# simulates 128 fs as 32 complete outer steps.
+
+[run]
+id = "mts-demo"
+directory = "run"
+
+[task]
+kind = "md"
+mode = "mts"
+
+[structure]
+file = "structure.extxyz"     # written by make_structure.py (with momenta)
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0             # inner step (fs)
+steps = 128                   # inner steps (128 fs)
+outer_ratio = 4               # inner steps per outer step
+
+[checkpoint]
+interval_steps = 8            # inner steps; only complete outer
+                              # boundaries are checkpointed
+
+[reference]
+backend = "harmonic-reference"
+k = 1.0
+r0 = 0.9
+
+[surrogate]
+backend = "harmonic-surrogate"
+k = 0.9
+r0 = 0.9
+bias = 0.0

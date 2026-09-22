@@ -318,6 +318,12 @@ class MtsDriver:
                           f"(t = {self.inner_done * self.h_fs:.2f} fs)",
                           flush=True)
         except Exception as error:
+            # the last COMMITTED outer boundary stays resumable: checkpoint
+            # it now (the failure itself may fall between interval
+            # checkpoints); a failure before the first commit leaves no
+            # checkpoint and no resume pretends one exists
+            if self._carried is not None:
+                self._write_checkpoint()
             self.event_log.append(RUN_END, {
                 "run_id": self.run_id, "status": "failed",
                 "reason": repr(error)})
@@ -410,8 +416,8 @@ def _run_mts(config: PyramidConfig, atoms: Atoms, run_dir: Path, *,
     if verbose:
         status = ("stopped early at the last complete outer boundary"
                   if outcome["stopped"] else "completed")
-        print(f"run {status}: {steps} complete inner steps "
-              f"({driver.outer_done} outer boundaries, wall time "
+        print(f"run {status}: {driver.inner_done} inner steps "
+              f"({driver.outer_done} complete outer boundaries, wall time "
               f"{outcome['wall_time_s']:.2f} s)")
         print(f"  outputs: {run_dir}/summary.json, summary.csv, "
               "trajectory.extxyz")
@@ -516,7 +522,8 @@ def _resume_mts(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
             signal.signal(signal.SIGINT, previous)
     steps = _complete_steps(run_dir, config.run.id)
     if verbose:
-        print(f"resume completed: {steps} complete inner steps")
+        print(f"resume completed: {driver.inner_done} inner steps "
+              f"({driver.outer_done} complete outer boundaries)")
     return WorkflowResult(run_dir=run_dir, run_id=config.run.id,
                           mode=config.task.mode, steps_completed=steps,
                           steps_this_call=outcome["completed"],
