@@ -51,6 +51,7 @@ energies eV, times in fs on the interface (internally
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass
 
 import numpy as np
@@ -203,7 +204,16 @@ class _CallLedger:
         self.inference_time_s = 0.0
 
     def call(self, *, side: str, backend: object, method: str,
-             purpose: str, invoke) -> object:
+             purpose: str, invoke, validate) -> object:
+        """One logical backend request with its physical attempt(s).
+
+        The kwargs physical_attempt yields (request_id for self-reporting
+        backends) are passed through to compute/predict; backends without
+        that capability are called plainly.  The logical task's success
+        includes a usable label: physical execution that returned an
+        unusable result is recorded as a successful attempt under a
+        failed task — the two facts are never merged.
+        """
         self.counter += 1
         task_id = f"{self.run_id}-task-{self.counter}"
         operation = "reference" if side == "reference" else "inference"
@@ -215,8 +225,10 @@ class _CallLedger:
             with _events.physical_attempt(
                     backend, self.event_log, operation=operation,
                     request_id=task_id, purpose=purpose, source="mts",
-                    method=method):
-                result = invoke()
+                    method=method) as backend_kwargs:
+                result = invoke(backend_kwargs)
+            validate(result)   # label usability gates the LOGICAL task;
+            # the attempt event (physical launch) is already committed
         except Exception as exc:
             status, error = "failed", repr(exc)
             raise
@@ -260,8 +272,23 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
     t_start = time.perf_counter()
     _validate_inputs(atoms, inner_timestep_fs, outer_ratio, n_outer_steps)
     _validate_capabilities(reference, surrogate)
-    run_id = run_id or "mts"
+    # one run/segment = one unique identity: task ids are unique across
+    # segments sharing a log (never reset a counter to fake a resume);
+    # the caller-provided run_id (workflow integration) stays stable for
+    # the WHOLE run and the segment counter is persisted by the caller.
+    run_id = run_id or f"mts-{uuid.uuid4().hex[:12]}"
     ledger = _CallLedger(event_log, run_id)
+    if event_log is not None:
+        # declare the attempt-ledger protocol BEFORE the first
+        # evaluation/failure, so the costs summary knows tasks parent
+        # physical attempts even when the first request fails pre-launch
+        event_log.append(_events.RUN_START, {
+            "run_id": run_id, "source": "mts",
+            "algorithm": MTS_ALGORITHM_ID,
+            "attempt_ledger": _events.ATTEMPT_LEDGER_PHYSICAL_V1,
+            "inner_timestep_fs": float(inner_timestep_fs),
+            "outer_ratio": int(outer_ratio),
+            "n_outer_steps": int(n_outer_steps)})
     ref_caps = engine_capabilities(reference)
     sur_caps = surrogate_capabilities(surrogate)
 
@@ -285,20 +312,20 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
         return view
 
     def reference_at(x_now: np.ndarray, purpose: str) -> EngineResult:
-        res = ledger.call(side="reference", backend=reference,
-                          method="compute", purpose=purpose,
-                          invoke=lambda: reference.compute(
-                              fresh_view(x_now)))
-        _check_result("reference", res, n, ref_caps)
-        return res
+        return ledger.call(
+            side="reference", backend=reference, method="compute",
+            purpose=purpose,
+            invoke=lambda kw: reference.compute(fresh_view(x_now), **kw),
+            validate=lambda res: _check_result("reference", res, n,
+                                               ref_caps))
 
     def fast_at(x_now: np.ndarray, purpose: str) -> SurrogatePrediction:
-        res = ledger.call(side="surrogate", backend=surrogate,
-                          method="predict", purpose=purpose,
-                          invoke=lambda: surrogate.predict(
-                              fresh_view(x_now)))
-        _check_result("surrogate", res, n, sur_caps)
-        return res
+        return ledger.call(
+            side="surrogate", backend=surrogate, method="predict",
+            purpose=purpose,
+            invoke=lambda kw: surrogate.predict(fresh_view(x_now), **kw),
+            validate=lambda res: _check_result("surrogate", res, n,
+                                               sur_caps))
 
     def commit(index: int, x_now: np.ndarray, p_now: np.ndarray,
                u_ref: float, u_fast: float) -> None:

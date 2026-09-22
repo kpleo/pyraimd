@@ -9,6 +9,8 @@ consistent).
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 from ase import Atoms, units
@@ -389,3 +391,131 @@ def test_total_momentum_and_com_conservation():
         assert np.allclose(com, expected, atol=1e-10)
     assert np.all(np.isfinite(result.final_positions_A))
     assert np.all(np.isfinite(result.final_momenta_ase))
+
+
+# ---------------------------------------------------------------------------
+# N059-B1 ledger regressions (reviews/N058-r1/B): request association,
+# unique task identity, the run_start protocol marker and label validity
+# as part of the logical task.
+
+from pyraimd2.runtime.costs import summarize_tasks
+from pyraimd2.runtime.events import EventLog
+
+
+class SelfReportingDouble(ReferenceDouble):
+    """Engine double that self-reports one physical attempt per launch
+    (the QE-style request_id protocol), with injectable pre-launch
+    failure and internal retry."""
+
+    def __init__(self, *, fail_before_launch=False, retry_once=False):
+        super().__init__()
+        self.attempt_sink = None
+        self.seen_ids = []
+        self.launched = 0
+        self.fail_before_launch = fail_before_launch
+        self.retry_once = retry_once
+
+    def compute(self, atoms, *, request_id=None):
+        self.seen_ids.append(request_id)
+        if self.fail_before_launch:
+            raise RuntimeError("pre-launch failure: no physical execution")
+        self.launched += 1
+        sink = self.attempt_sink
+        assert sink is not None
+        n = self.launched
+        if self.retry_once and n == 2:
+            sink.append("attempt", {
+                "record": "physical_attempt", "operation": "reference",
+                "purpose": "test", "request_id": request_id, "attempt": 1,
+                "status": "failed", "started_unix": 0.0,
+                "elapsed_s": 0.01, "returncode": 1,
+                "directory": f"call-{n}a", "source": "test"})
+        sink.append("attempt", {
+            "record": "physical_attempt", "operation": "reference",
+            "purpose": "test", "request_id": request_id, "attempt": 1,
+            "status": "success", "started_unix": 0.0, "elapsed_s": 0.01,
+            "returncode": 0, "directory": f"call-{n}b", "source": "test"})
+        return super().compute(atoms)
+
+
+def _events_of(path):
+    return [json.loads(l) for l in
+            (path / "events.jsonl").read_text().splitlines()]
+
+
+def test_self_reporting_backend_gets_request_id_counted_once(tmp_path):
+    log = EventLog(tmp_path)
+    ref = SelfReportingDouble()
+    run_mts(demo_atoms(), ref, SurrogateDouble(), inner_timestep_fs=1.0,
+            outer_ratio=2, n_outer_steps=1, event_log=log)
+    log.close()
+    assert ref.seen_ids and all(i is not None for i in ref.seen_ids)
+    summary = summarize_tasks(_events_of(tmp_path))
+    assert summary["reference"]["logical_requests"] == 2
+    assert summary["reference"]["actual_executions"] == 2  # not 4
+
+
+def test_prelaunch_failure_counts_zero_executions(tmp_path):
+    log = EventLog(tmp_path)
+    ref = SelfReportingDouble(fail_before_launch=True)
+    with pytest.raises(RuntimeError, match="pre-launch"):
+        run_mts(demo_atoms(), ref, SurrogateDouble(),
+                inner_timestep_fs=1.0, outer_ratio=1, n_outer_steps=1,
+                event_log=log)
+    log.close()
+    events = _events_of(tmp_path)
+    # the protocol marker precedes the first evaluation/failure
+    assert events[0]["type"] == "run_start"
+    assert events[0]["attempt_ledger"] == "physical_attempt_v1"
+    summary = summarize_tasks(events)
+    assert summary["reference"]["logical_requests"] == 1
+    assert summary["reference"]["actual_executions"] == 0  # not 1
+
+
+def test_repeated_default_calls_keep_unique_task_ids(tmp_path):
+    log = EventLog(tmp_path)
+    for _ in range(2):
+        run_mts(demo_atoms(), ReferenceDouble(), SurrogateDouble(),
+                inner_timestep_fs=1.0, outer_ratio=2, n_outer_steps=1,
+                event_log=log)
+    log.close()
+    events = _events_of(tmp_path)
+    task_ids = [e["task_id"] for e in events if e["type"] == "task"]
+    assert len(task_ids) == len(set(task_ids))
+    summary = summarize_tasks(events)
+    assert summary["reference"]["actual_executions"] == 4  # not 8
+    assert summary["reference"]["logical_requests"] == 4
+
+
+def test_self_reporting_internal_retry_counts_each_launch(tmp_path):
+    log = EventLog(tmp_path)
+    ref = SelfReportingDouble(retry_once=True)
+    run_mts(demo_atoms(), ref, SurrogateDouble(), inner_timestep_fs=1.0,
+            outer_ratio=2, n_outer_steps=1, event_log=log)
+    log.close()
+    summary = summarize_tasks(_events_of(tmp_path))
+    # 2 logical requests (initial + one endpoint); the second request
+    # self-reported a failed launch then a successful one
+    assert summary["reference"]["logical_requests"] == 2
+    assert summary["reference"]["actual_executions"] == 3
+    assert summary["reference"]["failed_attempts"] == 1
+    assert summary["reference"]["successful_executions"] == 2
+
+
+def test_invalid_label_fails_the_task_but_keeps_the_attempt(tmp_path):
+    log = EventLog(tmp_path)
+    with pytest.raises(MtsError, match="non-finite"):
+        run_mts(demo_atoms(), NanDouble(), SurrogateDouble(),
+                inner_timestep_fs=1.0, outer_ratio=1, n_outer_steps=1,
+                event_log=log)
+    log.close()
+    events = _events_of(tmp_path)
+    task = next(e for e in events if e["type"] == "task")
+    assert task["status"] == "failed"
+    assert "non-finite" in task["error"]
+    attempt = next(e for e in events if e["type"] == "attempt")
+    assert attempt["status"] == "success"   # the launch really happened
+    summary = summarize_tasks(events)
+    assert summary["reference"]["logical_requests"] == 1
+    assert summary["reference"]["actual_executions"] == 1
+    assert summary["reference"]["successful_executions"] == 1
