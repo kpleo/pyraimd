@@ -25,7 +25,7 @@ from ase import Atoms
 
 from pyraimd2 import __version__
 from pyraimd2.config import PyramidConfig
-from pyraimd2.engines.base import EngineResult
+from pyraimd2.engines.base import EngineResult, engine_capabilities
 from pyraimd2.loop.mts import MtsLabels, run_mts
 from pyraimd2.runtime.checkpoint import CheckpointManager
 from pyraimd2.runtime.context import EvaluationContext, EvaluationPhase
@@ -41,7 +41,7 @@ from pyraimd2.runtime.events import (
 )
 from pyraimd2.runtime.identity import fingerprint_of, model_id_for
 from pyraimd2.store import STORE_SCHEMA_VERSION, Store
-from pyraimd2.surrogate.base import SurrogatePrediction
+from pyraimd2.surrogate.base import SurrogatePrediction, surrogate_capabilities
 from pyraimd2.workflows.setup import WorkflowError
 
 MTS_DRIVER_ID = "mts-nve-respa"
@@ -54,14 +54,14 @@ def _labels_of(boundary) -> MtsLabels:
 
 
 def _engine_result(label: MtsLabels, *, wall_time_s: float = 0.0,
-                   energy_kind: str = "energy") -> EngineResult:
+                   energy_kind: str) -> EngineResult:
     return EngineResult(energy=label.U_ref_eV, forces=label.F_ref_eV_A,
                         stress=None, wall_time_s=wall_time_s,
                         energy_kind=energy_kind, force_consistent=True)
 
 
 def _surrogate_result(label: MtsLabels, *, n_atoms: int,
-                      energy_kind: str = "energy") -> SurrogatePrediction:
+                      energy_kind: str) -> SurrogatePrediction:
     return SurrogatePrediction(energy=label.U_fast_eV,
                                forces=label.F_fast_eV_A, stress=None,
                                uncertainty=np.full(n_atoms, np.nan),
@@ -93,9 +93,27 @@ class MtsDriver:
                            else time.perf_counter())
         self.h_fs = float(config.dynamics.timestep_fs)
         self.m = int(config.dynamics.outer_ratio)
+        # Declared content identities are REQUIRED in this mode: a class
+        # name (or nothing) is not proof the cached boundary labels belong
+        # to the same model/settings — refuse BEFORE any evaluation
         self.model_id = model_id_for(surrogate, 0)
         self.engine_fingerprint = fingerprint_of(reference)
-        self._kinds = {"reference": "energy", "surrogate": "energy"}
+        if self.engine_fingerprint is None:
+            raise WorkflowError(
+                "task.mode 'mts' requires the reference backend to declare "
+                "a fingerprint (content identity for cached boundary "
+                "labels); a class name is not an identity — declare one "
+                "explicitly before running")
+        if fingerprint_of(surrogate) is None:
+            raise WorkflowError(
+                "task.mode 'mts' requires the surrogate to declare a "
+                "fingerprint (content identity for cached boundary "
+                "labels); a class name is not an identity — declare one "
+                "explicitly before running")
+        # each side keeps its OWN declared energy convention end to end
+        self._kinds = {
+            "reference": engine_capabilities(reference).energy_kind,
+            "surrogate": surrogate_capabilities(surrogate).energy_kind}
         self._evaluation_counter = 0
 
         if resume_state is None and "momenta" not in atoms.arrays:
@@ -181,8 +199,11 @@ class MtsDriver:
         frame.calc = None
         row_id = self.store.append(
             self.run_id, ctx.step_id, frame, "mts",
-            surrogate=_surrogate_result(labels, n_atoms=len(frame)),
-            engine=_engine_result(labels),
+            surrogate=_surrogate_result(
+                labels, n_atoms=len(frame),
+                energy_kind=self._kinds["surrogate"]),
+            engine=_engine_result(
+                labels, energy_kind=self._kinds["reference"]),
             reason="mts_outer_boundary",
             metadata={"context": ctx.as_dict(), "accepted": True,
                       "checked": False, "constraint": None,
@@ -270,6 +291,10 @@ class MtsDriver:
         run_start = time.perf_counter()
         last_segment_wall: float | None = None
         stopped = False
+        # the kernel keeps this list updated with the highest emitted task
+        # number — even when a segment dies mid-call, so a failure/resume
+        # never reuses a task identity (B-R2)
+        self._counter_holder: list = []
         try:
             for _ in range(n_outer):
                 if self._stop_requested:
@@ -294,8 +319,10 @@ class MtsDriver:
                     n_outer_steps=1, initial_labels=self._carried,
                     run_id=self.run_id,
                     task_counter_start=self._task_counter,
-                    event_log=self.event_log, emit_run_start=False)
-                self._task_counter = result.task_counter_end
+                    event_log=self.event_log, emit_run_start=False,
+                    task_counter_out=self._counter_holder)
+                self._task_counter = max(self._task_counter,
+                                         result.task_counter_end)
                 if fresh and self.outer_done == 0:
                     # the fresh run's first segment evaluated the initial
                     # state: commit it as the initial evaluation (step -1)
@@ -322,6 +349,9 @@ class MtsDriver:
             # it now (the failure itself may fall between interval
             # checkpoints); a failure before the first commit leaves no
             # checkpoint and no resume pretends one exists
+            if self._counter_holder:
+                self._task_counter = max(self._task_counter,
+                                         *self._counter_holder)
             if self._carried is not None:
                 self._write_checkpoint()
             self.event_log.append(RUN_END, {
@@ -329,6 +359,11 @@ class MtsDriver:
                 "reason": repr(error)})
             raise
         wall = time.perf_counter() - run_start
+        # B-R1: a completed/stopped run ALWAYS leaves a checkpoint at the
+        # last committed outer boundary (never interval-dependent); the
+        # exception path checkpoints in its own handler
+        if self._carried is not None:
+            self._write_checkpoint()
         if stopped and not self._stop_requested:
             self.event_log.append(RUN_END, {
                 "run_id": self.run_id, "status": "stopped",
@@ -343,7 +378,10 @@ class MtsDriver:
             "run_id": self.run_id, "n_steps": self.inner_done,
             "n_evaluations": self._evaluation_counter,
             "n_accepted": self._evaluation_counter,
-            "n_reference": self.outer_done + (0 if self._carried else 1),
+            "costs_note": "reference/inference attempts and failures are "
+                          "counted authoritatively in the task events "
+                          "ledger; this summary carries committed "
+                          "evaluations only",
             "wall_time_s": wall, "stopped_early": stopped})
         return {"completed": self.inner_done, "stopped": stopped,
                 "wall_time_s": wall}
@@ -479,6 +517,21 @@ def _resume_mts(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                 f"({state.get('model_id')!r} vs "
                 f"{model_id_for(surrogate, 0)!r}); resume requires the "
                 "same model — start a new run, or fork")
+        # declared energy conventions must be the checkpoint's ones —
+        # a convention change invalidates the carried labels (B-R3)
+        kinds = state.get("energy_kinds") or {}
+        if engine_capabilities(reference).energy_kind != \
+                kinds.get("reference") or \
+                surrogate_capabilities(surrogate).energy_kind != \
+                kinds.get("surrogate"):
+            raise WorkflowError(
+                "declared energy_kind changed from the checkpoint's "
+                f"{kinds!r} (reference "
+                f"{engine_capabilities(reference).energy_kind!r}, "
+                f"surrogate "
+                f"{surrogate_capabilities(surrogate).energy_kind!r}); "
+                "the carried boundary labels belong to the old "
+                "convention — start a new run")
     except Exception:
         event_log.close()
         raise
@@ -491,6 +544,18 @@ def _resume_mts(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                 f"the trajectory ({current} complete outer boundaries) is "
                 f"behind the checkpoint (outer {state['outer_done']}); the "
                 "run directory is inconsistent")
+        if current > int(state["outer_done"]):
+            # the committed trajectory is AHEAD of the last checkpoint:
+            # resuming from here would duplicate already-committed frames
+            # (e.g. a run killed between a boundary commit and its
+            # checkpoint write).  Refuse BEFORE any write/evaluation —
+            # never silently re-add rows (B-R1)
+            raise WorkflowError(
+                f"the committed trajectory ({current} complete outer "
+                f"boundaries) is ahead of the last valid checkpoint "
+                f"(outer {state['outer_done']}); resuming from the older "
+                "checkpoint would duplicate committed frames — keep the "
+                "run directory as-is or start a new run")
         if verbose:
             print(f"resume: run {config.run.id} (mts) is at inner step "
                   f"{current} (outer {state['outer_done']}); running "

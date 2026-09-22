@@ -231,6 +231,7 @@ class _CallLedger:
         self.event_log = event_log
         self.run_id = run_id
         self.counter = 0
+        self.out_holder: list | None = None
         self.reference_calls = 0
         self.surrogate_calls = 0
         self.reference_time_s = 0.0
@@ -248,6 +249,10 @@ class _CallLedger:
         failed task — the two facts are never merged.
         """
         self.counter += 1
+        if self.out_holder is not None:
+            # the caller sees the highest emitted task number even when
+            # the run dies mid-segment — resume ids never collide
+            self.out_holder[:] = [self.counter]
         task_id = f"{self.run_id}-task-{self.counter}"
         operation = "reference" if side == "reference" else "inference"
         started = time.time()
@@ -298,7 +303,8 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
             event_log=None, run_id: str | None = None,
             initial_labels: MtsLabels | None = None,
             task_counter_start: int = 0,
-            emit_run_start: bool = True) -> MtsResult:
+            emit_run_start: bool = True,
+            task_counter_out: list | None = None) -> MtsResult:
     """One fixed-model symmetric-MTS NVE run; see the module docstring.
 
     ``atoms`` is copied — the caller's positions, momenta and calculator
@@ -315,6 +321,8 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
     run_id = run_id or f"mts-{uuid.uuid4().hex[:12]}"
     ledger = _CallLedger(event_log, run_id)
     ledger.counter = int(task_counter_start)
+    if task_counter_out is not None:
+        ledger.out_holder = task_counter_out
     if initial_labels is not None and int(n_outer_steps) == 0:
         raise MtsError("initial labels only make sense for a non-zero "
                        "segment (a zero-step no-op needs no evaluations)")

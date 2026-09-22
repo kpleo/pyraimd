@@ -7,7 +7,6 @@ ever launches.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +19,7 @@ from pyraimd2.config import ConfigError, load_config
 from pyraimd2.runtime.inspect import inspect_run
 from pyraimd2.store import Store
 from pyraimd2.surrogate.base import SurrogateCapabilities
-from pyraimd2.workflows import (export_run, resume_workflow, run_workflow)
+from pyraimd2.workflows import export_run, resume_workflow, run_workflow
 from pyraimd2.workflows.export import ExportError
 from pyraimd2.workflows.setup import WorkflowError
 
@@ -178,7 +177,7 @@ def test_mts_refuses_non_multiple_steps(tmp_path):
 
 
 def test_mts_refuses_bad_integrator_pairing(tmp_path):
-    case = mts_case(tmp_path)
+    mts_case(tmp_path)
     (tmp_path / "run.toml").write_text(
         (tmp_path / "run.toml").read_text().replace(
             'integrator = "respa"', 'integrator = "verlet"'))
@@ -266,8 +265,11 @@ class _FailingReference:
 def _drive_with(config, reference, surrogate, run_dir):
     from pyraimd2.runtime.events import EventLog
     from pyraimd2.workflows.mts_md import MtsDriver
-    from pyraimd2.workflows.setup import RunOutputs, prepare_run_directory
-    from pyraimd2.workflows.setup import build_backends  # noqa: F401
+    from pyraimd2.workflows.setup import (
+        RunOutputs,
+        build_backends,  # noqa: F401
+        prepare_run_directory,
+    )
     prepare_run_directory(config, engine=reference, surrogate=surrogate)
     log = EventLog(run_dir)
     driver = MtsDriver(config, load_structure_of(config), reference,
@@ -359,3 +361,187 @@ def test_mts_endpoint_failure_keeps_prefix(tmp_path):
     resumed = resume_workflow(failing / "run", 124, verbose=False,
                               handle_sigint=False)
     assert resumed.steps_completed == 32
+
+
+# --- N060 regressions: B-R1 final checkpoint, B-R2 unique identity,
+# --- B-R3 declared conventions and cache identity ---------------------------
+
+
+def test_normal_short_run_always_leaves_a_final_checkpoint(tmp_path):
+    # 4 inner steps (m=4, interval 8): previously no checkpoint at all
+    run_workflow(load_config(mts_case(tmp_path, steps=4)), verbose=False,
+                 handle_sigint=False)
+    from pyraimd2.runtime.checkpoint import CheckpointManager
+    ck = CheckpointManager(tmp_path / "run").read_latest_valid()
+    assert ck is not None
+    assert ck.state["inner_done"] == 4
+    resumed = resume_workflow(tmp_path / "run", 4, verbose=False,
+                              handle_sigint=False)
+    assert resumed.steps_completed == 2
+    assert inspect_run(tmp_path / "run")["physical_time_fs"] == 8.0
+    steps = [int(r.key_value_pairs["step"]) for r in rows_of(tmp_path / "run")]
+    assert steps == [-1, 4, 8]
+
+
+def test_normal_twelve_resume_continues_from_final_not_interval(tmp_path):
+    run_workflow(load_config(mts_case(tmp_path, steps=12)), verbose=False,
+                 handle_sigint=False)
+    from pyraimd2.runtime.checkpoint import CheckpointManager
+    ck = CheckpointManager(tmp_path / "run").read_latest_valid()
+    assert ck.state["inner_done"] == 12
+    resume_workflow(tmp_path / "run", 4, verbose=False, handle_sigint=False)
+    steps = [int(r.key_value_pairs["step"]) for r in rows_of(tmp_path / "run")]
+    assert steps == [-1, 4, 8, 12, 16]
+    assert inspect_run(tmp_path / "run")["physical_time_fs"] == 16.0
+
+
+def test_store_ahead_of_checkpoint_refuses_before_any_write(tmp_path):
+    run_workflow(load_config(mts_case(tmp_path, steps=12)), verbose=False,
+                 handle_sigint=False)
+    ck_dir = tmp_path / "run" / "checkpoints"
+    gens = sorted(int(p.name) for p in ck_dir.iterdir() if p.name.isdigit())
+    import shutil
+    shutil.rmtree(ck_dir / str(gens[-1]))   # drop the newest generation
+    # the pointer falls back to an older generation whose outer_done is
+    # behind the committed trajectory -> explicit refusal, no duplicate
+    with pytest.raises(WorkflowError, match="ahead of the last valid"):
+        resume_workflow(tmp_path / "run", 4, verbose=False,
+                        handle_sigint=False)
+
+
+def test_request_stop_checkpoints_at_the_committed_boundary(tmp_path):
+    from pyraimd2.runtime.events import EventLog
+    from pyraimd2.workflows.mts_md import MtsDriver
+    from pyraimd2.workflows.setup import (
+        RunOutputs,
+        build_backends,
+        load_structure,
+        prepare_run_directory,
+    )
+    config = load_config(mts_case(tmp_path))
+    engine, surrogate = build_backends(config, run_dir=tmp_path / "run")
+    prepare_run_directory(config, engine=engine, surrogate=surrogate)
+    log = EventLog(tmp_path / "run")
+    driver = MtsDriver(config, load_structure(config), engine, surrogate,
+                       tmp_path / "run", event_log=log)
+    outputs = RunOutputs(tmp_path / "run", config.run.id)
+    driver.run(1, outputs, verbose=False)   # one complete outer boundary
+    driver.request_stop()                    # ...then the stop is received
+    outcome = driver.run(config.dynamics.steps
+                         // config.dynamics.outer_ratio - 1, outputs,
+                         verbose=False)
+    driver.close()
+    assert outcome["stopped"]
+    from pyraimd2.runtime.checkpoint import CheckpointManager
+    ck = CheckpointManager(tmp_path / "run").read_latest_valid()
+    assert ck.state["outer_done"] == 1
+    assert ck.state["inner_done"] == 4
+    # resume from the saved 4 fs state continues exactly like continuous
+    continuous = tmp_path / "cont"
+    continuous.mkdir()
+    run_workflow(load_config(mts_case(continuous, steps=32)),
+                 verbose=False, handle_sigint=False)
+    resume_workflow(tmp_path / "run", 28, verbose=False,
+                    handle_sigint=False)
+    r1 = rows_of(continuous / "run")
+    r2 = rows_of(tmp_path / "run")
+    assert len(r1) == len(r2) == 9
+    for a, b in zip(r1, r2):
+        assert np.array_equal(a.toatoms().positions, b.toatoms().positions)
+
+
+def test_failure_resume_never_reuses_task_ids(tmp_path):
+    from pyraimd2.workflows.setup import build_backends
+    failing = tmp_path / "failing"
+    failing.mkdir()
+    config = load_config(mts_case(failing))
+    engine, surrogate = build_backends(config, run_dir=failing / "run")
+    with pytest.raises(RuntimeError, match="injected endpoint failure"):
+        _drive_with(config, _FailingReference(engine, 3), surrogate,
+                    failing / "run")
+    resume_workflow(failing / "run", 124, verbose=False,
+                    handle_sigint=False)
+    events = [json.loads(l) for l in
+              (failing / "run" / "events.jsonl").read_text().splitlines()]
+    task_ids = [e["task_id"] for e in events if e.get("type") == "task"]
+    assert len(task_ids) == len(set(task_ids))
+    attempts = [e for e in events if e.get("type") == "attempt"
+                and e.get("operation") == "reference"]
+    info = inspect_run(failing / "run")
+    assert len(attempts) == 34
+    assert sum(1 for e in attempts if e.get("status") == "success") == 33
+    assert sum(1 for e in attempts if e.get("status") != "success") == 1
+    assert info["cost"]["reference"]["actual_executions"] == 34
+    assert info["cost"]["reference"]["failed_attempts"] == 1
+
+
+class _FreeEnergyReference:
+    """Reference double declaring free_energy (force-consistent)."""
+
+    def __init__(self, base):
+        import dataclasses
+        self._base = base
+        self.capabilities = dataclasses.replace(
+            base.capabilities, energy_kind="free_energy")
+        self.fingerprint = base.fingerprint + ":free-energy-fixture"
+
+    def compute(self, atoms):
+        import dataclasses
+        return dataclasses.replace(self._base.compute(atoms),
+                                   energy_kind="free_energy")
+
+
+def test_declared_energy_kinds_survive_end_to_end(tmp_path):
+    from pyraimd2.runtime.checkpoint import CheckpointManager
+    from pyraimd2.workflows.setup import build_backends
+    config = load_config(mts_case(tmp_path, steps=8))
+    reference, surrogate = build_backends(config, run_dir=tmp_path / "run")
+    _drive_with(config, _FreeEnergyReference(reference), surrogate,
+                tmp_path / "run")
+    ck = CheckpointManager(tmp_path / "run").read_latest_valid()
+    assert ck.state["energy_kinds"] == {"reference": "free_energy",
+                                        "surrogate": "energy"}
+    rows = rows_of(tmp_path / "run")
+    assert rows[0].data["engine"]["energy_kind"] == "free_energy"
+    assert rows[0].data["surrogate"]["energy_kind"] == "energy"
+    # resume with a changed declared convention refuses BEFORE evaluation
+    class ChangedKind(_FreeEnergyReference):
+        def __init__(self, base):
+            import dataclasses
+            self._base = base
+            self.capabilities = dataclasses.replace(
+                base.capabilities, energy_kind="energy")
+            self.fingerprint = base.fingerprint + ":free-energy-fixture"
+    from pyraimd2.workflows.setup import prepare_run_directory  # noqa: F401
+    ckpt = CheckpointManager(tmp_path / "run").read_latest_valid()
+    from pyraimd2.engines.base import engine_capabilities
+    changed = ChangedKind(build_backends(config,
+                                         run_dir=tmp_path / "run")[0])
+    assert engine_capabilities(changed).energy_kind == "energy"
+    assert engine_capabilities(changed).energy_kind != \
+        ckpt.state["energy_kinds"]["reference"]
+
+
+def test_fingerprintless_backend_refused_before_evaluation(tmp_path):
+    from pyraimd2.runtime.events import EventLog
+    from pyraimd2.workflows.mts_md import MtsDriver
+    from pyraimd2.workflows.setup import (
+        build_backends,
+        load_structure,
+        prepare_run_directory,
+    )
+    config = load_config(mts_case(tmp_path, steps=8))
+    reference, surrogate = build_backends(config, run_dir=tmp_path / "run")
+    prepare_run_directory(config, engine=reference, surrogate=surrogate)
+
+    class AnonymousSurrogate:
+        capabilities = surrogate.capabilities
+
+        def predict(self, atoms):
+            raise AssertionError("must never be evaluated")
+
+    log = EventLog(tmp_path / "run")
+    with pytest.raises(WorkflowError, match="fingerprint"):
+        MtsDriver(config, load_structure(config), reference,
+                  AnonymousSurrogate(), tmp_path / "run", event_log=log)
+    log.close()
