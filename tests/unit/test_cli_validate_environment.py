@@ -530,16 +530,32 @@ def test_launcher_present_is_unverified(tmp_path, capsys, monkeypatch):
 
 
 def test_shell_operator_form_is_unverified_not_executed(tmp_path, capsys):
+    fake = _fake_pw(tmp_path)
     config = qe_config(tmp_path, pw_cmd="unused")
     cfg = tmp_path / "run dir with space" / "config.toml"
-    cfg.write_text(cfg.read_text().replace('pw_cmd = "unused"',
-                                           'pw_cmd = "pw.x > out.log"'))
+    cfg.write_text(cfg.read_text().replace(
+        'pw_cmd = "unused"',
+        'pw_cmd = "\'' + str(fake) + '\' > out.log"'))
     code, report = _validate_env_json(config, capsys)
     assert code == 1
     pw = next(c for c in report["checks"] if c["id"] == "reference.pw_cmd")
     assert pw["status"] == "unverified"
     assert "shell" in pw["message"]
     assert not (tmp_path / "run dir with space" / "out.log").exists()
+
+
+def test_shell_operator_form_missing_executable_is_blocked(
+        tmp_path, capsys):
+    config = qe_config(tmp_path, pw_cmd="unused")
+    cfg = tmp_path / "run dir with space" / "config.toml"
+    cfg.write_text(cfg.read_text().replace(
+        'pw_cmd = "unused"', 'pw_cmd = "pw.x > out.log"'))
+    code, report = _validate_env_json(config, capsys)
+    assert code == 1
+    assert report["readiness"] == "blocked"
+    pw = next(c for c in report["checks"] if c["id"] == "reference.pw_cmd")
+    assert pw["status"] == "fail"
+    assert "shell" in pw["message"]
 
 
 # F5: validate never creates or modifies the run store ----------------------
@@ -564,7 +580,7 @@ def test_validate_existing_empty_db_refused_without_writes(
     report = json.loads(capsys.readouterr().out)
     assert code == 2
     assert report["configuration_valid"] is False
-    assert "not readable as a trajectory database" in \
+    assert "already contains a trajectory database" in \
         report["error"]["message"]
     assert db.read_bytes() == b""
     assert db.stat().st_mtime_ns == mtime
@@ -586,7 +602,10 @@ def test_validate_existing_valid_db_refused_readonly(tmp_path, capsys):
     code = cli_main(["validate", str(config), "--json"])
     report = json.loads(capsys.readouterr().out)
     assert code == 2
-    assert "somebody-elses-run" in report["error"]["message"]
+    # presence-only refusal: the database is never opened (no WAL/SHM)
+    assert "already contains a trajectory database" in \
+        report["error"]["message"]
+    assert "resume" in report["error"]["message"]
     assert db.read_bytes() == before
     assert db.stat().st_mtime_ns == mtime
     assert _tree_digest(tmp_path) == digest
@@ -603,7 +622,7 @@ def test_validate_existing_corrupt_db_refused_readonly(tmp_path, capsys):
     code = cli_main(["validate", str(config), "--json"])
     report = json.loads(capsys.readouterr().out)
     assert code == 2
-    assert "not readable as a trajectory database" in \
+    assert "already contains a trajectory database" in \
         report["error"]["message"]
     assert db.read_bytes() == before
     assert _tree_digest(tmp_path) == digest
@@ -623,3 +642,132 @@ def test_validate_mode_conflict_json_is_machine_readable(tmp_path, capsys):
     assert report["readiness"] == "not_checked"
     assert report["error"]["code"] == "UsageError"
     assert "mutually exclusive" in report["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# N059-A regressions (reviews/N058-r1/A: A-R1 shell wrapper, A-R2 WAL
+# zero-write occupancy, A-R3 no tilde expansion in the argv contract)
+
+
+# A-R1: explicit shell wrappers are never confirmed by the shell existing
+
+
+def test_shell_wrapper_argv_is_unverified(tmp_path, capsys):
+    qe_config(tmp_path, pw_cmd="unused")
+    cfg = tmp_path / "run dir with space" / "config.toml"
+    cfg.write_text(cfg.read_text().replace(
+        'pw_cmd = "unused"',
+        'pw_cmd = ["/bin/sh", "-c", "n058_no_such_solver_375391"]'))
+    code, report = _validate_env_json(cfg, capsys)
+    assert code == 1
+    assert report["readiness"] == "unverified"
+    pw = next(c for c in report["checks"] if c["id"] == "reference.pw_cmd")
+    assert pw["status"] == "unverified"
+    assert "shell" in pw["message"]
+
+
+def test_shell_wrapper_command_override_is_unverified(tmp_path, capsys):
+    config = _write_qe_ase(
+        tmp_path,
+        '[reference]\nbackend = "qe-ase"\npseudo_dir = "pseudos"\n'
+        'pseudos = { H = "H.upf", O = "O.upf" }\n'
+        'command = "/bin/sh -c n058_no_such_solver_375391"\n')
+    code, report = _validate_env_json(config, capsys)
+    assert code == 1
+    assert report["readiness"] == "unverified"
+    check = next(c for c in report["checks"] if c["id"] ==
+                 "reference.command")
+    assert check["status"] == "unverified"
+    assert "shell" in check["message"]
+
+
+def test_missing_shell_wrapper_executable_is_blocked(tmp_path, capsys):
+    qe_config(tmp_path, pw_cmd="unused")
+    cfg = tmp_path / "run dir with space" / "config.toml"
+    cfg.write_text(cfg.read_text().replace(
+        'pw_cmd = "unused"',
+        'pw_cmd = ["/no/such/sh", "-c", "pw.x"]'))
+    code, report = _validate_env_json(cfg, capsys)
+    assert code == 1
+    assert report["readiness"] == "blocked"
+
+
+# A-R2: a valid WAL-mode database — occupancy refused with zero writes ------
+
+
+def _wal_db(run_dir: Path) -> Path:
+    import sqlite3
+    db = run_dir / "trajectory.db"
+    import ase.db
+    with ase.db.connect(db) as con:
+        con.write(None, run_id="wal-run")
+    con = sqlite3.connect(db)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    con.close()
+    for side in ("-wal", "-shm"):
+        assert not Path(str(db) + side).exists()
+    return db
+
+
+def test_validate_wal_db_default_mode_zero_writes(tmp_path, capsys):
+    config = _run_dir_config(tmp_path)
+    run_dir = tmp_path / "run dir with space" / "run"
+    run_dir.mkdir(parents=True)
+    db = _wal_db(run_dir)
+    before = (db.read_bytes(), db.stat().st_mtime_ns)
+    digest = _tree_digest(tmp_path)
+    code = cli_main(["validate", str(config), "--json"])
+    report = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert "already contains a trajectory database" in \
+        report["error"]["message"]
+    assert db.read_bytes() == before[0]
+    assert db.stat().st_mtime_ns == before[1]
+    assert _tree_digest(tmp_path) == digest  # no -wal/-shm appeared
+
+
+def test_validate_wal_db_environment_mode_zero_writes(tmp_path, capsys):
+    config = _run_dir_config(tmp_path)
+    run_dir = tmp_path / "run dir with space" / "run"
+    run_dir.mkdir(parents=True)
+    _wal_db(run_dir)
+    digest = _tree_digest(tmp_path)
+    code = cli_main(["validate", str(config), "--check-environment",
+                     "--json"])
+    report = json.loads(capsys.readouterr().out)
+    assert code == 2
+    assert "already contains a trajectory database" in \
+        report["error"]["message"]
+    assert _tree_digest(tmp_path) == digest
+
+
+# A-R3: '~' is literal in the argv contract ---------------------------------
+
+
+def test_tilde_argv_path_is_blocked_literal(tmp_path, capsys):
+    fake = _fake_pw(tmp_path, name="fake pw.x")
+    assert fake.is_file()
+    tilde_cfg = tmp_path / "tilde"
+    (tilde_cfg / "pseudos").mkdir(parents=True)
+    (tilde_cfg / "structure.extxyz").write_text(HARMONIC_STRUCTURE)
+    # a literal '~/...' path must not resolve to the real home file
+    literal = "~/Research/n058_no_such_dir_375391/fake pw.x"
+    for species in ("H", "O"):
+        (tilde_cfg / "pseudos" / f"{species}.upf").write_text(
+            f'<UPF version="2.0.1"><PP_HEADER element="{species}"/></UPF>\n')
+    text = _plain_mode_config(
+        "reference",
+        '[reference]\nbackend = "qe"\npseudo_dir = "pseudos"\n'
+        'pseudos = { H = "H.upf", O = "O.upf" }\n'
+        f'pw_cmd = ["{literal}"]\n')
+    cfg = tilde_cfg / "config.toml"
+    cfg.write_text(text)
+    code, report = _validate_env_json(cfg, capsys)
+    assert code == 1
+    assert report["readiness"] == "blocked"
+    pw = next(c for c in report["checks"] if c["id"] == "reference.pw_cmd")
+    assert pw["status"] == "fail"
+    assert "~" in pw["message"]  # the literal token, not the expansion
+    engine, _ = build_backends(load_config(cfg))
+    assert engine.config.pw_cmd[0] == literal  # execution sees the same

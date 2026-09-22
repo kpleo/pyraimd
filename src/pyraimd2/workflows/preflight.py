@@ -39,6 +39,8 @@ SCHEMA_VERSION = 1
 
 _LAUNCHER_TOKENS = {"srun", "mpirun", "mpiexec", "mpirun.mpich",
                     "mpiexec.mpich", "orterun", "launcher"}
+_SHELL_TOKENS = {"sh", "bash", "zsh", "dash", "csh", "tcsh", "ksh",
+                 "fish"}
 _OPERATOR_TOKENS = {"|", "||", "&", "&&", ";", "<", ">", ">>",
                     "2>", "2>&1"}
 
@@ -46,7 +48,7 @@ _OPERATOR_TOKENS = {"|", "||", "&", "&&", ";", "<", ">", ">>",
 def _resolve_executable(token: str) -> tuple[bool, str]:
     """(found_and_executable, detail) for one simple command token."""
     if os.sep in token or (os.altsep and os.altsep in token):
-        path = Path(token).expanduser()
+        path = Path(token)  # literal argv: no tilde expansion
         if not path.exists():
             return False, f"no such file: {path}"
         if not path.is_file():
@@ -72,6 +74,11 @@ def _classify_tokens(tokens: tuple[str, ...]) -> str:
     if any(t in _OPERATOR_TOKENS for t in tokens) or any(
             "`" in t or "$(" in t for t in tokens):
         return "shell_expression"
+    # an explicit shell wrapper (sh -c "...") hides the actual solver
+    # behind a shell that will run it — never confirmed statically
+    if Path(tokens[0]).name in _SHELL_TOKENS and any(
+            t in ("-c", "-lc") for t in tokens[1:3]):
+        return "shell_expression"
     if Path(tokens[0]).name in _LAUNCHER_TOKENS:
         return "launcher"
     return "direct_argv"
@@ -88,10 +95,19 @@ def _check_command_tokens(section: str, tokens: tuple[str, ...], *,
     first = tokens[0]
     kind = _classify_tokens(tokens)
     if kind == "shell_expression":
+        ok, detail = _resolve_executable(first)
+        if not ok:
+            return {"id": check_id, "role": section, "status": "fail",
+                    "message": prefix + f"{source} is a shell expression "
+                               f"whose outer executable cannot be "
+                               f"resolved: {detail}",
+                    "remedy": "write the plain argv, or point pw_cmd "
+                              "directly at a pw.x executable"}
         return {"id": check_id, "role": section, "status": "unverified",
-                "message": prefix + f"{source} contains shell operator "
-                "syntax; no shell is invoked by the executors, so this "
-                "would not run as written — use literal argv words",
+                "message": prefix + f"{source} is a shell expression or "
+                "shell wrapper; the solver behind it cannot be confirmed "
+                "statically (no shell is invoked by the executors) — use "
+                "literal argv words",
                 "remedy": "write the plain argv, e.g. pw_cmd = "
                           "[\"mpirun\", \"-np\", \"4\", \"pw.x\"], or point "
                           "it directly at a pw.x executable"}

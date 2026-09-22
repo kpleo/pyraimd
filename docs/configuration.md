@@ -302,9 +302,11 @@ reference fingerprint).
   existing file is that literal path; any other string is split with
   POSIX `shlex` rules — quote a path containing spaces
   (`pw_cmd = "'/opt/QE 7.5/pw.x' -nk 2"`).  Nothing is shell-expanded:
-  no shell ever runs the command, so shell operators
-  (`|`, `>`, `&&`, `$(...)`) would have no effect and are refused as
-  usage errors at validation.  For `qe-ase`, an explicit `command`
+  the executors never invoke a shell implicitly, so shell operators
+  (`|`, `>`, `&&`, `$(...)`) would have no effect; such forms are not
+  usable launch specifications, and `--check-environment` reports them
+  `unverified` (the outer executable itself missing is `blocked`).
+  For `qe-ase`, an explicit `command`
   string (ASE's FileIO layer) overrides `pw_cmd`; the preflight checks
   exactly the effective one.
 - `disk_io` (string, optional): QE's own `disk_io` (INPUT_PW, QE 7.5).

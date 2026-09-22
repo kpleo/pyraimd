@@ -83,7 +83,9 @@ def normalize_pw_cmd(raw: object, *, field: str = "pw_cmd") -> tuple[str, ...]:
     - a TOML list is literal argv, verbatim: every element stays one argv
       word, including paths with spaces or parentheses;
     - a string naming an existing file is that literal path (one argv
-      word); any other string is split with POSIX :func:`shlex.split`
+      word, used verbatim — ``~`` is never expanded anywhere in this
+      contract); any other string is split with POSIX
+      :func:`shlex.split`
       (quotes group words, e.g. ``pw_cmd = "'/opt/QE 7.5/bin/pw.x' -nk 2"``);
       no shell is ever invoked and nothing is expanded, so shell operators
       would have no effect — write plain argv words instead;
@@ -93,8 +95,10 @@ def normalize_pw_cmd(raw: object, *, field: str = "pw_cmd") -> tuple[str, ...]:
     import shlex
 
     if isinstance(raw, str):
-        if Path(raw).expanduser().is_file():
-            return (raw,)  # the string names one literal executable path
+        if Path(raw).is_file():
+            # the string names one literal existing executable path;
+            # no tilde expansion anywhere in the argv contract
+            return (raw,)
         try:
             tokens = tuple(shlex.split(raw, posix=True))
         except ValueError as error:

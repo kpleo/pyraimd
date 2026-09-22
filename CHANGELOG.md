@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.7.5 (unreleased candidate)
+## 0.7.5 (final content; published by the maintainer from the reviewed final SHA)
 
-Usability candidate on top of 0.7.4:
+Usability release on top of 0.7.4:
 
 - `pyramid validate` now states explicitly that a successful run checks
   the configuration only — the environment is not checked.
@@ -20,6 +20,15 @@ Usability candidate on top of 0.7.4:
   persistent density registry's keep / reclaim-candidate / hold
   decisions, blocked references and space report (plain serial
   reference MD scope; preview only, never a deletion authorization).
+- Preflight hardening after independent review: wrapper backends
+  (`scaled` / `quadratic-corrected`) are checked through their declared
+  base backend; `pw_cmd` follows one shared argv contract (literal argv
+  list, or POSIX `shlex` string parsing, never a shell — `~` is not
+  expanded); `qe-ase` checks the effective `command`/`pw_cmd` priority;
+  explicit shell wrappers stay `unverified`; run-directory occupancy is
+  refused by presence alone with zero files created or modified (no
+  SQLite connection, no WAL/SHM side files); the validate mode conflict
+  reports one parseable error object under `--json`.
 
 ## 0.7.4 (2026-09-19)
 
