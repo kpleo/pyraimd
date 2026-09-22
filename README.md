@@ -24,14 +24,15 @@ pip install .            # user install
 pip install -e '.[dev]'  # development: adds pytest and ruff
 ```
 
-Or install the latest released wheel into a clean virtual environment (the
-wheel and sdist are attached to the GitHub Release of the same tag — shown
-here with the current public release, 0.7.4; the examples and the example
-plugins below come from that tag's source tree):
+Or install the released wheel into a clean virtual environment (the wheel
+and sdist are attached to the GitHub Release of the same tag; the current
+release line is 0.7.5, published by the maintainer from the reviewed final
+SHA — the examples and the example plugins below come from that tag's
+source tree):
 
 ```sh
 python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
-pip install pyraimd2-0.7.4-py3-none-any.whl
+pip install pyraimd2-0.7.5-py3-none-any.whl
 ```
 
 A first run with the built-in harmonic model — the analytic demo needs no

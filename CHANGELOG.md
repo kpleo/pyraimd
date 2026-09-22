@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.7.5 (unreleased candidate)
+## 0.7.5 (final content; published by the maintainer from the reviewed final SHA)
 
-Usability candidate on top of 0.7.4:
+Usability release on top of 0.7.4:
 
 - `pyramid validate` now states explicitly that a successful run checks
   the configuration only — the environment is not checked.

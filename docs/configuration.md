@@ -301,8 +301,8 @@ reference fingerprint).
   including paths with spaces or parentheses).  A string naming an
   existing file is that literal path; any other string is split with
   POSIX `shlex` rules — quote a path containing spaces
-  `pw_cmd = "'/opt/QE 7.5/pw.x' -nk 2"`).  Nothing is shell-expanded:
-  no shell ever runs the command, so shell operators
+  (`pw_cmd = "'/opt/QE 7.5/pw.x' -nk 2"`).  Nothing is shell-expanded:
+  the executors never invoke a shell implicitly, so shell operators
   (`|`, `>`, `&&`, `$(...)`) would have no effect; such forms are not
   usable launch specifications, and `--check-environment` reports them
   `unverified` (the outer executable itself missing is `blocked`).
