@@ -78,6 +78,7 @@ from pyraimd2.runtime.inspect import inspect_run
 from pyraimd2.store import Store
 from pyraimd2.store.store import STORE_SCHEMA_VERSION
 from pyraimd2.surrogate.base import SurrogatePrediction
+from pyraimd2.workflows.mts_md import _resume_mts, _run_mts
 from pyraimd2.workflows.setup import (
     RunOutputs,
     WorkflowError,
@@ -1464,6 +1465,9 @@ def run_workflow(config: PyramidConfig, *, verbose: bool = True,
     if config.task.mode == "adaptive":
         return _run_adaptive(config, atoms, run_dir,
                              verbose=verbose, handle_sigint=handle_sigint)
+    if config.task.mode == "mts":
+        return _run_mts(config, atoms, run_dir,
+                        verbose=verbose, handle_sigint=handle_sigint)
     return _run_plain(config, atoms, run_dir,
                       verbose=verbose, handle_sigint=handle_sigint)
 
@@ -1557,6 +1561,14 @@ def resume_workflow(run_dir: str | Path, extra_steps: int, *,
             "baseline association in its checkpoint (an old record); "
             "relocation mapping is supported only for runs created with "
             "declared file resources — the run is preserved unchanged")
+    if config.task.mode == "mts":
+        if resource_binding is not None:
+            raise WorkflowError(
+                "resource relocation does not compose with task.mode "
+                "'mts' in this round; resume in place")
+        return _resume_mts(config, run_dir, extra_steps,
+                           force_unlock=force_unlock, verbose=verbose,
+                           handle_sigint=handle_sigint)
     if config.task.mode != "adaptive":
         return _resume_plain(config, run_dir, extra_steps,
                              force_unlock=force_unlock, verbose=verbose,

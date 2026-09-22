@@ -37,6 +37,11 @@ FORCE_SOURCES = ("driving", "reference", "base")
 
 def _select_forces(data: dict, route: str, force_source: str):
     """(energy, forces, available, label_id) for one store row."""
+    if force_source == "driving" and route == "mts":
+        # an MTS outer step has no single driving force (slow-residual
+        # kicks bracket inner fast steps); never substitute the surrogate
+        # label — the frame honestly reports forces missing
+        return None, None, False, None
     if force_source == "driving":
         payload = data.get("driving")
         if payload is None:
@@ -263,6 +268,18 @@ def export_run(run_dir: str | Path, *, force_source: str = "driving",
             f"no trajectory.db in {run_dir}; nothing to export — run the "
             "configuration first with `pyramid run`")
     run_id = infer_run_id(run_dir)
+    if force_source == "driving":
+        events = _read_events(run_dir / "events.jsonl")
+        start = next((e for e in events if e.get("type") == "run_start"),
+                     None)
+        driver = ((start or {}).get("workflow") or {}).get("driver")
+        if driver == "mts-nve-respa":
+            raise ExportError(
+                "an MTS run has no single driving force to export (slow "
+                "residual kicks bracket the inner fast steps).  Export a "
+                "named source instead: `pyramid export RUN_DIR "
+                "--force-source reference` (reference boundary labels) or "
+                "`--force-source base` (surrogate predictions)")
     with Store(db_path) as store:
         frames = frames_for_run(store, run_dir, run_id,
                                 force_source=force_source)

@@ -519,3 +519,53 @@ def test_invalid_label_fails_the_task_but_keeps_the_attempt(tmp_path):
     assert summary["reference"]["logical_requests"] == 1
     assert summary["reference"]["actual_executions"] == 1
     assert summary["reference"]["successful_executions"] == 1
+
+
+# --- segment chaining (workflow resume machinery) --------------------------
+
+
+def test_segment_chaining_matches_continuous_bit_for_bit():
+    from pyraimd2.loop.mts import MtsLabels  # noqa: F401  (public type)
+    atoms = demo_atoms()
+    full = run_mts(atoms, ReferenceDouble(), SurrogateDouble(c=0.9),
+                   inner_timestep_fs=1.0, outer_ratio=2, n_outer_steps=8)
+    ref1, fast1 = ReferenceDouble(), SurrogateDouble(c=0.9)
+    seg1 = run_mts(atoms, ref1, fast1, inner_timestep_fs=1.0,
+                   outer_ratio=2, n_outer_steps=4)
+    assert seg1.final_labels is not None
+    back = demo_atoms()
+    back.positions = seg1.final_positions_A.copy()
+    back.set_momenta(seg1.final_momenta_ase.copy())
+    ref2, fast2 = ReferenceDouble(), SurrogateDouble(c=0.9)
+    seg2 = run_mts(back, ref2, fast2, inner_timestep_fs=1.0, outer_ratio=2,
+                   n_outer_steps=4, initial_labels=seg1.final_labels,
+                   task_counter_start=seg1.task_counter_end)
+    # bit-identical trajectory across the segment boundary
+    assert np.array_equal(seg2.final_positions_A, full.final_positions_A)
+    assert np.array_equal(seg2.final_momenta_ase, full.final_momenta_ase)
+    for b_full, b_seg in zip(full.boundaries[4:], seg2.boundaries):
+        assert np.array_equal(b_full.positions_A, b_seg.positions_A)
+        assert np.array_equal(b_full.momenta_ase, b_seg.momenta_ase)
+    # counts add without a duplicated initial evaluation
+    assert ref1.calls + ref2.calls == full.reference_calls == 9
+    assert fast1.calls + fast2.calls == full.surrogate_calls == 17
+    assert ref2.calls == 4 and fast2.calls == 8
+    assert seg2.task_counter_end == seg1.task_counter_end + 12
+
+
+def test_initial_labels_reject_bad_shape_and_zero_steps():
+    from pyraimd2.loop.mts import MtsLabels
+    atoms = demo_atoms()
+    good = run_mts(atoms, ReferenceDouble(), SurrogateDouble(),
+                   inner_timestep_fs=1.0, outer_ratio=1, n_outer_steps=1)
+    labels = good.final_labels
+    bad = MtsLabels(labels.U_ref_eV, np.zeros((3, 3)),
+                    labels.U_fast_eV, labels.F_fast_eV_A)
+    with pytest.raises(MtsError, match="shapes"):
+        run_mts(atoms, ReferenceDouble(), SurrogateDouble(),
+                inner_timestep_fs=1.0, outer_ratio=1, n_outer_steps=1,
+                initial_labels=bad)
+    with pytest.raises(MtsError, match="zero"):
+        run_mts(atoms, ReferenceDouble(), SurrogateDouble(),
+                inner_timestep_fs=1.0, outer_ratio=1, n_outer_steps=0,
+                initial_labels=labels)

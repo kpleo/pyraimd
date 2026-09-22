@@ -39,9 +39,9 @@ from typing import Any
 CONFIG_SCHEMA_VERSION = 1
 
 TASK_KINDS = ("singlepoint", "relax", "md")
-TASK_MODES = ("reference", "surrogate", "adaptive")
+TASK_MODES = ("reference", "surrogate", "adaptive", "mts")
 ENSEMBLES = ("nve", "nvt")
-INTEGRATORS = ("verlet", "langevin")
+INTEGRATORS = ("verlet", "langevin", "respa")
 POLICY_NAMES = ("energetic",)
 # Canonical force-error metric vocabulary (also imported by
 # pyraimd2.loop.constraints): the budget controls the free coordinates by
@@ -151,6 +151,8 @@ class DynamicsConfig:
     temperature_K: float
     velocity_seed: int
     integrator: str = "verlet"
+    outer_ratio: int | None = None  # respa (mts mode): inner steps per
+    # outer step; required there, absent elsewhere
     friction_per_fs: float | None = None
     thermostat_seed: int | None = None
     max_wall_hours: float | None = None  # soft per-process budget; None = off
@@ -299,6 +301,7 @@ class PyramidConfig:
             "structure": {"file": str(self.structure.file)},
             "dynamics": {"ensemble": self.dynamics.ensemble,
                          "integrator": self.dynamics.integrator,
+                         "outer_ratio": self.dynamics.outer_ratio,
                          "timestep_fs": self.dynamics.timestep_fs,
                          "steps": self.dynamics.steps,
                          "temperature_K": self.dynamics.temperature_K,
@@ -455,6 +458,19 @@ def parse_config(document: dict[str, Any], *, base_dir: Path,
     _check_task_compatibility(task, reference=reference, surrogate=surrogate,
                               policy=policy,
                               verification_present=verification_table is not None)
+    # fixed-model MTS (task.mode 'mts') pairs with integrator 'respa':
+    # timestep_fs is the INNER step and steps count inner steps
+    if (task.mode == "mts") != (dynamics.integrator == "respa"):
+        raise ConfigError(
+            "task.mode 'mts' pairs exactly with dynamics integrator = "
+            f"'respa' (fixed-model symmetric MTS, NVE only): got mode "
+            f"{task.mode!r} with integrator {dynamics.integrator!r}")
+    if task.mode == "mts" and \
+            dynamics.steps % dynamics.outer_ratio != 0:
+        raise ConfigError(
+            f"dynamics.steps ({dynamics.steps}) must be a multiple of "
+            f"outer_ratio ({dynamics.outer_ratio}): only complete "
+            "outer steps exist — no silent rounding")
     _check_density_compatibility(density, task=task, reference=reference,
                                  scratch=scratch)
     if dynamics.max_wall_hours is not None:
@@ -656,7 +672,7 @@ def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
     _reject_unknown(table,
                     ("ensemble", "timestep_fs", "steps", "temperature_K",
                      "velocity_seed", "integrator", "friction_per_fs",
-                     "thermostat_seed", "max_wall_hours"),
+                     "thermostat_seed", "max_wall_hours", "outer_ratio"),
                     "dynamics", "field")
     ensemble = _str_field(table, "ensemble", "dynamics", default="nve",
                           choices=ENSEMBLES)
@@ -697,6 +713,16 @@ def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
         max_wall_hours = float(wall_raw)
     else:
         max_wall_hours = None
+    ratio_raw = table.pop("outer_ratio", None)
+    if ratio_raw is not None:
+        if not _is_int(ratio_raw) or isinstance(ratio_raw, bool) \
+                or int(ratio_raw) < 1:
+            raise ConfigError(
+                f"dynamics.outer_ratio must be a positive integer, got "
+                f"{ratio_raw!r}")
+        outer_ratio = int(ratio_raw)
+    else:
+        outer_ratio = None
     if ensemble == "nvt":
         if integrator != "langevin":
             raise ConfigError(
@@ -708,15 +734,26 @@ def _parse_dynamics(table: dict, run_seed: int) -> DynamicsConfig:
                 "friction_per_fs — it is the bath coupling, not an optional "
                 "tuning knob (set it explicitly before any SCF runs)")
     else:
-        if integrator != "verlet":
+        if integrator == "respa":
+            if outer_ratio is None:
+                raise ConfigError(
+                    "dynamics: integrator = 'respa' (fixed-model MTS) "
+                    "requires outer_ratio, the positive number of inner "
+                    "steps per outer step")
+        elif integrator != "verlet":
             raise ConfigError(
-                f"dynamics: ensemble 'nve' uses integrator = 'verlet', "
-                f"got {integrator!r}")
+                f"dynamics: ensemble 'nve' uses integrator = 'verlet' or "
+                f"'respa', got {integrator!r}")
+        if integrator != "respa" and outer_ratio is not None:
+            raise ConfigError(
+                "dynamics: outer_ratio belongs to integrator = 'respa' "
+                f"(fixed-model MTS); with {integrator!r} remove it")
         if friction_per_fs is not None or thermostat_seed is not None:
             raise ConfigError(
                 "dynamics: friction_per_fs/thermostat_seed do not belong to "
                 "an NVE run — remove them or choose ensemble = 'nvt'")
     return DynamicsConfig(ensemble=ensemble, timestep_fs=timestep_fs,
+                          outer_ratio=outer_ratio,
                           steps=steps, temperature_K=temperature_K,
                           velocity_seed=velocity_seed, integrator=integrator,
                           friction_per_fs=friction_per_fs,
@@ -994,6 +1031,28 @@ def _check_task_compatibility(task: TaskConfig, *, reference: BackendConfig | No
                 f"task.mode 'adaptive' requires [{missing[0]}] with a backend; "
                 "adaptive MD drives with the surrogate and checks it against "
                 "the reference")
+    elif task.mode == "mts":
+        if task.kind != "md":
+            raise ConfigError(
+                f"task.mode 'mts' requires task.kind = 'md', got "
+                f"{task.kind!r}; the fixed-model MTS driver only exists "
+                "for MD")
+        missing = [name for name, section in (("reference", reference),
+                                              ("surrogate", surrogate))
+                   if section is None]
+        if missing:
+            raise ConfigError(
+                f"task.mode 'mts' requires [{missing[0]}] with a backend; "
+                "MTS integrates the slow residual between the reference "
+                "and the surrogate — both are needed")
+        if policy is not None:
+            raise ConfigError(
+                "task.mode 'mts' does not use [policy]; the energetic "
+                "policy only applies to adaptive MD — remove the section")
+        if verification_present:
+            raise ConfigError(
+                "task.mode 'mts' does not use [verification]; independent "
+                "checks only exist in adaptive MD — remove the section")
     else:
         sections = {"reference": reference, "surrogate": surrogate}
         needed = task.mode  # "reference" or "surrogate"

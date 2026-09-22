@@ -301,6 +301,7 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
                   "last_wait_remaining": pacing_events[-1].get("wait_remaining")}
     return {
         "run_id": run_id,
+        "workflow": (start or {}).get("workflow"),
         "schema_version": (start or {}).get("schema_version"),
         "event_schema_version": (start or {}).get("event_schema_version"),
         "reference_id": (start or {}).get("reference_id"),
@@ -327,8 +328,16 @@ def format_inspection(info: dict) -> str:
     """Human-readable rendering of :func:`inspect_run`'s dict (same source)."""
     reference = info["cost"]["reference"]
     checks = info["checks"]
+    workflow = info.get("workflow") or {}
+    mts_line = None
+    if workflow.get("driver") == "mts-nve-respa":
+        integ = workflow.get("integrator") or {}
+        mts_line = (f"  integrator            : MTS (respa), experimental "
+                    f"fixed-model NVE — inner {integ.get('timestep_fs')} fs x "
+                    f"outer_ratio {integ.get('outer_ratio')}")
     lines = [
         f"run {info['run_id']}",
+        *([mts_line] if mts_line else []),
         f"  evaluations committed : {info['n_evaluations']}",
         f"  complete steps        : {info['n_complete_steps']}",
         f"  physical time         : {info['physical_time_fs']} fs",

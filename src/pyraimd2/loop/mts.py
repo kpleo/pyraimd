@@ -90,8 +90,39 @@ class MtsBoundary:
     momenta_ase: np.ndarray   # synchronized (post final slow half-kick)
     U_ref_eV: float
     U_fast_eV: float
+    F_ref_eV_A: np.ndarray
+    F_fast_eV_A: np.ndarray
     K_eV: float
     H_ref_eV: float           # U_ref + K
+
+
+@dataclass(frozen=True)
+class MtsLabels:
+    """The paired reference/fast labels at one configuration, carried into
+    a segment as its start (resume/segment chaining).
+
+    The caller owns identity: the labels must belong EXACTLY to the
+    start configuration (bit-identical positions), produced by the same
+    fixed model and reference settings.  The kernel checks shape and
+    finiteness only; it never re-derives or re-evaluates them.
+    """
+
+    U_ref_eV: float
+    F_ref_eV_A: np.ndarray
+    U_fast_eV: float
+    F_fast_eV_A: np.ndarray
+
+    def validated(self, n_atoms: int) -> MtsLabels:
+        f_ref = np.asarray(self.F_ref_eV_A, dtype=float)
+        f_fast = np.asarray(self.F_fast_eV_A, dtype=float)
+        if f_ref.shape != (n_atoms, 3) or f_fast.shape != (n_atoms, 3):
+            raise MtsError("carried initial labels have wrong force shapes")
+        if not (np.all(np.isfinite(f_ref)) and np.all(
+                np.isfinite(f_fast)) and np.isfinite(self.U_ref_eV)
+                and np.isfinite(self.U_fast_eV)):
+            raise MtsError("carried initial labels must be finite")
+        return MtsLabels(float(self.U_ref_eV), f_ref,
+                         float(self.U_fast_eV), f_fast)
 
 
 @dataclass(frozen=True)
@@ -109,6 +140,8 @@ class MtsResult:
     reference_time_s: float      # sum of backend-reported wall times
     inference_time_s: float
     wall_time_s: float           # kernel wall clock
+    task_counter_end: int = 0    # continue task identity across segments
+    final_labels: MtsLabels | None = None  # labels at the final boundary
     algorithm: str = MTS_ALGORITHM_ID
 
 
@@ -262,7 +295,10 @@ class _CallLedger:
 def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
             inner_timestep_fs: float, outer_ratio: int,
             n_outer_steps: int, boundary_callback=None,
-            event_log=None, run_id: str | None = None) -> MtsResult:
+            event_log=None, run_id: str | None = None,
+            initial_labels: MtsLabels | None = None,
+            task_counter_start: int = 0,
+            emit_run_start: bool = True) -> MtsResult:
     """One fixed-model symmetric-MTS NVE run; see the module docstring.
 
     ``atoms`` is copied — the caller's positions, momenta and calculator
@@ -278,7 +314,11 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
     # the WHOLE run and the segment counter is persisted by the caller.
     run_id = run_id or f"mts-{uuid.uuid4().hex[:12]}"
     ledger = _CallLedger(event_log, run_id)
-    if event_log is not None:
+    ledger.counter = int(task_counter_start)
+    if initial_labels is not None and int(n_outer_steps) == 0:
+        raise MtsError("initial labels only make sense for a non-zero "
+                       "segment (a zero-step no-op needs no evaluations)")
+    if event_log is not None and emit_run_start:
         # declare the attempt-ledger protocol BEFORE the first
         # evaluation/failure, so the costs summary knows tasks parent
         # physical attempts even when the first request fails pre-launch
@@ -328,7 +368,8 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
                                                sur_caps))
 
     def commit(index: int, x_now: np.ndarray, p_now: np.ndarray,
-               u_ref: float, u_fast: float) -> None:
+               u_ref: float, u_fast: float, f_ref: np.ndarray,
+               f_fast: np.ndarray) -> None:
         k_eV = float(np.sum(p_now ** 2 / (2 * masses[:, None])))
         boundary = MtsBoundary(
             outer_index=index, time_fs=index * float(outer_ratio)
@@ -336,6 +377,8 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
             positions_A=np.array(x_now, dtype=float),
             momenta_ase=np.array(p_now, dtype=float),
             U_ref_eV=float(u_ref), U_fast_eV=float(u_fast),
+            F_ref_eV_A=np.array(f_ref, dtype=float),
+            F_fast_eV_A=np.array(f_fast, dtype=float),
             K_eV=k_eV, H_ref_eV=float(u_ref) + k_eV)
         boundaries.append(boundary)
         if boundary_callback is not None:
@@ -349,27 +392,36 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
             n_outer_steps=0, outer_ratio=int(outer_ratio),
             inner_timestep_fs=float(inner_timestep_fs),
             reference_calls=0, surrogate_calls=0, reference_time_s=0.0,
-            inference_time_s=0.0,
+            inference_time_s=0.0, task_counter_end=ledger.counter,
             wall_time_s=time.perf_counter() - t_start)
 
-    ref = reference_at(x, "mts_initial")
-    fast = fast_at(x, "mts_initial")
-    f_slow = np.asarray(ref.forces, float) - np.asarray(fast.forces, float)
-    commit(0, x, p, ref.energy, fast.energy)
+    if initial_labels is None:
+        ref = reference_at(x, "mts_initial")
+        fast = fast_at(x, "mts_initial")
+        u_ref, f_ref = ref.energy, np.asarray(ref.forces, float)
+        u_fast, f_fast = fast.energy, np.asarray(fast.forces, float)
+    else:
+        carried = initial_labels.validated(n)
+        u_ref, f_ref = carried.U_ref_eV, carried.F_ref_eV_A
+        u_fast, f_fast = carried.U_fast_eV, carried.F_fast_eV_A
+    f_slow = f_ref - f_fast
+    commit(0, x, p, u_ref, u_fast, f_ref, f_fast)
 
     for k in range(int(n_outer_steps)):
         p = p + 0.5 * hh * f_slow                          # outer half-kick
         for _ in range(int(outer_ratio)):
-            p = p + 0.5 * h * np.asarray(fast.forces, float)
+            p = p + 0.5 * h * f_fast
             x = x + h * p * inv_m
             fast = fast_at(x, "mts_inner")
-            p = p + 0.5 * h * np.asarray(fast.forces, float)
+            f_fast = np.asarray(fast.forces, float)
+            p = p + 0.5 * h * f_fast
         ref = reference_at(x, "mts_outer_endpoint")
-        f_slow = np.asarray(ref.forces, float) \
-            - np.asarray(fast.forces, float)
+        f_ref = np.asarray(ref.forces, float)
+        f_slow = f_ref - f_fast
         p = p + 0.5 * hh * f_slow                          # final half-kick
-        commit(k + 1, x, p, ref.energy, fast.energy)
+        commit(k + 1, x, p, ref.energy, fast.energy, f_ref, f_fast)
 
+    last = boundaries[-1]
     return MtsResult(
         boundaries=tuple(boundaries),
         final_positions_A=np.array(x, dtype=float),
@@ -380,4 +432,7 @@ def run_mts(atoms: Atoms, reference: object, surrogate: object, *,
         surrogate_calls=ledger.surrogate_calls,
         reference_time_s=ledger.reference_time_s,
         inference_time_s=ledger.inference_time_s,
+        task_counter_end=ledger.counter,
+        final_labels=MtsLabels(last.U_ref_eV, last.F_ref_eV_A,
+                               last.U_fast_eV, last.F_fast_eV_A),
         wall_time_s=time.perf_counter() - t_start)
