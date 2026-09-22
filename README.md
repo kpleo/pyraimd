@@ -24,11 +24,9 @@ pip install .            # user install
 pip install -e '.[dev]'  # development: adds pytest and ruff
 ```
 
-Or install the released wheel into a clean virtual environment (the wheel
-and sdist are attached to the GitHub Release of the same tag; the current
-release line is 0.7.5, published by the maintainer from the reviewed final
-SHA — the examples and the example plugins below come from that tag's
-source tree):
+Or install the 0.7.5 wheel into a clean virtual environment. The wheel and
+source distribution are attached to the corresponding GitHub Release;
+the examples and example plugins below come from that tag's source tree:
 
 ```sh
 python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
