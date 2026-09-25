@@ -24,6 +24,7 @@ import numpy as np
 from ase import Atoms
 from ase.io import write as ase_write
 
+from pyraimd2.runtime.events import MD_STEP_BOUNDARY_DRIVERS
 from pyraimd2.runtime.inspect import _read_events, inspect_run
 from pyraimd2.store import Store
 
@@ -244,7 +245,7 @@ def frames_for_run(store: Store, run_dir: str | Path, run_id: str, *,
     automatic trajectory and the summaries (R7).
 
     Completion semantics are task-specific (A2): MD drivers (plain NVE,
-    adaptive energetic) complete a step only at its STEP_COMPLETED
+    adaptive energetic, MTS) complete a step only at its STEP_COMPLETED
     boundary; relax and singlepoint commit complete records per evaluation
     and have no step boundaries.  A run without an event log falls back to
     all rows (no log does not mean provably no complete frames).
@@ -252,8 +253,8 @@ def frames_for_run(store: Store, run_dir: str | Path, run_id: str, *,
     events = _read_events(Path(run_dir) / "events.jsonl")
     start = next((e for e in events if e.get("type") == "run_start"), None)
     driver = ((start or {}).get("workflow") or {}).get("driver")
-    md_kind = driver in ("plain-nve", "plain-nvt") or (driver is None
-                                                       and (start or {}).get("policy"))
+    md_kind = driver in MD_STEP_BOUNDARY_DRIVERS or (driver is None
+                                                     and (start or {}).get("policy"))
     complete_steps = completed_step_ids(run_dir) if md_kind else None
     committed = (list(store.iter_committed(events, run_id))
                  if events else None)

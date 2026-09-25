@@ -7,6 +7,11 @@ any future ``--json`` CLI (WP04).  ``summary_csv`` flattens one line per
 committed evaluation for direct plotting of energy, error and reference
 calls against time, without reading the full event log.  Rows from older
 libraries (no ``schema_version``/``metadata``) export with blank fields.
+
+For the MTS driver the additional ``mts`` block restates progress with the
+outer/inner distinction explicit (``n_complete_steps`` counts complete
+outer boundaries there; ``mts['complete_inner_steps']`` is the finished
+inner-step count).
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ if TYPE_CHECKING:
 from pyraimd2.runtime.costs import orphan_attempt_directories, summarize_tasks
 from pyraimd2.runtime.events import (
     EVALUATION_COMMITTED,
+    MD_STEP_BOUNDARY_DRIVERS,
     MODEL_UPDATE,
     RUN_END,
     RUN_START,
@@ -151,11 +157,11 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
     complete_steps = {int(e["step_id"]) for e in events
                       if e.get("type") == STEP_COMPLETED}
     driver = ((start or {}).get("workflow") or {}).get("driver")
-    # Completion semantics are task-specific (A2/A4): MD drivers complete a
-    # step only at its boundary; relax/singlepoint commits are complete
-    # records themselves.
-    md_kind = driver in ("plain-nve", "plain-nvt") or (driver is None
-                                                       and (start or {}).get("policy"))
+    # Completion semantics are task-specific (A2/A4): MD drivers (plain and
+    # MTS) complete a step only at its boundary; relax/singlepoint commits
+    # are complete records themselves.
+    md_kind = driver in MD_STEP_BOUNDARY_DRIVERS or (driver is None
+                                                     and (start or {}).get("policy"))
 
     trajectory = {"n_rows": 0, "n_committed": 0, "last_energy_eV": None,
                   "last_temperature_K": None, "n_accepted": 0,
@@ -299,6 +305,18 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
                   "planned": decisions,
                   "reasons": reasons,
                   "last_wait_remaining": pacing_events[-1].get("wait_remaining")}
+    mts = None
+    if driver == "mts-nve-respa":
+        integrator = (((start or {}).get("workflow") or {})
+                      .get("integrator") or {})
+        # Outer/inner distinction stated explicitly: one STEP_COMPLETED per
+        # complete OUTER boundary, its step_id is the inner-step count.
+        mts = {"inner_timestep_fs": integrator.get("timestep_fs"),
+               "outer_ratio": integrator.get("outer_ratio"),
+               "complete_outer_steps": n_complete_steps,
+               "complete_inner_steps": max(complete_steps) if complete_steps
+                                       else 0,
+               "physical_time_fs": physical_time_fs}
     return {
         "run_id": run_id,
         "workflow": (start or {}).get("workflow"),
@@ -319,6 +337,7 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         "last_checkpoint": _last_checkpoint(run_dir),
         "failure": failure,
         "pacing": pacing,
+        "mts": mts,
         "events": {"count": len(events),
                    "last_seq": max((int(e.get("seq", 0)) for e in events), default=0)},
     }
@@ -335,6 +354,11 @@ def format_inspection(info: dict) -> str:
         mts_line = (f"  integrator            : MTS (respa), experimental "
                     f"fixed-model NVE — inner {integ.get('timestep_fs')} fs x "
                     f"outer_ratio {integ.get('outer_ratio')}")
+        mts = info.get("mts") or {}
+        mts_line += (f"\n  mts progress          : "
+                     f"{mts.get('complete_outer_steps')} complete outer steps "
+                     f"= {mts.get('complete_inner_steps')} inner steps "
+                     f"({mts.get('physical_time_fs')} fs physical time)")
     lines = [
         f"run {info['run_id']}",
         *([mts_line] if mts_line else []),

@@ -575,9 +575,10 @@ def _resume_mts(config: PyramidConfig, run_dir: Path, extra_steps: int, *,
                 "checkpoint would duplicate committed frames — keep the "
                 "run directory as-is or start a new run")
         if verbose:
-            print(f"resume: run {config.run.id} (mts) is at inner step "
-                  f"{current} (outer {state['outer_done']}); running "
-                  f"{extra_steps} additional inner steps")
+            print(f"resume: run {config.run.id} (mts) is at outer step "
+                  f"{int(state['outer_done'])} ({int(state['inner_done'])} "
+                  f"inner steps); running {extra_steps} additional inner "
+                  "steps")
         driver = MtsDriver(config, None, reference, surrogate, run_dir,
                            event_log=event_log,
                            resume_state={"state": state, "arrays": arrays},

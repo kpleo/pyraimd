@@ -254,12 +254,17 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     print(f"dynamics      : {config.dynamics.steps} steps x "
           f"{config.dynamics.timestep_fs} fs, checkpoint every "
           f"{config.checkpoint.interval_steps} steps")
-    checks = config.verification
-    if checks.probability > 0:
-        print(f"verification  : independent checks p={checks.probability} "
-              f"(seed {checks.seed})")
-    else:
-        print("verification  : independent checks disabled (probability 0)")
+    if config.task.mode == "adaptive":
+        # Independent checks exist only in adaptive MD; other modes refuse
+        # the [verification] section, so printing its defaults would claim
+        # checks that never happen.
+        checks = config.verification
+        if checks.probability > 0:
+            print(f"verification  : independent checks p={checks.probability} "
+                  f"(seed {checks.seed})")
+        else:
+            print("verification  : independent checks disabled "
+                  "(probability 0)")
     if args.check_environment:
         env = check_environment(config, report)
         print(f"environment   : {env['readiness']}")

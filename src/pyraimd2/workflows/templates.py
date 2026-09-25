@@ -5,7 +5,10 @@ molecule, and policy/verification settings that exercise anchoring,
 acceptance, checks, checkpoints and resume in a few seconds without any
 external program.  ``harmonic-nvt`` is the plain NVT variant;
 ``harmonic-adaptive-nvt`` runs the same toy adaptively under Langevin
-dynamics (fixed base model, re-anchoring supported).  The numbers are
+dynamics (fixed base model, re-anchoring supported).  ``harmonic-mts`` is
+the experimental fixed-model MTS (respa) NVE demo: two analytic test
+particles with fixed initial momenta, 128 inner steps of 1 fs with
+outer_ratio 4 — no external program, no model download.  The numbers are
 demonstration values, not accuracy recommendations for any material.
 """
 
@@ -15,7 +18,8 @@ from pathlib import Path
 
 from pyraimd2.workflows.setup import WorkflowError
 
-TEMPLATES = ("harmonic", "harmonic-nvt", "harmonic-adaptive-nvt")
+TEMPLATES = ("harmonic", "harmonic-nvt", "harmonic-adaptive-nvt",
+             "harmonic-mts")
 
 HARMONIC_CONFIG = """\
 # Pyramid configuration — harmonic offline demo (schema_version 1).
@@ -150,10 +154,67 @@ friction_per_fs = 0.01            # bath coupling (required for NVT)
 thermostat_seed = 123             # new-run thermostat stream (resume restores it)
 velocity_seed = 7""")
 
+HARMONIC_MTS_CONFIG = """\
+# Pyramid configuration — harmonic MTS offline demo (schema_version 1).
+# Experimental fixed-model MTS (respa) NVE on the builtin analytic harmonic
+# backends — no external program, no model download.  The two Si-labelled
+# atoms are test particles in a toy well, not a real material.
+# task.mode "mts" integrates the slow residual F_ref - F_fast with symmetric
+# outer kicks around outer_ratio inner velocity-Verlet steps; timestep_fs is
+# the INNER step and steps count inner steps: this file simulates 128 fs as
+# 32 complete outer steps.
+schema_version = 1
+
+[run]
+id = "harmonic-mts-demo"
+directory = "runs/harmonic-mts-demo"
+
+[task]
+kind = "md"                       # singlepoint | relax | md
+mode = "mts"                      # reference | surrogate | adaptive | mts
+
+[structure]
+file = "structure.extxyz"         # carries fixed initial momenta (never re-randomized)
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0                 # inner step (fs)
+steps = 128                       # inner steps (128 fs); must be a multiple of outer_ratio
+outer_ratio = 4                   # inner steps per outer step
+
+[checkpoint]
+interval_steps = 8                # inner steps; only complete outer boundaries are checkpointed
+
+[reference]
+backend = "harmonic-reference"    # builtin analytic reference
+k = 1.0
+r0 = 0.9
+
+[surrogate]
+backend = "harmonic-surrogate"    # same well at a softer stiffness, no bias
+k = 0.9
+r0 = 0.9
+bias = 0.0
+"""
+
+# The exact structure examples/mts_nve/make_structure.py writes: two Si test
+# particles (mass 28.085 amu, non-periodic) at center (0.9, 0.9, 0.9) A +/-
+# (0.03, -0.02, 0.01) A, atom 2 velocity (0.001, -0.0015, 0.002) A/fs and
+# atom 1 the opposite, momenta in ASE units — a fixed initial state, never
+# re-randomized.
+HARMONIC_MTS_STRUCTURE = """\
+2
+Properties=species:S:1:pos:R:3:masses:R:1:momenta:R:3 pbc="F F F"
+Si       0.87000000       0.92000000       0.89000000      28.08500000      -0.28591950       0.42887925      -0.57183900
+Si       0.93000000       0.88000000       0.91000000      28.08500000       0.28591950      -0.42887925       0.57183900
+"""
+
 _CONTENT = {"harmonic": (HARMONIC_CONFIG, HARMONIC_STRUCTURE),
             "harmonic-nvt": (HARMONIC_NVT_CONFIG, HARMONIC_STRUCTURE),
             "harmonic-adaptive-nvt": (HARMONIC_ADAPTIVE_NVT_CONFIG,
-                                      HARMONIC_STRUCTURE)}
+                                      HARMONIC_STRUCTURE),
+            "harmonic-mts": (HARMONIC_MTS_CONFIG, HARMONIC_MTS_STRUCTURE)}
 
 
 def write_template(template: str, output_dir: str | Path, *,

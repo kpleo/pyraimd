@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from ase import Atoms, units
+from ase.io import read as ase_read
 from ase.io import write as ase_write
 
 from pyraimd2.cli import main as cli_main
@@ -129,6 +130,121 @@ def test_mts_inspect_renders_algorithm_line(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "MTS (respa)" in out and "outer_ratio 4" in out
+
+
+# --- reader completion boundary -----------------------------------------------
+
+
+def _truncate_before(events_path: Path, event_type: str, **match) -> None:
+    lines = events_path.read_text().splitlines()
+    items = [json.loads(line) for line in lines]
+    target = next(i for i, e in enumerate(items)
+                  if e.get("type") == event_type
+                  and all(e.get(k) == v for k, v in match.items()))
+    events_path.write_text("\n".join(lines[:target]) + "\n")
+
+
+def test_mts_reader_tail_commit_without_boundary_is_incomplete(tmp_path):
+    # A committed outer-boundary evaluation whose step_completed is missing
+    # (crash between the two) is a cost record, not a trajectory state.
+    run_workflow(load_config(mts_case(tmp_path, steps=8)),
+                 verbose=False, handle_sigint=False)
+    run_dir = tmp_path / "run"
+    _truncate_before(run_dir / "events.jsonl", "step_completed", step_id=8)
+    info = inspect_run(run_dir)
+    assert info["trajectory"]["last_step"] == 4
+    assert info["physical_time_fs"] == 4.0
+    # the tail label stays visible on its own, marked incomplete
+    assert info["last_evaluation"]["step_id"] == 8
+    assert info["last_evaluation"]["complete"] is False
+    # and the calls it paid for stay on the ledger
+    assert info["cost"]["reference"]["actual_executions"] == 3
+    assert info["cost"]["counts"]["inference"] == 9
+    for source in ("reference", "base"):
+        report = export_run(run_dir, force_source=source,
+                            output=tmp_path / f"{source}.extxyz")
+        frames = ase_read(report["output"], ":")
+        assert [int(f.info["step_id"]) for f in frames] == [-1, 4]
+
+
+def test_mts_reader_initial_boundary_only(tmp_path):
+    run_workflow(load_config(mts_case(tmp_path, steps=4)),
+                 verbose=False, handle_sigint=False)
+    run_dir = tmp_path / "run"
+    events_path = run_dir / "events.jsonl"
+    lines = events_path.read_text().splitlines()
+    items = [json.loads(line) for line in lines]
+    initial = next(i for i, e in enumerate(items)
+                   if e.get("type") == "evaluation_committed"
+                   and int((e.get("context") or {})["step_id"]) == -1)
+    events_path.write_text("\n".join(lines[:initial + 1]) + "\n")
+    info = inspect_run(run_dir)
+    assert info["trajectory"]["last_step"] == -1
+    assert info["physical_time_fs"] == 0.0
+    assert info["last_evaluation"]["step_id"] == -1
+    assert info["last_evaluation"]["complete"] is True
+    report = export_run(run_dir, force_source="reference",
+                        output=tmp_path / "ref.extxyz")
+    frames = ase_read(report["output"], ":")
+    assert [int(f.info["step_id"]) for f in frames] == [-1]
+
+
+def test_mts_reader_complete_run_reports_final_boundary(tmp_path):
+    run_workflow(load_config(mts_case(tmp_path, steps=8)),
+                 verbose=False, handle_sigint=False)
+    run_dir = tmp_path / "run"
+    info = inspect_run(run_dir)
+    assert info["trajectory"]["last_step"] == 8
+    assert info["physical_time_fs"] == 8.0
+    assert info["last_evaluation"]["step_id"] == 8
+    assert info["last_evaluation"]["complete"] is True
+    report = export_run(run_dir, force_source="reference",
+                        output=tmp_path / "ref.extxyz")
+    frames = ase_read(report["output"], ":")
+    assert [int(f.info["step_id"]) for f in frames] == [-1, 4, 8]
+
+
+# --- installed-template user path ---------------------------------------------
+
+
+def test_harmonic_mts_template_end_to_end(tmp_path):
+    from pyraimd2.workflows import write_template
+    config_path = write_template("harmonic-mts", tmp_path / "demo")
+    # the written structure carries the fixed example momenta
+    atoms = ase_read(tmp_path / "demo" / "structure.extxyz")
+    v0 = np.array([0.001, -0.0015, 0.002]) / units.fs * MASS
+    assert np.allclose(atoms.get_momenta(), [-v0, v0], atol=1e-8)
+    assert np.allclose(atoms.get_masses(), [MASS, MASS])
+    config = load_config(config_path)
+    result = run_workflow(config, verbose=False, handle_sigint=False)
+    assert result.steps_completed == 32
+    run_dir = tmp_path / "demo" / "runs" / "harmonic-mts-demo"
+    info = inspect_run(run_dir)
+    assert info["workflow"]["driver"] == "mts-nve-respa"
+    assert info["n_evaluations"] == 33            # initial + 32 boundaries
+    assert info["n_complete_steps"] == 32         # complete outer steps
+    assert info["physical_time_fs"] == 128.0
+    assert info["mts"]["inner_timestep_fs"] == 1.0
+    assert info["mts"]["outer_ratio"] == 4
+    assert info["mts"]["complete_outer_steps"] == 32
+    assert info["mts"]["complete_inner_steps"] == 128
+    assert info["cost"]["reference"]["actual_executions"] == 33
+    assert info["cost"]["counts"]["inference"] == 129
+    report = export_run(run_dir, force_source="reference",
+                        output=tmp_path / "ref.extxyz")
+    assert report["frames"] == 33
+    resumed = resume_workflow(run_dir, 64, verbose=False, handle_sigint=False)
+    assert resumed.steps_completed == 48
+    info = inspect_run(run_dir)
+    assert info["n_evaluations"] == 49
+    assert info["n_complete_steps"] == 48
+    assert info["physical_time_fs"] == 192.0
+    assert info["mts"]["complete_inner_steps"] == 192
+    assert info["cost"]["reference"]["actual_executions"] == 49
+    assert info["cost"]["counts"]["inference"] == 193
+    report = export_run(run_dir, force_source="base",
+                        output=tmp_path / "base192.extxyz")
+    assert report["frames"] == 49
 
 
 # --- resume equivalence --------------------------------------------------------

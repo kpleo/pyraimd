@@ -37,6 +37,13 @@ RUN_START = "run_start"
 EVALUATION_PROPOSED = "evaluation_proposed"
 EVALUATION_COMMITTED = "evaluation_committed"
 STEP_COMPLETED = "step_completed"
+
+# Drivers whose committed evaluation becomes a trajectory state only at its
+# STEP_COMPLETED boundary (a commit without its boundary is a cost record,
+# not a complete step).  Readers (inspect/export) share this list; a driver
+# missing from it leaks its unfinished tail evaluation into the reported
+# trajectory state.
+MD_STEP_BOUNDARY_DRIVERS = ("plain-nve", "plain-nvt", "mts-nve-respa")
 PROBE_COMPLETED = "probe_completed"
 LABEL_CONSUMED = "label_consumed"
 TASK = "task"
