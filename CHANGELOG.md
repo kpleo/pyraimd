@@ -1,8 +1,6 @@
 # Changelog
 
-## 0.8.0 (unreleased)
-
-Development-branch work; 0.7.5 remains the latest release.
+## 0.8.0 (release candidate)
 
 ### Added
 

@@ -24,13 +24,13 @@ pip install .            # user install
 pip install -e '.[dev]'  # development: adds pytest and ruff
 ```
 
-Or install the 0.7.5 wheel into a clean virtual environment. The wheel and
+Or install the 0.8.0 wheel into a clean virtual environment. The wheel and
 source distribution are attached to the corresponding GitHub Release;
 the examples and example plugins below come from that tag's source tree:
 
 ```sh
 python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
-pip install pyraimd2-0.7.5-py3-none-any.whl
+pip install pyraimd2-0.8.0-py3-none-any.whl
 ```
 
 A first run with the built-in harmonic model — the analytic demo needs no
@@ -103,15 +103,14 @@ any material. The full field reference is in
 
 ### Experimental: fixed-model MTS (multiple time stepping)
 
-The development branch carries an experimental fixed-model **multiple time
-stepping** path (`task.mode = "mts"`, a 0.8.0 candidate — not part of the
-0.7.5 release): the slow residual `F_reference − F_fast` between the
-reference and the fast potential is integrated with symmetric outer (r-RESPA)
-kicks around `outer_ratio` inner velocity-Verlet steps, so the reference is
-evaluated once per complete outer step. It complements adaptive MD rather
-than replacing it — adaptive mode decides *when* to call the reference from
-a force-error policy, while MTS follows a fixed schedule with both models
-frozen.
+0.8.0 introduces an experimental fixed-model **multiple time stepping**
+path (`task.mode = "mts"`): the slow residual `F_reference − F_fast`
+between the reference and the fast potential is integrated with symmetric
+outer (r-RESPA) kicks around `outer_ratio` inner velocity-Verlet steps, so
+the reference is evaluated once per complete outer step. It complements
+adaptive MD rather than replacing it — adaptive mode decides *when* to call
+the reference from a force-error policy, while MTS follows a fixed schedule
+with both models frozen.
 
 The `harmonic-mts` template is a complete offline demo (builtin analytic
 backends, a structure with fixed initial momenta, no external programs):
@@ -293,7 +292,7 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   use either a reference engine or a surrogate. MD supports reference-only,
   surrogate-only and adaptive modes, with checkpoints, resume and export.
   Adaptive mode applies only to MD.
-- **Dynamics.** The current release (0.7.5) supports fixed-cell NVE and NVT
+- **Dynamics.** The current release (0.8.0) supports fixed-cell NVE and NVT
   (ASE Langevin, `fixcm=False`) with `FixAtoms`: plain
   reference/surrogate modes, and adaptive MD in both ensembles — with a
   fixed base model via TOML/CLI, or with guarded online updates through

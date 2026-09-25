@@ -212,10 +212,9 @@ run requires a stateful updater.
 
 ### task.mode = "mts" (experimental fixed-model MTS)
 
-Available on the development branch (a 0.8.0 candidate; not part of the
-0.7.5 release). Fixed-model multiple time stepping for NVE: the slow
-residual `F_reference − F_fast` between the reference and the fast
-potential is applied as symmetric outer half-kicks (r-RESPA) around
+New in 0.8.0 as an experimental feature. Fixed-model multiple time stepping
+for NVE: the slow residual `F_reference − F_fast` between the reference and
+the fast potential is applied as symmetric outer half-kicks (r-RESPA) around
 `outer_ratio` inner velocity-Verlet steps on the fast force, so the
 reference is evaluated once per complete outer step. Both models are
 frozen for the whole run — there are no anchors, policies or checks; those
