@@ -101,6 +101,41 @@ verification numbers are demonstration values, not accuracy recommendations for
 any material. The full field reference is in
 [docs/configuration.md](docs/configuration.md).
 
+### Experimental: fixed-model MTS (multiple time stepping)
+
+The development branch carries an experimental fixed-model **multiple time
+stepping** path (`task.mode = "mts"`, a 0.8.0 candidate — not part of the
+0.7.5 release): the slow residual `F_reference − F_fast` between the
+reference and the fast potential is integrated with symmetric outer (r-RESPA)
+kicks around `outer_ratio` inner velocity-Verlet steps, so the reference is
+evaluated once per complete outer step. It complements adaptive MD rather
+than replacing it — adaptive mode decides *when* to call the reference from
+a force-error policy, while MTS follows a fixed schedule with both models
+frozen.
+
+The `harmonic-mts` template is a complete offline demo (builtin analytic
+backends, a structure with fixed initial momenta, no external programs):
+
+```sh
+pyramid init --template harmonic-mts --output demo
+pyramid validate demo/run.toml
+pyramid validate demo/run.toml --check-environment
+pyramid run demo/run.toml
+pyramid inspect demo/runs/harmonic-mts-demo
+pyramid export demo/runs/harmonic-mts-demo --force-source reference
+pyramid export demo/runs/harmonic-mts-demo --force-source base
+pyramid resume demo/runs/harmonic-mts-demo --steps 64   # 64 more inner steps
+pyramid inspect demo/runs/harmonic-mts-demo
+```
+
+`timestep_fs` is the inner step, and `steps` / `resume --steps N` count inner
+steps in multiples of `outer_ratio` (the demo runs 128 inner steps of 1 fs at
+ratio 4 — 32 complete outer steps, 33 committed boundary frames). The
+structure must carry momenta, and `--force-source driving` is refused because
+an outer step has no single driving force. Details and limits:
+[docs/configuration.md](docs/configuration.md); the same demo from a source
+checkout: [examples/mts_nve/](examples/mts_nve/).
+
 ### A serial relax → NVT → NVE workflow, offline
 
 `examples/periodic_lj/` runs a 32-atom fcc Lennard-Jones cell through the three
@@ -258,7 +293,7 @@ See [docs/architecture.md](docs/architecture.md) for the protocols.
   use either a reference engine or a surrogate. MD supports reference-only,
   surrogate-only and adaptive modes, with checkpoints, resume and export.
   Adaptive mode applies only to MD.
-- **Dynamics.** The current release (0.7.2) supports fixed-cell NVE and NVT
+- **Dynamics.** The current release (0.7.5) supports fixed-cell NVE and NVT
   (ASE Langevin, `fixcm=False`) with `FixAtoms`: plain
   reference/surrogate modes, and adaptive MD in both ensembles — with a
   fixed base model via TOML/CLI, or with guarded online updates through

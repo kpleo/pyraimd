@@ -49,8 +49,10 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   entry-point plugins) with their declared kind and origin.
 - `pyramid init --template harmonic --output DIR [--force]`: write
   `run.toml` + `structure.extxyz`. Existing template files are kept unless
-  `--force`. Variants: `harmonic-nvt` (plain NVT) and
-  `harmonic-adaptive-nvt` (adaptive Langevin NVT with a fixed base model).
+  `--force`. Variants: `harmonic-nvt` (plain NVT),
+  `harmonic-adaptive-nvt` (adaptive Langevin NVT with a fixed base model)
+  and `harmonic-mts` (experimental fixed-model MTS NVE; the written
+  structure carries fixed initial momenta).
 - `pyramid validate CONFIG [--probe-backends]`: check everything that can
   be checked without running: TOML and schema, structure readability and
   sanity, path-like backend options (model files, pseudo directories,
@@ -64,8 +66,9 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   directory (one directory per run; continue with `resume`, never by
   appending).
 - `pyramid resume RUN_DIR --steps N [--force-unlock]
-  [--resource BACKEND.ROLE=PATH]`: continue an adaptive or plain MD run
-  for N *additional* steps; the current and target step numbers are
+  [--resource BACKEND.ROLE=PATH]`: continue a plain, adaptive or MTS MD run
+  for N *additional* steps (for MTS, N counts inner steps and must be a
+  multiple of `outer_ratio`); the current and target step numbers are
   printed. Settings come from the run's `resolved_config.json` — same
   physics, model chain and check stream. `--force-unlock` reclaims the
   writer lock left behind by a crashed process (use only when no live
@@ -106,8 +109,10 @@ any other version is rejected — see *Schema migration*.
   optimization with ASE FIRE/BFGS), `md` (plain NVE or NVT dynamics).
 - `mode`: `adaptive` (energetic MD: anchored surrogate forces with
   independent reference checks), `reference` (use the reference engine),
-  `surrogate` (use the frozen surrogate). The latter two modes apply to
-  singlepoint, relaxation and plain MD tasks, NVE or NVT.
+  `surrogate` (use the frozen surrogate), `mts` (experimental fixed-model
+  multiple time stepping, NVE only — see *task.mode = "mts"* below). The
+  `reference`/`surrogate` modes apply to singlepoint, relaxation and plain
+  MD tasks, NVE or NVT.
 
 Mode rules:
 
@@ -117,6 +122,10 @@ Mode rules:
 - `reference` / `surrogate` require their own backend section and reject
   the other backend section plus `[policy]` and `[verification]` (unused
   sections are errors, not silently ignored).
+- `mts` requires `kind = "md"`, both `[reference]` and `[surrogate]`, and
+  `dynamics.integrator = "respa"`; it rejects `[policy]` and
+  `[verification]` (the energetic policy and independent checks exist only
+  in adaptive MD).
 
 ### [relax]
 
@@ -148,9 +157,14 @@ Mode rules:
 ### [dynamics]
 
 - `ensemble`: `nve` or `nvt`.
-- `integrator`: `verlet` (default, NVE) or `langevin` (required for NVT).
-- `timestep_fs` (number > 0, required).
-- `steps` (integer >= 1, required).
+- `integrator`: `verlet` (default, NVE), `langevin` (required for NVT) or
+  `respa` (fixed-model MTS; pairs exactly with `task.mode = "mts"`).
+- `timestep_fs` (number > 0, required). With `respa` this is the INNER
+  step.
+- `steps` (integer >= 1, required). With `respa` it counts INNER steps and
+  must be a multiple of `outer_ratio` — only complete outer steps exist.
+- `outer_ratio` (integer >= 1): required with `integrator = "respa"` — the
+  number of inner steps per outer step; refused with any other integrator.
 - `temperature_K` (number >= 0, default 300.0): the bath target
   temperature for NVT, and the one-time velocity-initialization default
   when the structure carries no velocities (both modes). Supplied
@@ -195,6 +209,89 @@ update callback.  Guarded online updates exist only in the Python
 interface (`GuardedUpdater` + `UpdatePolicy` via
 `EnergeticRunner(on_label=...)`), in both ensembles; resuming a consuming
 run requires a stateful updater.
+
+### task.mode = "mts" (experimental fixed-model MTS)
+
+Available on the development branch (a 0.8.0 candidate; not part of the
+0.7.5 release). Fixed-model multiple time stepping for NVE: the slow
+residual `F_reference − F_fast` between the reference and the fast
+potential is applied as symmetric outer half-kicks (r-RESPA) around
+`outer_ratio` inner velocity-Verlet steps on the fast force, so the
+reference is evaluated once per complete outer step. Both models are
+frozen for the whole run — there are no anchors, policies or checks; those
+belong to adaptive mode, which decides reference calls from a force-error
+policy and is a different tool, not a replaced one.
+
+Configuration:
+
+- `task.kind = "md"`, `task.mode = "mts"`, `ensemble = "nve"` and
+  `integrator = "respa"` are required together — the mode pairs exactly
+  with the integrator, and either setting alone is an error.
+- `timestep_fs` is the INNER step. `steps` counts inner steps and must be
+  a multiple of `outer_ratio` — only complete outer steps exist, never a
+  silent rounding.
+- Both `[reference]` and `[surrogate]` are required (MTS integrates the
+  slow residual between them); `[policy]` and `[verification]` are
+  rejected.
+- The structure must carry momenta: this mode continues a state and never
+  thermalizes one, so a structure without velocities is refused before the
+  first evaluation and `temperature_K`/`velocity_seed` never apply.
+
+Refused up front, never silently ignored:
+
+- NVT and NPT: `nvt` requires `integrator = "langevin"`, which conflicts
+  with the required `respa` pairing; `npt` is not an ensemble choice.
+- Constraints of any kind (from `[constraints]` or carried by the
+  structure): no constraint algorithm is applied in this version, and
+  ignoring them would integrate the wrong dynamics.
+- Online model updates (the model is fixed; no configuration key installs
+  an update callback in any mode) and adaptive step sizes (no such field
+  exists — unknown fields are rejected).
+- Backends that do not declare a content fingerprint, or that do not
+  explicitly declare `force_consistent`, conservative forces and a known
+  `energy_kind` — all checked before the first evaluation.
+
+Run records, checkpoints and resume:
+
+- One record is committed per COMPLETE outer boundary: the initial
+  evaluation at step -1, then outer boundary k at inner step
+  `k * outer_ratio`. A successful run of `steps = n * outer_ratio` commits
+  n + 1 rows and makes exactly n + 1 reference evaluations and
+  `steps + 1` surrogate predictions; rows carry the reference and
+  surrogate boundary labels separately, with `driving` absent.
+- `checkpoint.interval_steps` counts inner steps and checkpoints land only
+  on complete outer boundaries; a completed or stopped run always leaves a
+  checkpoint at the last committed boundary regardless of the interval.
+- Readout and export adopt complete boundaries only: `pyramid inspect`'s
+  `last_step`/`physical_time` and `pyramid export`'s frames reflect the
+  last complete outer boundary. A committed tail evaluation whose boundary
+  never completed (a crash mid-step) is listed separately as
+  `last_evaluation` with `complete = false`, and the reference/inference
+  calls it already paid for stay in the cost ledger.
+- Each side keeps its own declared energy convention end to end: the
+  boundary labels carry each backend's declared `energy_kind` and
+  force-consistency verbatim into the store, the checkpoint and the
+  exported frames. A changed declared convention refuses resume before any
+  evaluation.
+- `pyramid inspect` adds an MTS block (`inner_timestep_fs`,
+  `outer_ratio`, `complete_outer_steps`, `complete_inner_steps`,
+  `physical_time_fs`); the human rendering gains a progress line, e.g.
+  `mts progress          : 32 complete outer steps = 128 inner steps
+  (128.0 fs physical time)`.
+- `pyramid export` has no `driving` source for MTS — an outer step has no
+  single driving force. Export `--force-source reference` (reference
+  boundary labels) or `--force-source base` (fast-potential predictions).
+- `pyramid resume RUN_DIR --steps N` adds N INNER steps; N must be a
+  multiple of `outer_ratio`. Resume continues the same integration
+  settings (`timestep_fs`, `outer_ratio`), reference identity, model
+  identity and declared energy conventions from the checkpoint — a
+  mismatch is refused before anything is evaluated. Resource relocation
+  (`--resource`) does not compose with MTS; resume in place.
+
+Try it offline: `pyramid init --template harmonic-mts --output demo` writes
+a complete analytic demo (128 inner steps of 1 fs, `outer_ratio = 4`); the
+same demo lives in the source tree at
+[examples/mts_nve/](../examples/mts_nve/).
 
 ### [reference] / [surrogate]
 
@@ -431,7 +528,9 @@ fixed for the run (change them with a fork, not a resume).
 
 ### [checkpoint]
 
-- `interval_steps` (integer >= 1, default 10).
+- `interval_steps` (integer >= 1, default 10). With `task.mode = "mts"` it
+  counts inner steps and checkpoints land only on complete outer
+  boundaries.
 - `keep_generations`: only 2 is accepted; the runtime keeps exactly two
   generations.
 
@@ -585,6 +684,10 @@ evaluation — they are the recovery record and are never thinned.
   checkpoints: the plain driver checkpoints at every
   `checkpoint.interval_steps` and on a stop request, and resume rebuilds
   the boundary from the last committed step. `export` works on them too.
+- MTS runs resume from the last complete-outer-boundary checkpoint;
+  `--steps N` counts inner steps and must be a multiple of `outer_ratio`.
+  Integration settings, backend identities and declared energy conventions
+  are verified against the checkpoint before any evaluation.
 
 ### Relocating a run with declared file resources
 
@@ -624,7 +727,9 @@ pyramid resume "moved run" --steps 2 \
 
 `--force-source` states which forces the frames carry:
 
-- `driving`: the forces that actually propagated the MD (always present).
+- `driving`: the forces that actually propagated the MD (present for plain
+  and adaptive MD; refused for MTS runs, where an outer step has no single
+  driving force — export `reference` or `base`).
 - `reference`: reference engine labels. Evaluations without one (accepted,
   unchecked steps) are **missing data, not zero force**: the frame carries
   `forces_available=F` and an all-NaN forces array, and no `energy` key.

@@ -54,10 +54,19 @@ command line.
   contract. `probe=True` additionally evaluates the structure once per backend.
 - `export_run(run_dir, *, force_source="driving", output=None, force=False) -> dict`
   — export the committed trajectory to extxyz; `FORCE_SOURCES` lists the
-  valid sources. Missing labels are NaN-marked, never zero-filled.
+  valid sources. Missing labels are NaN-marked, never zero-filled. MTS runs
+  refuse `force_source="driving"` (an outer step has no single driving
+  force); use `reference` or `base`.
 - `write_template(template, output_dir, *, force=False) -> Path` — write a
   runnable `run.toml` + `structure.extxyz`; `TEMPLATES` lists the available
-  templates.
+  templates (including the experimental `harmonic-mts`, whose structure
+  carries fixed initial momenta).
+- `pyraimd2.workflows.mts_md` — the experimental fixed-model MTS driver
+  (driver id `mts-nve-respa`) behind `task.mode = "mts"`: `run_workflow`
+  and `resume_workflow` dispatch to it, and it commits one record per
+  COMPLETE outer boundary. For MTS runs `resume_workflow`'s `extra_steps`
+  counts inner steps and must be a multiple of `outer_ratio`, and
+  `resource_paths` relocation is refused.
 - `create_configured_backend(section, config, *, run_dir=None, event_log=None)`
   / `build_backends(config, ...)` — construct configured backends through the
   registry (factories declaring `run_root`/`event_log` receive them here).
@@ -143,7 +152,13 @@ Persistence, identity and accounting behind resumable runs.
 - Events and costs: `EventLog` (single-writer append-only JSONL with an
   exclusive lock) / `EventLogError`, `summarize_tasks(events)` (ledger:
   logical vs actual vs failed vs cache-hit), `inspect_run(run_dir)` /
-  `format_inspection(info)` / `summary_csv(store, run_id)`.
+  `format_inspection(info)` / `summary_csv(store, run_id)`. For MTS runs
+  `inspect_run` adds an `mts` block (`inner_timestep_fs`, `outer_ratio`,
+  `complete_outer_steps`, `complete_inner_steps`, `physical_time_fs`), and
+  progress adopts complete outer boundaries only — a committed tail
+  evaluation without its boundary is reported separately in
+  `last_evaluation` (`complete = false`), with its spent calls kept in the
+  ledger.
 - Recovery: `CheckpointManager` (atomic generation snapshots with hash
   manifests; reads fall back to the last valid generation) /
   `CheckpointError` / `ResumeError`.
@@ -197,6 +212,17 @@ probe spend (`pacing_decision` events), applied at the commit, restored on
 replay and carried in checkpoints.  It composes with neither `on_label`
 updates nor explicit `direction` callbacks, and changes no gate, budget or
 check semantics.
+
+`pyraimd2.loop.mts` is the experimental fixed-model symmetric-MTS (r-RESPA)
+NVE kernel behind `task.mode = "mts"`: `run_mts(atoms, reference, surrogate,
+*, inner_timestep_fs, outer_ratio, n_outer_steps, ...)` integrates the slow
+residual `F_ref - F_fast` with symmetric outer half-kicks around inner
+velocity-Verlet blocks and returns `MtsResult` (a tuple of `MtsBoundary`
+records; `MtsError` on contract violations). The kernel is a pure integrator
+with no store/checkpoint I/O; the configured workflow driver
+(`pyraimd2.workflows.mts_md`, see above) supplies run records, checkpoints
+and resume. Resource relocation on resume is refused for MTS, and
+serial-recipe composition is not a supported combination.
 
 The pre-0.4 switching interface (`Runner`, `RunSummary`,
 `SwitchingCalculator`, and the scheduled/conformal policies in

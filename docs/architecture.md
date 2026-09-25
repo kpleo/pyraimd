@@ -136,6 +136,37 @@ and `UpdatePolicy` validate a candidate on a guard set, then publish its model
 artifact or restore the parent state. The runtime records model identities and
 consumed label IDs so resume can restore updates without repeating training.
 
+## Fixed-model MTS (experimental)
+
+`pyraimd2.loop.mts` holds a symmetric multiple-time-stepping (r-RESPA) NVE
+kernel, `run_mts`: the slow residual `F_slow = F_ref − F_fast` between the
+reference and the fast potential is applied as symmetric outer half-kicks
+around `outer_ratio` inner velocity-Verlet steps on the fast force. Only
+complete outer steps exist; the outer-endpoint reference and fast labels
+carry into the next step, so a continuous and a segmented run make exactly
+the same backend calls. Boundary momenta are the synchronized
+post-half-kick ones; inner-block momenta are intermediate integrator state.
+
+`pyraimd2.workflows.mts_md` drives the kernel one outer step per segment
+with the standard run plumbing — one committed store row, commit event and
+checkpoint per COMPLETE outer boundary — so `pyramid run`, `resume`,
+`inspect` and `export` behave as for the other MD modes, with two
+mode-specific surface differences: an outer step has no single driving
+force (store rows carry the reference and surrogate boundary labels
+separately with `driving` absent, and export requires an explicit
+`reference` or `base` source), and readouts adopt complete boundaries only.
+Users enter through `task.mode = "mts"` configurations or the
+`harmonic-mts` init template; the field semantics are in
+[configuration.md](configuration.md).
+
+The scope is deliberately narrow: fixed models, fixed cell and composition,
+NVE only, momenta supplied with the structure, no constraints, no online
+updates. Both backends must declare content fingerprints, force-consistent
+conservative forces and a known energy kind before the first evaluation, and
+each side's declared convention rides with its boundary labels end to end.
+Combinations not reviewed for this path — serial-recipe stages, resource
+relocation on resume — are refused or unsupported rather than implied.
+
 ## Run records
 
 `Store` writes ASE database rows containing the configuration, route and reason,

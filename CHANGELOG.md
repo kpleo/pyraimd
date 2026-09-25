@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.8.0 (unreleased)
+
+Development-branch work; 0.7.5 remains the latest release.
+
+### Added
+
+- Experimental fixed-model MTS (multiple time stepping) for NVE MD:
+  `task.mode = "mts"` pairs exactly with `dynamics.integrator = "respa"` and
+  integrates the slow residual `F_reference − F_fast` with symmetric outer
+  (r-RESPA) half-kicks around `outer_ratio` inner velocity-Verlet steps
+  (`pyraimd2.loop.mts` kernel, `pyraimd2.workflows.mts_md` driver).
+  `timestep_fs` is the inner step; `steps` and `resume --steps N` count
+  inner steps and must be multiples of `outer_ratio`. The structure must
+  carry momenta (the mode never thermalizes); constraints, NVT/NPT,
+  `[policy]`/`[verification]`, online model updates and adaptive step sizes
+  are refused up front. Both backends must declare content fingerprints,
+  force-consistent conservative forces and a known `energy_kind` before the
+  first evaluation, and each side's declared energy convention rides with
+  its boundary labels into the store, the checkpoints and the exports.
+- Full workflow wiring: `pyramid run` / `resume` (resume verifies the
+  integration settings, reference and model identity, and the declared
+  energy conventions against the checkpoint before any evaluation; resource
+  relocation is refused for MTS runs); checkpoints, stops and failures
+  always land on the last committed complete outer boundary.
+- `pyramid inspect` reports MTS progress explicitly
+  (`inner_timestep_fs`, `outer_ratio`, `complete_outer_steps`,
+  `complete_inner_steps`, `physical_time_fs`).
+- `pyramid export` requires an explicit force source for MTS runs:
+  `--force-source reference` (reference boundary labels) or `base`
+  (fast-potential predictions); `driving` is refused because an outer step
+  has no single driving force.
+- Complete-boundary readout semantics: `inspect` and `export` adopt only
+  complete outer boundaries; a committed tail evaluation whose boundary
+  never completed is listed separately (`last_evaluation`,
+  `complete = false`) and its spent reference/inference calls stay in the
+  cost ledger.
+- New `harmonic-mts` init template: a complete offline analytic demo —
+  configuration plus a structure with fixed initial momenta, no external
+  programs or model downloads.
+- Documentation for the above (README, configuration, API, architecture
+  and the `examples/mts_nve` README).
+
 ## 0.7.5 (2026-09-23)
 
 Usability release on top of 0.7.4:
