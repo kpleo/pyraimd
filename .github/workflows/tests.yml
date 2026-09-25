@@ -99,6 +99,21 @@ jobs:
           wheel-venv/bin/pyramid inspect smoke/runs/harmonic-demo
           wheel-venv/bin/pyramid resume smoke/runs/harmonic-demo --steps 10
           wheel-venv/bin/pyramid export smoke/runs/harmonic-demo --force-source driving --output driving.extxyz
+      - name: MTS user flow from the installed wheel
+        # The install-ready harmonic-mts template path: init -> validate ->
+        # run -> inspect -> export -> resume -> export, no source checkout.
+        working-directory: ${{ runner.temp }}
+        run: |
+          wheel-venv/bin/pyramid init --template harmonic-mts --output smoke-mts
+          wheel-venv/bin/pyramid validate smoke-mts/run.toml
+          wheel-venv/bin/pyramid validate smoke-mts/run.toml --check-environment
+          wheel-venv/bin/pyramid run smoke-mts/run.toml
+          wheel-venv/bin/pyramid inspect smoke-mts/runs/harmonic-mts-demo
+          wheel-venv/bin/pyramid export smoke-mts/runs/harmonic-mts-demo --force-source reference --output mts-reference.extxyz
+          wheel-venv/bin/pyramid export smoke-mts/runs/harmonic-mts-demo --force-source base --output mts-base.extxyz
+          wheel-venv/bin/pyramid resume smoke-mts/runs/harmonic-mts-demo --steps 64
+          wheel-venv/bin/pyramid inspect smoke-mts/runs/harmonic-mts-demo
+          wheel-venv/bin/pyramid export smoke-mts/runs/harmonic-mts-demo --force-source reference --output mts-reference-192.extxyz
       - name: Installed core carries no torch/PySCF
         run: |
           "$RUNNER_TEMP/wheel-venv/bin/python" -m pip list
