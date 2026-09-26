@@ -52,6 +52,15 @@ command line.
 - `validate_setup(config, *, probe=False) -> dict` — everything checkable
   without running: schema, structure, paths, backend construction, capability
   contract. `probe=True` additionally evaluates the structure once per backend.
+- `probe_surrogate_setup(config) -> dict` (`pyraimd2.workflows.probe`) —
+  the surrogate-only readiness probe behind `pyramid validate CONFIG
+  --probe-surrogate`: constructs only the configured surrogate (correction
+  wrappers included) through the registry, predicts once on the configured
+  structure, and returns the surrogate's readiness report
+  (`validation_scope="surrogate_probe"`, attempt/success counters, probe
+  energy/force shape and timings).  The reference backend is never
+  constructed; nothing is written.  Raises `SurrogateProbeError` (a
+  `WorkflowError` with `.stage` and the partial `.report`) on failure.
 - `export_run(run_dir, *, force_source="driving", output=None, force=False) -> dict`
   — export the committed trajectory to extxyz; `FORCE_SOURCES` lists the
   valid sources. Missing labels are NaN-marked, never zero-filled. MTS runs

@@ -50,23 +50,33 @@ def build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser(
         "validate", help="check a configuration without running it")
     validate.add_argument("config", help="path to the TOML configuration")
-    # --probe-backends / --check-environment are parsed independently and
-    # the conflict is rejected inside _cmd_validate, so --json callers get
-    # one parseable error object instead of argparse's stderr text.
+    # --probe-backends / --check-environment / --probe-surrogate are parsed
+    # independently and the conflict is rejected inside _cmd_validate, so
+    # --json callers get one parseable error object instead of argparse's
+    # stderr text.
     validate.add_argument(
         "--probe-backends", action="store_true",
         help="also run one small backend self-check on the structure "
              "(executes the reference/surrogate once; off by default; "
-             "not combinable with --check-environment)")
+             "not combinable with --check-environment or "
+             "--probe-surrogate)")
     validate.add_argument(
         "--check-environment", action="store_true",
         help="read-only static check of local runtime prerequisites "
              "(executables, optional packages, local model files); never "
              "starts a backend, executes a command, loads weights or "
-             "downloads anything (not combinable with --probe-backends)")
+             "downloads anything (not combinable with --probe-backends or "
+             "--probe-surrogate)")
+    validate.add_argument(
+        "--probe-surrogate", action="store_true",
+        help="evaluate the structure once with ONLY the configured "
+             "surrogate (real model call: weights load and one prediction "
+             "runs — use on a compute-authorized node; the reference is "
+             "never constructed; not combinable with --probe-backends or "
+             "--check-environment)")
     validate.add_argument(
         "--json", action="store_true",
-        help="write a single JSON report to stdout (works for all three "
+        help="write a single JSON report to stdout (works for all four "
              "validation scopes; handled errors are reported as JSON too)")
     validate.set_defaults(func=_cmd_validate)
 
@@ -170,13 +180,21 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     from pyraimd2.workflows.preflight import check_environment
 
     scope = ("probe" if args.probe_backends else
-             "environment" if args.check_environment else "configuration")
+             "environment" if args.check_environment else
+             "surrogate_probe" if args.probe_surrogate else
+             "configuration")
 
-    if args.probe_backends and args.check_environment:
-        message = ("--probe-backends and --check-environment are mutually "
-                   "exclusive: one executes each backend once, the other is "
-                   "strictly read-only; run them as two separate validate "
-                   "calls")
+    chosen = [flag for flag, on in (
+        ("--probe-backends", args.probe_backends),
+        ("--check-environment", args.check_environment),
+        ("--probe-surrogate", args.probe_surrogate)) if on]
+    if len(chosen) > 1:
+        message = ("validate scopes are mutually exclusive: "
+                   + " and ".join(chosen)
+                   + "; --probe-backends executes each configured backend "
+                     "once, --check-environment is strictly read-only, and "
+                     "--probe-surrogate evaluates only the surrogate — run "
+                     "them as separate validate calls")
         if args.json:
             print(json.dumps({
                 "schema_version": 1,
@@ -189,6 +207,9 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         else:
             print(f"error: validate: {message}", file=sys.stderr)
         return EXIT_USAGE
+
+    if args.probe_surrogate:
+        return _cmd_validate_probe_surrogate(args)
 
     def _json_error(error: BaseException) -> int:
         print(json.dumps({
@@ -284,6 +305,86 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         print("configuration valid — environment NOT checked; verify local "
               "prerequisites without computing via "
               "`pyramid validate <config> --check-environment`")
+    return EXIT_OK
+
+
+def _cmd_validate_probe_surrogate(args: argparse.Namespace) -> int:
+    """--probe-surrogate: one real prediction by the configured surrogate
+    only — the reference backend is never constructed, nothing is written.
+    """
+    from pyraimd2.workflows.probe import (
+        STATIC_STAGES,
+        SurrogateProbeError,
+        probe_surrogate_setup,
+    )
+
+    def _json_error(error: BaseException) -> int:
+        print(json.dumps({
+            "schema_version": 1,
+            "validation_scope": "surrogate_probe",
+            "configuration_valid": False,
+            "readiness": "not_checked",
+            "checks": [],
+            "error": {"code": type(error).__name__,
+                      "message": str(error)},
+        }, allow_nan=False))
+        return EXIT_USAGE
+
+    try:
+        config = load_config(args.config)
+    except _usage_errors() as error:
+        if args.json:
+            return _json_error(error)
+        raise
+    if args.json:
+        try:
+            # backend stdout logging must not corrupt the single-object
+            # stdout contract: redirect it to stderr for the probe span
+            import contextlib
+
+            with contextlib.redirect_stdout(sys.stderr):
+                report = probe_surrogate_setup(config)
+        except SurrogateProbeError as error:
+            print(json.dumps(error.report, allow_nan=False))
+            return (EXIT_USAGE if error.stage in STATIC_STAGES
+                    else EXIT_FAILURE)
+        print(json.dumps(report, allow_nan=False))
+        return EXIT_OK
+    try:
+        report = probe_surrogate_setup(config)
+    except SurrogateProbeError as error:
+        if error.stage in STATIC_STAGES:
+            # static configuration problems keep the usage-error path
+            raise
+        print(f"error: validate --probe-surrogate: {error} "
+              f"(stage: {error.stage})", file=sys.stderr)
+        return EXIT_FAILURE
+    structure = report["structure"]
+    surrogate = report["surrogate"]
+    probe = report["probe"]
+    print(f"configuration : {config.source_path} (schema_version "
+          f"{config.schema_version})")
+    print(f"structure     : {structure['formula']}, "
+          f"{structure['n_atoms']} atoms, pbc={structure['pbc']}")
+    caps = ", ".join(
+        f"{key}={surrogate[key]}"
+        for key in ("energy_kind", "force_consistent",
+                    "forces_conservative"))
+    print(f"surrogate     : {surrogate['backend']} ({caps})")
+    print(f"fingerprint   : {surrogate['fingerprint']}")
+    print(f"probe energy  : {probe['energy_eV']:.6f} eV "
+          f"(predict {probe['predict_s']:.3f} s; total "
+          f"{probe['total_s']:.3f} s incl. initialization/model load)")
+    print(f"forces        : shape {probe['forces_shape']}, norm "
+          f"{probe['forces_norm_eV_A']:.6f} eV/angstrom")
+    if report["unchecked_backends"]:
+        print("unchecked     : "
+              + ", ".join(report["unchecked_backends"])
+              + " (reference_evaluations=0)")
+    print("validate: OK (surrogate readiness probe only — the reference "
+          "backend was not constructed or evaluated and the full-run "
+          "energy contract is not certified here; a real model call ran, "
+          "so use this on a compute-authorized node)")
     return EXIT_OK
 
 

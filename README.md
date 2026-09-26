@@ -133,7 +133,8 @@ ratio 4 — 32 complete outer steps, 33 committed boundary frames). The
 structure must carry momenta, and `--force-source driving` is refused because
 an outer step has no single driving force. Details and limits:
 [docs/configuration.md](docs/configuration.md); the same demo from a source
-checkout: [examples/mts_nve/](examples/mts_nve/).
+checkout: [examples/mts_nve/](examples/mts_nve/), and the scaled-surrogate
+variant: [examples/scaled_mts/](examples/scaled_mts/).
 
 ### A serial relax → NVT → NVE workflow, offline
 
@@ -182,7 +183,12 @@ launcher command such as `srun -n 4 pw.x` whose solver layer cannot be
 confirmed statically are reported as `blocked` or `unverified`, with the
 remedy spelled out). With them,
 `pyramid validate run.toml --probe-backends` evaluates the structure once with
-each backend before committing to a run.
+each backend before committing to a run.  When only the surrogate's
+dependencies and weights are in question (e.g. before paying for an expensive
+reference), `pyramid validate run.toml --probe-surrogate` evaluates the
+structure once with the configured surrogate alone — a real model call that
+loads weights, so run it on a compute-authorized node; the reference backend
+is never constructed, and MACE requires an explicit local `model` file there.
 
 ### Stop, resume and recover
 

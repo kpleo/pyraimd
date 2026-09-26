@@ -1,0 +1,42 @@
+schema_version = 1
+# scaled_mts example, UNCALIBRATED arm: fixed-model MTS (respa) NVE on the
+# builtin analytic harmonic backends — no external program, no model
+# download.  The fast model is the plain harmonic-surrogate (k = 0.8)
+# around the harmonic reference (k = 1.0): the slow residual
+# F_reference - F_fast is nonzero here.
+#
+# timestep_fs is the INNER step and steps count inner steps: this file
+# simulates 32 fs as 8 complete outer steps of 4 inner steps each.
+
+[run]
+id = "scaled-mts-base-demo"
+directory = "run-base"
+
+[task]
+kind = "md"
+mode = "mts"
+
+[structure]
+file = "structure.extxyz"     # written by make_structure.py (with momenta)
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0             # inner step (fs)
+steps = 32                    # inner steps (32 fs)
+outer_ratio = 4               # inner steps per outer step
+
+[checkpoint]
+interval_steps = 8            # inner steps; only complete outer
+                              # boundaries are checkpointed
+
+[reference]
+backend = "harmonic-reference"
+k = 1.0
+r0 = 0.9
+
+[surrogate]
+backend = "harmonic-surrogate"
+k = 0.8
+r0 = 0.9
+bias = 0.0

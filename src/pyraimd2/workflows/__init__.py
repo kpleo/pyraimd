@@ -12,6 +12,10 @@ from pyraimd2.workflows.md import (
     resume_workflow,
     run_workflow,
 )
+from pyraimd2.workflows.probe import (
+    SurrogateProbeError,
+    probe_surrogate_setup,
+)
 from pyraimd2.workflows.setup import (
     RunOutputs,
     WorkflowError,
@@ -28,6 +32,7 @@ __all__ = [
     "TEMPLATES",
     "ExportError",
     "RunOutputs",
+    "SurrogateProbeError",
     "WorkflowError",
     "WorkflowResult",
     "build_backends",
@@ -36,6 +41,7 @@ __all__ = [
     "frames_from_store",
     "load_structure",
     "prepare_run_directory",
+    "probe_surrogate_setup",
     "resume_workflow",
     "run_workflow",
     "validate_setup",

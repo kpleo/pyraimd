@@ -1,0 +1,44 @@
+schema_version = 1
+# scaled_mts example, SCALED arm: the same MTS run with the public `scaled`
+# wrapper around the same harmonic fast model.  `scaled` multiplies BOTH
+# the energy and the forces by one frozen scalar (U_used = c * U_base,
+# F_used = c * F_base — scaling only one side would break force
+# consistency), fixed at construction and never updated during the run.
+#
+# Teaching parameter choice: scale = 1.25 exactly cancels the base model's
+# k = 0.8 against the reference k = 1.0, so the two force fields coincide
+# and the MTS residual vanishes (up to exact arithmetic).  This demonstrates
+# the wiring, not a physical calibration: a real scale must be determined
+# in advance on independent calibration data and frozen — see the README.
+
+[run]
+id = "scaled-mts-scaled-demo"
+directory = "run-scaled"
+
+[task]
+kind = "md"
+mode = "mts"
+
+[structure]
+file = "structure.extxyz"     # written by make_structure.py (with momenta)
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0             # inner step (fs)
+steps = 32                    # inner steps (32 fs)
+outer_ratio = 4               # inner steps per outer step
+
+[checkpoint]
+interval_steps = 8            # inner steps; only complete outer
+                              # boundaries are checkpointed
+
+[reference]
+backend = "harmonic-reference"
+k = 1.0
+r0 = 0.9
+
+[surrogate]
+backend = "scaled"
+scale = 1.25                  # frozen for the whole run; scales E AND F
+base = { name = "harmonic-surrogate", kwargs = { k = 0.8, r0 = 0.9, bias = 0.0 } }

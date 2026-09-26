@@ -53,7 +53,8 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   `harmonic-adaptive-nvt` (adaptive Langevin NVT with a fixed base model)
   and `harmonic-mts` (experimental fixed-model MTS NVE; the written
   structure carries fixed initial momenta).
-- `pyramid validate CONFIG [--probe-backends]`: check everything that can
+- `pyramid validate CONFIG [--probe-backends | --check-environment |
+  --probe-surrogate]`: check everything that can
   be checked without running: TOML and schema, structure readability and
   sanity, path-like backend options (model files, pseudo directories,
   pseudopotentials), backend construction through the registry (parameter
@@ -62,6 +63,14 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   downloads nothing. `--probe-backends` additionally evaluates the
   structure once with each configured backend (this can execute external
   programs — QE needs `pw.x`, a periodic cell and pseudopotentials).
+  `--check-environment` is the strictly read-only local-prerequisites
+  preflight. `--probe-surrogate` evaluates the structure once with ONLY
+  the configured surrogate (a real model call: weights load and one
+  prediction runs — use it on a compute-authorized node); the reference
+  backend is never constructed, nothing is written, and a MACE `model`
+  must name an existing local weights file (bare base-model names that
+  could download are refused). The three probe/environment flags are
+  mutually exclusive.
 - `pyramid run CONFIG`: validate, then execute. Refuses an already-used run
   directory (one directory per run; continue with `resume`, never by
   appending).
@@ -290,7 +299,9 @@ Run records, checkpoints and resume:
 Try it offline: `pyramid init --template harmonic-mts --output demo` writes
 a complete analytic demo (128 inner steps of 1 fs, `outer_ratio = 4`); the
 same demo lives in the source tree at
-[examples/mts_nve/](../examples/mts_nve/).
+[examples/mts_nve/](../examples/mts_nve/), and the scaled-surrogate variant
+(the `scaled` wrapper around the fast model inside MTS) at
+[examples/scaled_mts/](../examples/scaled_mts/).
 
 ### [reference] / [surrogate]
 
@@ -424,7 +435,7 @@ reference fingerprint).
   true input origin), and the chain then falls back to the real source.
 - `startpot_file` / `density_source`: warm starts from a verified
   density of known origin (see the engine docstrings).
-- Validation has three explicit scopes:
+- Validation has four explicit scopes:
   `pyramid validate run.toml` checks the configuration only (never the
   machine); `pyramid validate run.toml --check-environment` adds a
   read-only, zero-computation preflight of local runtime prerequisites
@@ -435,10 +446,20 @@ reference fingerprint).
   optional packages probed via import metadata without importing, local
   model files, and wrapper backends checked through their declared base
   backend; unknown plugin backends report `unverified`, never `ready`);
-  and `--probe-backends` explicitly
-  evaluates the structure once per backend.  `--json` emits one
-  machine-readable report object for any of the three scopes, including
-  a usage conflict between `--probe-backends` and `--check-environment`.
+  `--probe-backends` explicitly
+  evaluates the structure once per backend; and `--probe-surrogate`
+  evaluates the structure once with ONLY the configured surrogate
+  (wrappers such as `scaled` included) — the reference backend is never
+  constructed and no reference cost is paid, nothing is written, and the
+  report (`validation_scope: "surrogate_probe"`) states the surrogate's
+  own readiness with `reference_evaluations: 0` rather than a
+  whole-configuration certification.  The surrogate probe really loads
+  the model and predicts once: run it on a compute-authorized node, and
+  for MACE point `model` at an existing local weights file (a bare
+  base-model name is refused before construction rather than turned into
+  a download).  `--json` emits one
+  machine-readable report object for any of the four scopes, including
+  a usage conflict between any two of the three probe/environment flags.
 - `startingwfc_file` (boolean, default `false`): also restart
   wavefunctions from a staged `.save` tree (`startingwfc = 'file'` is
   written only when this attempt actually staged one; the attempt record
