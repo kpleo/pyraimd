@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.8.1 (release candidate)
+
+### Added
+
+- New validation scope `pyramid validate CONFIG --probe-surrogate [--json]`
+  (Python API `pyraimd2.workflows.probe_surrogate_setup(config)`): a
+  surrogate-only readiness probe. It constructs only the configured
+  surrogate through the registry (correction wrappers such as `scaled`
+  included), runs one real prediction on the configured structure, checks
+  the finite scalar energy, the exactly-(N,3) finite forces and the
+  returned-vs-declared energy contract, and reports the selected
+  surrogate's readiness with `reference_evaluations: 0`. The reference
+  backend is never constructed and Pyramid writes no run artifacts. The
+  three evaluation/preflight flags (`--probe-backends`,
+  `--check-environment`, `--probe-surrogate`) are mutually exclusive,
+  rejected before any factory or predict. In this entry point MACE
+  requires an explicit local `model` weights file (nested wrapper bases
+  included); bare base-model names are refused rather than turned into
+  downloads. This is a real model call — run it on a compute-authorized
+  node.
+- `examples/scaled_mts/`: an offline teaching demo of the `scaled`
+  surrogate wrapper inside fixed-model MTS (uncalibrated and scaled TOML
+  configurations, structure script, README), verified from an installed
+  wheel outside the repository.
+
+### Fixed
+
+- The surrogate probe now blocks at the contract stage (non-zero exit)
+  when the prediction's returned `energy_kind`/`force_consistent`
+  explicitly conflicts with the declared capabilities, instead of
+  reporting ready on finite numbers alone.
+- Exceptions while reading a constructed surrogate's
+  capabilities/fingerprint now surface as a structured initialize/blocked
+  report instead of an escaping traceback.
+
 ## 0.8.0 (2026-09-25)
 
 ### Added
