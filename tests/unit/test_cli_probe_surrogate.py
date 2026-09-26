@@ -141,6 +141,91 @@ class WeakSurrogate(ProbeOkSurrogate):
         return "weak:v1"
 
 
+class KindConflictSurrogate(ProbeOkSurrogate):
+    """Declares energy_kind='energy' but returns 'free_energy'."""
+
+    @property
+    def fingerprint(self):
+        return "kind-conflict:v1"
+
+    def predict(self, atoms):
+        from pyraimd2.surrogate.base import SurrogatePrediction
+        return SurrogatePrediction(
+            energy=1.5, forces=np.full((len(atoms), 3), 0.25), stress=None,
+            uncertainty=np.full(len(atoms), np.nan),
+            energy_kind="free_energy", force_consistent=True)
+
+
+class FcConflictSurrogate(ProbeOkSurrogate):
+    """Declares force_consistent=True but returns False."""
+
+    @property
+    def fingerprint(self):
+        return "fc-conflict:v1"
+
+    def predict(self, atoms):
+        from pyraimd2.surrogate.base import SurrogatePrediction
+        return SurrogatePrediction(
+            energy=1.5, forces=np.full((len(atoms), 3), 0.25), stress=None,
+            uncertainty=np.full(len(atoms), np.nan),
+            energy_kind="energy", force_consistent=False)
+
+
+class MetadataFailSurrogate(ProbeOkSurrogate):
+    """Fingerprint metadata read raises (constructed successfully)."""
+
+    @property
+    def fingerprint(self):
+        raise OSError("synthetic fingerprint metadata unavailable")
+
+
+class UnknownKindSurrogate(ProbeOkSurrogate):
+    """Declares energy_kind unknown; the returned 'energy' is compatible."""
+
+    @property
+    def capabilities(self):
+        from pyraimd2.surrogate.base import SurrogateCapabilities
+        return SurrogateCapabilities(
+            energy_kind="unknown", force_consistent=True,
+            forces_conservative=True, stress_available=False,
+            uncertainty_available=False)
+
+    @property
+    def fingerprint(self):
+        return "unknown-kind:v1"
+
+
+class PlainResultSurrogate(ProbeOkSurrogate):
+    """Predict returns an object without energy_kind/force_consistent
+    attributes — undeclared return metadata is compatible."""
+
+    @property
+    def fingerprint(self):
+        return "plain-result:v1"
+
+    def predict(self, atoms):
+        from types import SimpleNamespace
+        return SimpleNamespace(energy=0.5,
+                               forces=np.zeros((len(atoms), 3)))
+
+
+class UndeclaredFcSurrogate(ProbeOkSurrogate):
+    """Declares force_consistent=None (unknown); a returned True is
+    compatible (the MTS None rule)."""
+
+    @property
+    def capabilities(self):
+        from pyraimd2.surrogate.base import SurrogateCapabilities
+        return SurrogateCapabilities(
+            energy_kind="energy", force_consistent=None,
+            forces_conservative=True, stress_available=False,
+            uncertainty_available=False)
+
+    @property
+    def fingerprint(self):
+        return "undeclared-fc:v1"
+
+
 def sentinel_reference_factory():
     return SentinelReference()
 
@@ -169,6 +254,30 @@ def weak_surrogate_factory():
     return WeakSurrogate()
 
 
+def kindconflict_surrogate_factory():
+    return KindConflictSurrogate()
+
+
+def fcconflict_surrogate_factory():
+    return FcConflictSurrogate()
+
+
+def metafail_surrogate_factory():
+    return MetadataFailSurrogate()
+
+
+def unknownkind_surrogate_factory():
+    return UnknownKindSurrogate()
+
+
+def plainresult_surrogate_factory():
+    return PlainResultSurrogate()
+
+
+def undeclaredfc_surrogate_factory():
+    return UndeclaredFcSurrogate()
+
+
 _SENTINELS = {
     "sentinel-reference": "sentinel_reference_factory",
     "probe-ok-surrogate": "ok_surrogate_factory",
@@ -177,6 +286,12 @@ _SENTINELS = {
     "probe-badshape-surrogate": "badshape_surrogate_factory",
     "probe-nan-surrogate": "nan_surrogate_factory",
     "probe-weak-surrogate": "weak_surrogate_factory",
+    "probe-kindconflict-surrogate": "kindconflict_surrogate_factory",
+    "probe-fcconflict-surrogate": "fcconflict_surrogate_factory",
+    "probe-metafail-surrogate": "metafail_surrogate_factory",
+    "probe-unknownkind-surrogate": "unknownkind_surrogate_factory",
+    "probe-plainresult-surrogate": "plainresult_surrogate_factory",
+    "probe-undeclaredfc-surrogate": "undeclaredfc_surrogate_factory",
 }
 
 
@@ -477,6 +592,113 @@ def test_probe_surrogate_mace_missing_file_refused(sentinels, tmp_path,
     assert code == 1
     assert report["error"]["stage"] == "initialize"
     assert "not an existing local file" in report["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# returned-vs-declared contract (the MTS UNKNOWN/None-compatible rule)
+
+
+def test_probe_surrogate_kind_conflict_blocked(sentinels, tmp_path,
+                                               capsys) -> None:
+    config = _write_config(
+        tmp_path, '[surrogate]\nbackend = "probe-kindconflict-surrogate"\n')
+    code, report, _ = _run_json(capsys, "validate", str(config),
+                                "--probe-surrogate", "--json")
+    assert code == 1
+    assert report["readiness"] == "blocked"
+    assert report["error"]["stage"] == "contract"
+    assert "free_energy" in report["error"]["message"]
+    assert report["prediction_attempts"] == 1
+    assert report["prediction_successes"] == 0
+    assert report["reference_evaluations"] == 0
+    assert CALLS["reference_factory"] == 0
+
+
+def test_probe_surrogate_fc_conflict_blocked(sentinels, tmp_path,
+                                             capsys) -> None:
+    config = _write_config(
+        tmp_path, '[surrogate]\nbackend = "probe-fcconflict-surrogate"\n')
+    code, report, _ = _run_json(capsys, "validate", str(config),
+                                "--probe-surrogate", "--json")
+    assert code == 1
+    assert report["readiness"] == "blocked"
+    assert report["error"]["stage"] == "contract"
+    assert "force_consistent" in report["error"]["message"]
+    assert report["prediction_attempts"] == 1
+    assert report["prediction_successes"] == 0
+
+
+def test_probe_surrogate_metadata_read_failure_structured(
+        sentinels, tmp_path, capsys) -> None:
+    config = _write_config(
+        tmp_path, '[surrogate]\nbackend = "probe-metafail-surrogate"\n')
+    code, report, _ = _run_json(capsys, "validate", str(config),
+                                "--probe-surrogate", "--json")
+    # a single blocked JSON object, no escaping traceback
+    assert code == 1
+    assert report["readiness"] == "blocked"
+    assert report["error"]["stage"] == "initialize"
+    assert "fingerprint" in report["error"]["message"]
+    assert report["prediction_attempts"] == 0
+    assert report["prediction_successes"] == 0
+    assert report["reference_evaluations"] == 0
+    assert CALLS["reference_factory"] == 0
+
+
+def test_probe_surrogate_unknown_declared_kind_compatible(
+        sentinels, tmp_path, capsys) -> None:
+    # non-MTS config: an unknown declared kind is compatible with a known
+    # returned kind (MTS mode would require the declaration up front)
+    config = _write_config(
+        tmp_path, '[surrogate]\nbackend = "probe-unknownkind-surrogate"\n',
+        reference=False)
+    code, report, _ = _run_json(capsys, "validate", str(config),
+                                "--probe-surrogate", "--json")
+    assert code == 0
+    assert report["readiness"] == "ready"
+    assert report["surrogate"]["energy_kind"] == "unknown"
+    assert report["probe"]["returned_contract"]["energy_kind"] == "energy"
+    assert report["prediction_successes"] == 1
+
+
+def test_probe_surrogate_result_without_contract_fields_compatible(
+        sentinels, tmp_path, capsys) -> None:
+    config = _write_config(
+        tmp_path, '[surrogate]\nbackend = "probe-plainresult-surrogate"\n')
+    code, report, _ = _run_json(capsys, "validate", str(config),
+                                "--probe-surrogate", "--json")
+    assert code == 0
+    assert report["readiness"] == "ready"
+    assert report["probe"]["returned_contract"]["energy_kind"] is None
+    assert report["probe"]["returned_contract"]["force_consistent"] is None
+    assert report["prediction_successes"] == 1
+
+
+def test_probe_surrogate_undeclared_fc_compatible(sentinels, tmp_path,
+                                                  capsys) -> None:
+    config = _write_config(
+        tmp_path, '[surrogate]\nbackend = "probe-undeclaredfc-surrogate"\n',
+        reference=False)
+    code, report, _ = _run_json(capsys, "validate", str(config),
+                                "--probe-surrogate", "--json")
+    assert code == 0
+    assert report["readiness"] == "ready"
+    assert report["surrogate"]["force_consistent"] is None
+    assert report["probe"]["returned_contract"]["force_consistent"] is True
+    assert report["unchecked_backends"] == []
+
+
+def test_probe_surrogate_success_reports_declared_and_returned(
+        sentinels, tmp_path, capsys) -> None:
+    config = _write_config(tmp_path,
+                           '[surrogate]\nbackend = "probe-ok-surrogate"\n')
+    code, report, _ = _run_json(capsys, "validate", str(config),
+                                "--probe-surrogate", "--json")
+    assert code == 0
+    assert report["probe"]["declared_contract"] == {
+        "energy_kind": "energy", "force_consistent": True}
+    assert report["probe"]["returned_contract"] == {
+        "energy_kind": "energy", "force_consistent": True}
 
 
 # ---------------------------------------------------------------------------

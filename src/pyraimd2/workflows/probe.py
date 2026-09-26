@@ -14,11 +14,15 @@ This module adds the missing fourth entry point: construct ONLY the
 configured surrogate (through the same registry factories, including
 correction wrappers such as ``scaled`` around their declared base), run
 one real prediction on the configured structure, and report whether the
-selected surrogate is ready.  The reference backend is never constructed
-and no reference compute or external program runs; ``reference_evaluations``
-is always 0.  Nothing is written: no run directory, event log, trajectory,
-checkpoint or resumable state, and the structure is never modified (no
-thermalization, no q/p changes).
+selected surrogate is ready.  Pyramid never constructs the reference
+backend and never starts a reference compute or an external program
+itself; ``reference_evaluations`` is always 0.  Pyramid writes nothing
+for this probe: no run directory, event log, trajectory, checkpoint or
+resumable state, and the structure is never modified (no thermalization,
+no q/p changes).  (A third-party plugin's own side effects inside its
+``predict`` — its own caching or subprocess calls, if any — belong to
+that plugin; Pyramid does not sandbox them and this entry point makes no
+blanket promise about them.)
 
 Readiness here is the SELECTED surrogate's status, not the whole
 configuration: the reference backend is unchecked, and the cross-backend
@@ -38,7 +42,12 @@ schema): ``validation_scope`` is ``"surrogate_probe"``; ``readiness`` is
 ``"ready"`` or ``"blocked"``; ``prediction_attempts`` /
 ``prediction_successes`` count the single metered prediction (an attempt
 is recorded once the backend is constructed and the predict call is
-entered; a construction failure records 0 attempts).  No automatic retry
+entered; a construction failure records 0 attempts).  A finite numeric
+result is not enough: the prediction's explicitly returned
+``energy_kind``/``force_consistent`` are compared against the surrogate's
+declared capabilities with the same UNKNOWN/None-compatible semantics as
+the MTS result check — an explicit conflict blocks the probe at the
+``contract`` stage.  No automatic retry
 and no fallback to the reference side exist.
 """
 from __future__ import annotations
@@ -51,6 +60,7 @@ import numpy as np
 
 from pyraimd2.backends.registry import backend_capabilities
 from pyraimd2.config import PyramidConfig
+from pyraimd2.engines.base import EnergyKind
 from pyraimd2.runtime.identity import fingerprint_of
 from pyraimd2.workflows.setup import (
     _OPTIONAL_EXTRAS,
@@ -82,6 +92,15 @@ class SurrogateProbeError(WorkflowError):
         super().__init__(message)
         self.stage = stage
         self.report = report
+
+
+def _normalized_energy_kind(value: object) -> str | None:
+    """energy_kind as a plain string (enum -> its value); None stays None —
+    an undeclared returned kind is compatible with anything (the MTS
+    UNKNOWN/None rule)."""
+    if value is None:
+        return None
+    return str(getattr(value, "value", value))
 
 
 def _base_report(config: PyramidConfig) -> dict:
@@ -198,8 +217,15 @@ def probe_surrogate_setup(config: PyramidConfig) -> dict:
                     f"surrogate backend {surrogate_config.name!r} could not "
                     f"be constructed: {error!r}") from error
 
-    caps = backend_capabilities(surrogate)
-    fingerprint = fingerprint_of(surrogate)
+    try:
+        caps = backend_capabilities(surrogate)
+        fingerprint = fingerprint_of(surrogate)
+    except Exception as error:
+        raise _fail(report, "initialize",
+                    f"surrogate backend {surrogate_config.name!r} was "
+                    f"constructed but its capabilities/fingerprint could "
+                    f"not be read: {error!r}; the declaration is part of "
+                    "the readiness contract") from error
     report["surrogate"] = {
         "backend": surrogate_config.name,
         "fingerprint": None if fingerprint is None else str(fingerprint),
@@ -277,6 +303,38 @@ def probe_surrogate_setup(config: PyramidConfig) -> dict:
                     "structure; check the backend configuration before "
                     "running")
 
+    # -- contract, returned-vs-declared: the same UNKNOWN/None-compatible
+    #    semantics as the MTS result check — an explicit conflict between
+    #    the returned and the declared energy contract blocks the probe even
+    #    when the numbers are finite
+    returned_kind_raw = getattr(result, "energy_kind", None)
+    returned_kind = _normalized_energy_kind(returned_kind_raw)
+    declared_kind = caps.energy_kind
+    if (returned_kind is not None and returned_kind != "unknown"
+            and declared_kind != EnergyKind.UNKNOWN
+            and returned_kind != declared_kind.value):
+        raise _fail(report, "contract",
+                    f"the surrogate returned energy_kind "
+                    f"{returned_kind!r}, conflicting with its declared "
+                    f"{declared_kind.value!r}; the numeric result is finite "
+                    "but the energy convention does not match — fix the "
+                    "backend declaration or the returned kind before "
+                    "running")
+    returned_fc = getattr(result, "force_consistent", None)
+    declared_fc = caps.force_consistent
+    if (returned_fc is not None and declared_fc is not None
+            and bool(returned_fc) != bool(declared_fc)):
+        raise _fail(report, "contract",
+                    f"the surrogate returned force_consistent="
+                    f"{returned_fc}, conflicting with its declared "
+                    f"{declared_fc}; the forces cannot be certified as the "
+                    "gradient of the reported energy — fix the backend "
+                    "before running")
+    report["probe_returned"] = {
+        "energy_kind": returned_kind,
+        "force_consistent": returned_fc,
+    }
+
     report["prediction_successes"] = 1
     report["readiness"] = "ready"
     report["probe"] = {
@@ -285,6 +343,11 @@ def probe_surrogate_setup(config: PyramidConfig) -> dict:
         "forces_norm_eV_A": float(np.linalg.norm(forces)),
         "predict_s": predict_s,
         "total_s": time.perf_counter() - total_start,
+        "declared_contract": {
+            "energy_kind": caps.energy_kind.value,
+            "force_consistent": caps.force_consistent,
+        },
+        "returned_contract": report["probe_returned"],
     }
     report["scope_note"] = (
         "readiness is the SELECTED surrogate's status only: the reference "
