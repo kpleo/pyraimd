@@ -672,8 +672,8 @@ def test_zero_byte_database_refused_without_touching(tmp_path, capsys):
     # never grown, never side-carred: the tree is byte-identical
     assert _tree_state(broken) == before
     assert (broken / "trajectory.db").stat().st_size == 0
-    assert [p.name for p in broken.iterdir()] == ["events.jsonl",
-                                                  "trajectory.db"]
+    assert sorted(p.name for p in broken.iterdir()) == ["events.jsonl",
+                                                       "trajectory.db"]
 
     code = cli_main(["compare", str(reference), str(broken), "--json"])
     captured = capsys.readouterr()
