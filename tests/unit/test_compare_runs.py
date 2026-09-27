@@ -57,9 +57,10 @@ def _write_run(run_dir: Path, run_id: str, times_fs, positions, *,
     evaluation (+ step_completed boundary) per state.
 
     ``positions``/``momenta`` are per-state (n_states, N, 3) arrays;
-    ``energies`` are the per-state reference labels.  Nothing here is a
-    shortcut around the real readers: the records are exactly what the
-    plain NVE driver commits.
+    ``energies`` are the per-state reference labels.  ``masses`` is one
+    (N,) array for the whole run or a per-state list of (N,) arrays.
+    Nothing here is a shortcut around the real readers: the records are
+    exactly what the plain NVE driver commits.
     """
     run_dir.mkdir(parents=True)
     n_atoms = len(numbers)
@@ -68,6 +69,13 @@ def _write_run(run_dir: Path, run_id: str, times_fs, positions, *,
     def emit(event_type: str, payload: dict) -> None:
         events.append({"seq": len(events) + 1, "type": event_type,
                        **payload})
+
+    if (isinstance(masses, (list, tuple))
+            and len(masses) == len(times_fs)
+            and np.asarray(masses[0]).shape == (n_atoms,)):
+        masses_per_state = [np.asarray(m, dtype=float) for m in masses]
+    else:
+        masses_per_state = [np.asarray(masses, dtype=float)] * len(times_fs)
 
     emit("run_start", {
         "run_id": run_id, "schema_version": 2, "event_schema_version": 1,
@@ -82,7 +90,7 @@ def _write_run(run_dir: Path, run_id: str, times_fs, positions, *,
             step = index - 1
             atoms = Atoms(numbers=numbers,
                           positions=np.asarray(positions[index], float),
-                          masses=masses,
+                          masses=masses_per_state[index],
                           cell=(np.zeros((3, 3)) if cell is None else cell),
                           pbc=pbc)
             if momenta is not None:
@@ -630,3 +638,138 @@ def test_cli_compare_errors_are_structured(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert code == 1
     assert payload["error"]["reason"] == "missing_information"
+
+
+# ---------------------------------------------------------------------------
+# read-only guarantee and structured read-failure conversion
+
+
+def _tree_state(root: Path) -> dict[str, str]:
+    """relpath -> sha256 for every file; a NEW sidecar (-wal/-shm/-journal)
+    shows up as a new key, so dict equality proves the tree byte-identical."""
+    return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def _broken_db_run(tmp_path: Path, source: Path, name: str,
+                   content: bytes) -> Path:
+    """A run directory with the candidate's event log but a broken db."""
+    run = tmp_path / name
+    run.mkdir()
+    (run / "trajectory.db").write_bytes(content)
+    (run / "events.jsonl").write_bytes((source / "events.jsonl").read_bytes())
+    return run
+
+
+def test_zero_byte_database_refused_without_touching(tmp_path, capsys):
+    reference, candidate = _analytic_pair(tmp_path)
+    broken = _broken_db_run(tmp_path, candidate, "empty-db", b"")
+    before = _tree_state(broken)
+    with pytest.raises(CompareError, match="missing or unreadable") as e:
+        compare_runs(reference, broken)
+    assert e.value.reason == "missing_information"
+    # never grown, never side-carred: the tree is byte-identical
+    assert _tree_state(broken) == before
+    assert (broken / "trajectory.db").stat().st_size == 0
+    assert [p.name for p in broken.iterdir()] == ["events.jsonl",
+                                                  "trajectory.db"]
+
+    code = cli_main(["compare", str(reference), str(broken), "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)   # exactly one parseable JSON object
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"]["reason"] == "missing_information"
+    assert captured.err == ""
+    assert _tree_state(broken) == before
+
+
+def test_damaged_database_refused_without_touching(tmp_path, capsys):
+    reference, candidate = _analytic_pair(tmp_path)
+    broken = _broken_db_run(tmp_path, candidate, "damaged-db",
+                            b"truncated database fixture")
+    before = _tree_state(broken)
+    with pytest.raises(CompareError, match="missing or unreadable") as e:
+        compare_runs(reference, broken)
+    assert e.value.reason == "missing_information"
+    assert _tree_state(broken) == before
+
+    code = cli_main(["compare", str(reference), str(broken), "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"]["reason"] == "missing_information"
+    assert captured.err == ""
+    assert _tree_state(broken) == before
+
+
+def test_malformed_interior_event_refused_as_structured_json(tmp_path,
+                                                             capsys):
+    reference, candidate = _analytic_pair(tmp_path)
+    broken = tmp_path / "bad-events"
+    broken.mkdir()
+    (broken / "trajectory.db").write_bytes(
+        (candidate / "trajectory.db").read_bytes())
+    lines = (candidate / "events.jsonl").read_text().splitlines()
+    lines.insert(1, "{invalid json")          # an interior line, not a tail
+    (broken / "events.jsonl").write_text("\n".join(lines) + "\n")
+    before = _tree_state(broken)
+    with pytest.raises(CompareError, match="missing or unreadable") as e:
+        compare_runs(reference, broken)
+    assert e.value.reason == "missing_information"
+    assert _tree_state(broken) == before
+
+    code = cli_main(["compare", str(reference), str(broken), "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"]["reason"] == "missing_information"
+    assert captured.err == ""
+
+
+def test_valid_compare_leaves_no_sidecar_files(tmp_path):
+    reference, candidate = _analytic_pair(tmp_path)
+    before = {str(run): _tree_state(run) for run in (reference, candidate)}
+    report = compare_runs(reference, candidate)
+    assert report["time_axis"]["matched_points"] == 2
+    assert {str(run): _tree_state(run)
+            for run in (reference, candidate)} == before
+    for run in (reference, candidate):
+        assert not [p for p in run.rglob("*")
+                    if p.suffix in ("-wal", "-shm", "-journal")
+                    or p.name.endswith(("-wal", "-shm", "-journal"))]
+
+
+# --- per-frame mass validation ------------------------------------------------
+
+
+def test_mass_change_after_initial_refused(tmp_path):
+    # the reviewer's case: the last committed state carries doubled masses;
+    # velocities/H must never be computed from the first frame's masses
+    reference, _ = _analytic_pair(tmp_path)
+    changed = _write_run(tmp_path / "cand-mass", "cand-mass", CAND_TIMES,
+                         [P0, P0 + 2 * (A_REF + D_DQ)],
+                         momenta=[P_REF_MOMENTA, P_REF_MOMENTA + DP],
+                         masses=[MASSES, MASSES * 2],
+                         energies=CAND_ENERGIES)
+    with pytest.raises(CompareError, match="masses") as e:
+        compare_runs(reference, changed, max_velocity_rms_A_fs=1.0)
+    assert e.value.reason == "incompatible_inputs"
+
+
+@pytest.mark.parametrize("bad_masses", [np.zeros(3),
+                                        np.full(3, np.nan),
+                                        np.full(3, -1.0)],
+                         ids=["zero", "nan", "negative"])
+def test_invalid_masses_refused(tmp_path, bad_masses):
+    reference, _ = _analytic_pair(tmp_path)
+    broken = _write_run(tmp_path / "cand-bad-mass", "cand-bad-mass",
+                        CAND_TIMES, [P0, P0 + 2 * (A_REF + D_DQ)],
+                        momenta=[P_REF_MOMENTA, P_REF_MOMENTA + DP],
+                        masses=[MASSES, bad_masses],
+                        energies=CAND_ENERGIES)
+    with pytest.raises(CompareError, match="invalid masses") as e:
+        compare_runs(reference, broken)
+    assert e.value.reason == "missing_information"

@@ -13,8 +13,12 @@ structured error, never silently approximated):
   trajectories, written by the ``plain-nve`` or ``mts-nve-respa`` drivers;
 - fully offline: no backend is constructed, no optional model package is
   imported, no predict/compute ever runs, and the run directories, their
-  databases, event logs and checkpoints are opened read-only (a missing
-  database is an error, never created);
+  databases, event logs and checkpoints are opened read-only — the
+  trajectory database through a SQLite ``mode=ro`` connection
+  (``Store(path, read_only=True)``), so no table creation, metadata write
+  or commit can run and no sidecar files appear; an empty, damaged or
+  schema-less database is refused up front, never initialized as a side
+  effect;
 - only committed STEP_COMPLETED complete states are trajectory points,
   selected through the same verified read paths as ``pyramid export``
   (``frames_for_run`` over the commit-bound row view, with the store's
@@ -46,6 +50,8 @@ the caller explicitly passes them.
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -54,7 +60,11 @@ from ase import units
 
 from pyraimd2.runtime.inspect import _read_events
 from pyraimd2.store import Store
-from pyraimd2.workflows.export import completed_step_ids, frames_for_run
+from pyraimd2.workflows.export import (
+    ExportError,
+    completed_step_ids,
+    frames_for_run,
+)
 
 COMPARE_SCHEMA_VERSION = 1
 
@@ -156,31 +166,49 @@ def _load_run(run_dir: str | Path, *, role: str) -> _RunData:
             f"no events.jsonl in {run_dir}; without the event log the "
             "committed complete-step states cannot be identified, so this "
             "run cannot be compared", reason="missing_information")
-    events = _read_events(events_path)
-    start = next((e for e in events if e.get("type") == "run_start"), None)
-    if start is None:
+    try:
+        events = _read_events(events_path)
+        start = next((e for e in events if e.get("type") == "run_start"),
+                     None)
+        if start is None:
+            raise CompareError(
+                f"{run_dir}: the event log has no run_start record; the "
+                "run's driver and identity are unknown",
+                reason="missing_information")
+        driver = (start.get("workflow") or {}).get("driver")
+        if driver not in SUPPORTED_DRIVERS:
+            known = {"plain-nvt": "fixed-cell NVT (Langevin)",
+                     "relax": "a relaxation",
+                     "singlepoint": "a single-point evaluation"}
+            kind = known.get(driver, f"driver {driver!r}" if driver
+                             else "an adaptive (policy-driven) run")
+            raise CompareError(
+                f"{role} run {run_dir} is {kind}; `compare` covers only "
+                "fixed-cell deterministic NVE trajectories written by the "
+                f"{list(SUPPORTED_DRIVERS)} drivers in this version — NVT, "
+                "variable-cell, relax, single-point and adaptive runs are "
+                "out of scope", reason="unsupported_scope")
+        run_id = str(start["run_id"])
+        with Store(db_path, read_only=True) as store:
+            committed = list(store.iter_committed(events, run_id))
+            complete_steps = completed_step_ids(run_dir)
+            frames = frames_for_run(store, run_dir, run_id,
+                                    force_source="reference")
+    except (CompareError, ExportError):
+        raise
+    except (OSError, sqlite3.DatabaseError, KeyError, json.JSONDecodeError,
+            RuntimeError) as error:
+        # the known read failures at this boundary: file I/O (OSError,
+        # including unreadable/old ASE database formats), damaged or
+        # uninitialized SQLite files (sqlite3.DatabaseError, StoreError),
+        # corrupt event-log records (EventLogError, JSONDecodeError) and
+        # committed rows the store can no longer resolve (KeyError
+        # 'no match', the store's RuntimeErrors) — all mean the run's
+        # records are missing or unusable, never that the inputs mismatch
         raise CompareError(
-            f"{run_dir}: the event log has no run_start record; the run's "
-            "driver and identity are unknown", reason="missing_information")
-    driver = (start.get("workflow") or {}).get("driver")
-    if driver not in SUPPORTED_DRIVERS:
-        known = {"plain-nvt": "fixed-cell NVT (Langevin)",
-                 "relax": "a relaxation",
-                 "singlepoint": "a single-point evaluation"}
-        kind = known.get(driver, f"driver {driver!r}" if driver
-                         else "an adaptive (policy-driven) run")
-        raise CompareError(
-            f"{role} run {run_dir} is {kind}; `compare` covers only "
-            "fixed-cell deterministic NVE trajectories written by the "
-            f"{list(SUPPORTED_DRIVERS)} drivers in this version — NVT, "
-            "variable-cell, relax, single-point and adaptive runs are out "
-            "of scope", reason="unsupported_scope")
-    run_id = str(start["run_id"])
-    with Store(db_path) as store:
-        committed = list(store.iter_committed(events, run_id))
-        complete_steps = completed_step_ids(run_dir)
-        frames = frames_for_run(store, run_dir, run_id,
-                                force_source="reference")
+            f"the {role} run records in {run_dir} are missing or "
+            f"unreadable ({type(error).__name__}: {error})",
+            reason="missing_information") from error
     incomplete_tail = sorted(
         int(row.key_value_pairs["step"]) for _event, row in committed
         if int(row.key_value_pairs["step"]) >= 0
@@ -203,7 +231,7 @@ def _load_run(run_dir: str | Path, *, role: str) -> _RunData:
             "anchor", reason="missing_information")
     n_atoms = len(frames[0])
     numbers = np.asarray(frames[0].numbers)
-    masses = np.asarray(frames[0].get_masses(), dtype=float)
+    masses: np.ndarray | None = None   # validated per frame below
     cell = np.asarray(frames[0].cell.array, dtype=float)
     pbc = np.asarray(frames[0].pbc, dtype=bool)
 
@@ -215,7 +243,7 @@ def _load_run(run_dir: str | Path, *, role: str) -> _RunData:
     kinds: list[str] = []
     consistent: list[bool | None] = []
     sources: list[str] = []
-    for frame in frames:
+    for frame_index, frame in enumerate(frames):
         time_fs = float(frame.info.get("physical_time_fs", np.nan))
         if not np.isfinite(time_fs):
             raise CompareError(
@@ -228,6 +256,27 @@ def _load_run(run_dir: str | Path, *, role: str) -> _RunData:
                 f"{role} run {run_id!r}: atom count or species order "
                 "changes inside the trajectory; only fixed-composition "
                 "runs are in scope", reason="unsupported_scope")
+        frame_masses = np.asarray(frame.get_masses(), dtype=float)
+        if (frame_masses.shape != (n_atoms,)
+                or not np.isfinite(frame_masses).all()
+                or (frame_masses <= 0).any()):
+            # never "repair": velocities and H would silently use them
+            raise CompareError(
+                f"{role} run {run_id!r}: the committed state at index "
+                f"{frame_index} carries invalid masses (shape "
+                f"{frame_masses.shape}, values must be finite and "
+                "strictly positive); the record is unusable",
+                reason="missing_information")
+        if masses is None:
+            masses = frame_masses
+        elif not np.allclose(frame_masses, masses, rtol=0,
+                             atol=MASS_TOLERANCE_AMU):
+            raise CompareError(
+                f"{role} run {run_id!r}: the masses at the committed "
+                f"state at index {frame_index} differ from the initial "
+                f"frame's by more than {MASS_TOLERANCE_AMU:g} amu; only "
+                "fixed-mass trajectories are in scope",
+                reason="incompatible_inputs")
         if not np.allclose(frame.cell.array, cell, rtol=0,
                            atol=CELL_TOLERANCE_A):
             raise CompareError(

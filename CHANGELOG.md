@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased
+## 0.8.2 (release candidate)
+
+### Fixed
+
+- `pyramid compare` / `compare_runs` now opens trajectory databases
+  through a read-only SQLite connection (`Store(path, read_only=True)`):
+  no table creation, metadata write or commit can run, so a compared run
+  directory stays byte-identical (no grown database, no `-wal`/`-shm`/
+  `-journal` sidecars).  An empty, damaged or schema-less
+  `trajectory.db` is refused up front instead of being initialized as a
+  side effect.  The default `Store` mode is unchanged.
+- Read failures at the comparison boundary — unreadable or damaged
+  database files, corrupt event-log records, committed rows the store
+  can no longer resolve — are reported as structured `CompareError`
+  (`reason: "missing_information"`): the CLI exits non-zero and `--json`
+  prints exactly one parseable error object, where previously raw
+  `KeyError`/`DatabaseError` exceptions or stderr-only text escaped.
+- Masses are validated per committed state on both trajectories (shape,
+  finite, strictly positive, constant within 1e-12 amu of the run's own
+  initial frame and consistent across the two runs).  A run whose masses
+  change between frames is refused as incompatible (fixed-mass scope)
+  and invalid mass records as unusable — velocities and Hamiltonian
+  drift are never computed from another frame's masses.
 
 ### Added
 

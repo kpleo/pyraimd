@@ -8,8 +8,11 @@ Everything runs on the builtin analytic harmonic backends — the atoms are
 test particles in a toy well, not a real material.
 
 `pyramid compare REFERENCE_RUN CANDIDATE_RUN` is strictly read-only: it
-constructs no backend, evaluates nothing, and never writes into the run
-directories. Only committed complete-step states count as trajectory
+constructs no backend, evaluates nothing, and opens the trajectory
+databases through read-only connections — compared run directories stay
+byte-identical (no grown database, no sidecar files), and an empty,
+damaged or schema-less database is refused up front rather than
+initialized. Only committed complete-step states count as trajectory
 points (a crashed tail evaluation is reported in the coverage counts,
 never compared). Candidate time points must each match a UNIQUE reference
 time point within 1e-9 fs — there is no interpolation and no snapping to a

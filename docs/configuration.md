@@ -779,11 +779,17 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 `pyraimd2.workflows.compare_runs`) answers "is the cheaper run accurate
 enough" for two ALREADY-COMPLETED runs, without private scripts and
 without touching them: no backend is constructed, nothing is evaluated,
-and the run directories are opened read-only.  The scope of this version
+and the run directories are opened through read-only SQLite connections
+(`Store(path, read_only=True)`) — no table creation, metadata write or
+commit can run, so compared directories stay byte-identical (no grown
+database, no `-wal`/`-shm`/`-journal` sidecars).  An empty, damaged or
+schema-less `trajectory.db` is refused up front, never initialized as a
+side effect.  The scope of this version
 is deliberately narrow — fixed-cell deterministic NVE trajectories
 written by the `plain-nve` or `mts-nve-respa` drivers, same atoms in the
-same order, same initial state.  NVT, variable-cell, relax, single-point
-and adaptive runs are refused with a structured error.
+same order, same initial state, constant masses.  NVT, variable-cell,
+relax, single-point and adaptive runs are refused with a structured
+error.
 
 Rules of the comparison:
 
@@ -800,7 +806,12 @@ Rules of the comparison:
 - The two runs must describe the same system: identical species order,
   masses within 1e-12 amu, cells within 1e-10 A per element, identical
   pbc; initial positions within 1e-10 A, initial momenta within 1e-10
-  (ASE momentum units) and identical initial physical time.  If one side
+  (ASE momentum units) and identical initial physical time.  Masses are
+  validated per committed state: a frame whose masses differ from the
+  run's own initial frame is refused as incompatible (fixed-mass scope),
+  and invalid mass records (wrong shape, zero, negative or non-finite)
+  make the run unusable — velocities and Hamiltonian drift are never
+  computed from another frame's masses.  If one side
   has no recorded momenta, positions and the static structure are still
   verified (`initial_momenta_match: "unavailable"`), velocity metrics are
   reported unavailable (a missing momenta array is never read back as
@@ -816,6 +827,13 @@ Rules of the comparison:
   declaring `energy_kind="energy"` with `force_consistent=true` —
   otherwise the metric is marked unavailable with the reason and coverage
   counts.  It is descriptive; this version defines no energy threshold.
+
+- Read failures are structured too: an unreadable or damaged database, a
+  corrupt event-log record or a committed row the store can no longer
+  resolve raise `CompareError` with `reason: "missing_information"` —
+  the CLI exits non-zero and `--json` prints exactly one parseable error
+  object (`{"schema_version": 1, "ok": false, "error": {...}}`), never a
+  raw traceback or stderr-only text.
 
 With no thresholds the report carries `criteria_status:
 "not_requested"` — metrics only, no pass/fail conclusion, and never a

@@ -163,3 +163,63 @@ def test_iter_observations_replays_switch_stream(tmp_path, cluster) -> None:
     for (_, s, e), (spread, f_sur, f_eng) in zip(obs, cases):
         assert s == pytest.approx(spread)
         assert e == pytest.approx(np.sqrt(3.0) * abs(f_eng - f_sur))
+
+
+# --- read-only mode (offline readers) and the writable default ---------------
+
+
+def test_read_only_store_reads_without_writing(tmp_path, cluster) -> None:
+    import hashlib
+    import sqlite3
+
+    path = tmp_path / "run.db"
+    with Store(path) as store:
+        store.append("r1", -1, cluster, "ml",
+                     surrogate=_surrogate_prediction(len(cluster)))
+        store.append("r1", 0, _shifted(cluster, 0.1), "dft",
+                     engine=_engine_result(len(cluster)))
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    listing = sorted(p.name for p in tmp_path.iterdir())
+
+    with Store(path, read_only=True) as store:
+        restored, step = store.latest_state("r1")
+        assert step == 0
+        np.testing.assert_array_equal(restored.get_positions(),
+                                      _shifted(cluster, 0.1).get_positions())
+        assert len(list(store._db.select(run_id="r1"))) == 2
+        with pytest.raises(sqlite3.DatabaseError):
+            # the connection is read-only at the SQLite level: writes fail
+            store.append("r1", 1, cluster, "ml",
+                         surrogate=_surrogate_prediction(len(cluster)))
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == listing  # no -wal/-shm
+
+
+def test_read_only_store_refuses_uninitialized_file(tmp_path) -> None:
+    from pyraimd2.store import StoreError
+
+    path = tmp_path / "empty.db"
+    path.write_bytes(b"")
+    with pytest.raises(StoreError, match="not an initialized"):
+        Store(path, read_only=True)
+    assert path.read_bytes() == b""                      # never grown
+    assert [p.name for p in tmp_path.iterdir()] == ["empty.db"]
+
+
+def test_default_store_stays_writable(tmp_path, cluster) -> None:
+    # the default mode is unchanged: a fresh database is initialized and
+    # round-trips, and its rows are readable back through the read-only mode
+    path = tmp_path / "new.db"
+    with Store(path) as store:
+        store.append("r1", 0, cluster, "dft",
+                     engine=_engine_result(len(cluster)))
+        store.append("r1", 1, _shifted(cluster, 0.2), "dft",
+                     engine=_engine_result(len(cluster), 0.5))
+    assert path.stat().st_size > 0
+    with Store(path, read_only=True) as store:
+        rows = list(store._db.select(run_id="r1"))
+        assert [int(r.key_value_pairs["step"]) for r in rows] == [0, 1]
+        restored, step = store.latest_state("r1")
+        assert step == 1
+        np.testing.assert_array_equal(restored.get_positions(),
+                                      _shifted(cluster, 0.2).get_positions())

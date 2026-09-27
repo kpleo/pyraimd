@@ -19,6 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sqlite3
+import urllib.parse
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -32,6 +35,10 @@ from pyraimd2.surrogate.base import SurrogatePrediction
 STORE_SCHEMA_VERSION = 2
 
 
+class StoreError(RuntimeError):
+    """The database file is not an initialized, readable ASE store."""
+
+
 class Store:
     """Append-only wrapper around an ASE SQLite database.
 
@@ -42,18 +49,64 @@ class Store:
     committing after every write keeps per-write durability (no long
     transaction may outlive a step announcement) while ``close()``
     releases the handle deterministically.
+
+    ``read_only=True`` opens the database through a SQLite ``mode=ro``
+    URI connection and verifies the schema with SELECTs only: no table
+    creation, metadata write, repair or commit ever runs, and no
+    ``-wal``/``-shm``/``-journal`` sidecar can appear — the file (and its
+    directory) stay byte-identical.  A file that is not an initialized
+    ASE database (empty, damaged or missing the schema) raises
+    immediately, before any read.  Readers such as the trajectory
+    comparison use this; the default stays the writable production mode.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
         self.path = str(path)
+        self._read_only = bool(read_only)
         self._db = ase.db.connect(self.path)
+        if self._read_only:
+            uri = ("file:" + urllib.parse.quote(os.path.abspath(self.path))
+                   + "?mode=ro")
+
+            def _connect_read_only() -> sqlite3.Connection:
+                return sqlite3.connect(uri, uri=True, timeout=20)
+
+            self._db._connect = _connect_read_only
         self._db.__enter__()  # one owned connection per Store
+        if self._read_only:
+            self._initialize_read_only()
+
+    def _initialize_read_only(self) -> None:
+        """SELECT-only schema verification for a read-only connection.
+
+        Guards ASE's ``_initialize`` create-tables branch: without the
+        ``systems`` table the file is not an initialized ASE database and
+        the connection must never run CREATE on it.  With the schema
+        present, ASE's own initialization is a pure read (version and
+        metadata SELECTs).
+        """
+        connection = self._db.connection
+        count = connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name='systems'"
+        ).fetchone()[0]
+        if count == 0:
+            raise StoreError(
+                f"{self.path} is not an initialized trajectory database "
+                "(no 'systems' table); nothing to read")
+        self._db._initialize(connection)  # existing-schema path: reads only
 
     def close(self) -> None:
         db = getattr(self, "_db", None)
         if db is not None:
             self._db = None
-            db.__exit__(None, None, None)
+            if self._read_only:
+                # no commit on the way out: the connection never wrote
+                connection = getattr(db, "connection", None)
+                if connection is not None:
+                    connection.close()
+                    db.connection = None
+            else:
+                db.__exit__(None, None, None)
 
     def __enter__(self):
         return self

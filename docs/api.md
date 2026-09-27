@@ -73,7 +73,10 @@ command line.
   fixed-cell NVE runs (`plain-nve` / `mts-nve-respa` drivers) from the same
   initial state, compared pointwise at identical physical times (unique
   match per candidate point, 1e-9 fs absolute, no interpolation).  Fully
-  read-only: no backend is constructed, nothing is written, and only
+  read-only at the connection level (`Store(path, read_only=True)`): no
+  backend is constructed, nothing is written or initialized, and compared
+  directories stay byte-identical; an empty, damaged or schema-less
+  database is refused up front.  Only
   committed complete-step states count (incomplete tails are coverage
   counts, not points).  The report carries the matched window, per-time
   and max position/velocity RMS (per-atom normalization, `v = p/m *
@@ -83,7 +86,10 @@ command line.
   thresholds are passed explicitly).  Raises `CompareError` with a
   machine-readable `reason` (`unsupported_scope`, `incompatible_inputs`,
   `missing_information`, `usage`) — NVT, relax, single-point and adaptive
-  runs are refused.  See
+  runs are refused, masses are validated per committed state, and known
+  read failures (damaged database, corrupt event log, unresolvable
+  committed rows) convert to `missing_information` instead of escaping
+  as raw exceptions.  See
   [examples/compare_runs](../examples/compare_runs/).
 - `write_template(template, output_dir, *, force=False) -> Path` — write a
   runnable `run.toml` + `structure.extxyz`; `TEMPLATES` lists the available
