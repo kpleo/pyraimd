@@ -161,6 +161,32 @@ def build_parser() -> argparse.ArgumentParser:
                               "(handled errors are reported as JSON too)")
     compare.set_defaults(func=_cmd_compare)
 
+    calibrate = commands.add_parser(
+        "calibrate-scale",
+        help="fit the closed-form force least-squares scale for the "
+             "'scaled' surrogate wrapper from one paired-forces .npz "
+             "(offline; no backend is constructed)")
+    calibrate.add_argument(
+        "--pairs", required=True, metavar="NPZ",
+        help="the calibration pairs file: keys reference_forces_eV_A and "
+             "fast_forces_eV_A (float (n_frames, n_atoms, 3), already "
+             "paired in identical configurations/atom order), frame_ids "
+             "(unique Unicode per frame), reference_id, fast_model_id "
+             "(non-empty Unicode scalars) and force_unit (exactly "
+             "'eV/angstrom'); ALL frames enter the fit — no discovery, "
+             "no splitting")
+    calibrate.add_argument(
+        "--output", required=True, metavar="JSON",
+        help="the report to write (schema_version 1: scale, numerator, "
+             "denominator, counts, training residual RMS before/after, "
+             "input basename+sha256, frame_ids, ids).  Copy 'scale' into "
+             "[surrogate] backend=\"scaled\"; the file's content hash can "
+             "be recorded in its calibration_note.  Existing files are "
+             "kept unless --force")
+    calibrate.add_argument("--force", action="store_true",
+                           help="overwrite the existing --output file")
+    calibrate.set_defaults(func=_cmd_calibrate_scale)
+
     backends = commands.add_parser(
         "backends", help="list registered backend factories")
     backends.set_defaults(func=_cmd_backends)
@@ -547,6 +573,34 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     # a requested criterion that its metric exceeds is a checked failure,
     # distinct from an input error
     return EXIT_OK if report["criteria_status"] != "failed" else EXIT_FAILURE
+
+
+def _cmd_calibrate_scale(args: argparse.Namespace) -> int:
+    from pyraimd2.surrogate.calibration import (
+        CalibrationError,
+        fit_force_scale,
+        read_pairs_npz,
+        report_dict,
+        write_report,
+    )
+
+    try:
+        reference, fast, provenance = read_pairs_npz(args.pairs)
+        fit = fit_force_scale(reference, fast)
+        output = write_report(report_dict(fit, provenance), args.output,
+                              force=args.force)
+    except CalibrationError as error:
+        print(f"error: calibrate-scale: {error}", file=sys.stderr)
+        return EXIT_USAGE
+    print(f"scale = {fit.scale:.12g}  ({fit.n_frames} frames x "
+          f"{fit.n_atoms} atoms, {fit.force_unit})")
+    print(f"  training residual RMS: {fit.force_residual_rms_before_eV_A:.6e}"
+          f" -> {fit.force_residual_rms_after_eV_A:.6e} eV/angstrom")
+    print(f"wrote {output}")
+    print("use: copy 'scale' into [surrogate] backend=\"scaled\"; the "
+          "output file's content hash can go into its calibration_note — "
+          "nothing was evaluated, launched or edited automatically")
+    return EXIT_OK
 
 
 def _cmd_backends(args: argparse.Namespace) -> int:

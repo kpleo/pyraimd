@@ -1,0 +1,63 @@
+# calibrate-scale — fit the frozen scale for the `scaled` wrapper
+
+**What this shows.** How the `scaled` surrogate wrapper's coefficient is
+produced OFFLINE, before any run: one closed-form force least-squares fit
+over paired reference/fast forces, no backend constructed, nothing
+launched. The data is analytic teaching data (toy atoms in a harmonic
+well, reference forces exactly 1.25 times the fast ones) — not material
+data, not a fitted recommendation.
+
+## Steps
+
+```sh
+python make_pairs.py                          # writes pairs.npz (3 frames x 2 atoms)
+pyramid calibrate-scale --pairs pairs.npz --output scale.json
+```
+
+Expected: `scale = 1.25` with the after-scaling training residual RMS at
+zero (the teaching relationship is exactly collinear; real calibration
+data is not, and the report then shows nonzero training metrics).
+
+## The pairs file protocol
+
+One `.npz` (loaded with `allow_pickle=False`):
+
+- `reference_forces_eV_A`, `fast_forces_eV_A`: float arrays of shape
+  `(n_frames, n_atoms, 3)`, already paired — every index is the SAME
+  configuration in the SAME atom order on both sides. Preparing that
+  pairing is the user's job: independent reference evaluations of the
+  configurations the fast model was run on (or vice versa). The tool
+  never discovers, infers, reorders or splits data: ALL frames enter the
+  fit.
+- `frame_ids`: unique Unicode strings, one per frame — the explicit
+  declaration of the pairing.
+- `reference_id`, `fast_model_id`: non-empty strings naming the two
+  sides (any stable label you choose; they are recorded verbatim).
+- `force_unit`: must be exactly `eV/angstrom`.
+
+## Using the result
+
+`scale.json` (schema_version 1) records the scale, numerator,
+denominator, frame/atom counts, per-atom training residual RMS before
+and after scaling, and the input's basename + content sha256. Copy
+`scale` into your candidate configuration, and note the record's hash
+for provenance:
+
+```sh
+shasum -a 256 scale.json
+```
+
+```toml
+[surrogate]
+backend = "scaled"
+scale = 1.25                  # from scale.json — frozen for the whole run
+calibration_note = "scale.json sha256:<paste the digest>"
+base = { name = "mace", kwargs = { model = "models/user.model" } }
+```
+
+Nothing here edits run.toml, evaluates a model or starts a run: real
+calibration data comes from reference evaluations the USER runs
+explicitly on compute-authorized nodes, and the wrapper then keeps the
+scale constant in production (it multiplies energy and forces together).
+The training residual RMS is a metric over the fitted set only — it is
+not a generalization bound, and no MTS outer ratio follows from it.

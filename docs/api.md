@@ -180,6 +180,17 @@ Builtin names: `qe`, `qe-ase`, `pyscf` (engines), `mace` (surrogate),
   to declare `force_consistent=True` and `forces_conservative=True`.
   Returns `same_kind`, `cross_kind` or `unknown`; unknown declarations are
   not evidence of consistency.
+- `fit_force_scale(reference_forces, fast_forces) -> ForceScaleFit`
+  (`pyraimd2.surrogate.calibration`) — the closed-form force
+  least-squares scale `alpha = sum(F_fast·F_ref) / sum(F_fast·F_fast)`
+  behind `pyramid calibrate-scale`: both arrays share shape
+  `(n_frames, n_atoms, 3)`, real and finite, all frames fitted; the
+  frozen result carries scale, numerator/denominator, counts and the
+  per-atom training residual RMS before/after scaling (eV/angstrom) —
+  training metrics only, no generalization bound.  Invalid inputs raise
+  `CalibrationError`.  The CLI adapter (`read_pairs_npz`,
+  `report_dict`, `write_report`) owns the NPZ pairing protocol and the
+  JSON record (input basename + sha256, frame ids, declared model ids).
 - Implementations: `MaceSurrogate` (single MACE model, lazy calculator),
   `CommitteeSurrogate` (K-member committee with uncertainty and fine-tuning),
   `AseSurrogate` (any configured ASE calculator).

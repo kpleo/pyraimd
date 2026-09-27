@@ -4,6 +4,21 @@
 
 ### Added
 
+- Offline force least-squares scale calibration: `pyramid calibrate-scale
+  --pairs pairs.npz --output scale.json [--force]` (Python API
+  `pyraimd2.surrogate.calibration.fit_force_scale(reference_forces,
+  fast_forces)`).  One closed form, `alpha = sum(F_fast · F_ref) /
+  sum(F_fast · F_fast)`, over paired `(n_frames, n_atoms, 3)` force
+  arrays — exactly the frozen scalar the `scaled` surrogate wrapper
+  applies to energy and forces together.  All frames enter the fit (no
+  discovery, no splitting); the report records scale, numerator,
+  denominator, counts, per-atom training residual RMS before/after
+  scaling (eV/angstrom, training metrics only), the input's basename +
+  sha256 and the declared frame/model ids.  Mismatched shapes, complex
+  or non-finite data, empty axes, a vanishing denominator, a
+  non-positive or overflowed result are refused with structured errors;
+  existing outputs are kept unless `--force`, and reports are written
+  atomically.  Example: `examples/calibrate_scale/`.
 - New init template `harmonic-compare` (`pyramid init --template
   harmonic-compare --output DIR`): the complete offline
   accuracy-verification chain in five embedded files — a reference plain
@@ -19,6 +34,29 @@
   are unchanged.  The user docs gained a short migration note for
   carrying the same chain to a real reference engine and fast model
   (e.g. QE + MACE).
+- `docs/user_guide.md`: the ordered user path — install and optional
+  backends, the offline verify chain, your own structure and initial
+  momenta, paired calibration data + `calibrate-scale`, reference/MTS
+  comparison, run/resume, inspect/compare, export and scratch retention —
+  with the honesty boundaries stated (user-chosen thresholds, completed
+  trajectories only, deliberate same-resource timing comparisons, real
+  runs only explicitly on compute-authorized nodes).
+- `examples/qe_mace_mts/`: a three-config QE + MACE skeleton for the
+  MTS compare chain (reference plain NVE, unscaled MTS, scaled MTS with
+  a placeholder local model path and `scale = 1.0` to be replaced by the
+  user's calibration result), sharing one structure with momenta, one
+  reference recipe and one physical-time span.
+
+### Fixed
+
+- The `scaled` wrapper's uncertainty description is precise: the
+  reported values are mechanically rescaled by the scale factor
+  (a unit-consistent rescale of the base model's spread), not a
+  re-estimated post-calibration confidence of the corrected potential.
+- The MTS kernel's module documentation no longer claims "no
+  resume/checkpoint support": the kernel is a pure integrator without
+  store/checkpoint I/O, while resumable checkpoints exist at the
+  workflow level (`pyramid run`/`resume`).
 
 ## 0.8.2 (2026-09-27)
 

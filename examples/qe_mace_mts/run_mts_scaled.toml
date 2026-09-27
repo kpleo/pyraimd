@@ -1,0 +1,47 @@
+# QE + MACE MTS compare-chain skeleton (schema_version 1), CANDIDATE arm 2:
+# the same MTS run with the public `scaled` wrapper around the same MACE
+# fast model.  `scaled` multiplies BOTH the energy and the forces by one
+# frozen scalar (scaling only one side would break force consistency).
+# scale = 1.0 is a PLACEHOLDER — replace it with your own calibration
+# result (`pyramid calibrate-scale`, see examples/calibrate_scale/), not
+# with a value guessed here.  NOT a verified materials recipe — see
+# README.md.  Relative paths resolve against THIS file's directory.
+schema_version = 1
+
+[run]
+id = "qe-mts-compare-mts-scaled"
+directory = "runs/mts-scaled"
+
+[task]
+kind = "md"
+mode = "mts"
+
+[structure]
+file = "si_diamond_2atom.extxyz"  # the SAME initial state as the reference arm
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0                 # inner step (fs, illustrative)
+steps = 16                        # inner steps; must be a multiple of outer_ratio
+outer_ratio = 4                   # complete boundaries at t = 0, 4, 8, 12, 16 fs
+
+[checkpoint]
+interval_steps = 8                # inner steps; only complete outer boundaries are checkpointed
+
+[reference]
+backend = "qe"
+pseudo_dir = "pseudos"            # resolved relative to this file
+xc = "pbe"
+dispersion = "grimme-d3"
+ecutwfc = 40.0
+ecutrho = 320.0
+kpts = [2, 2, 2]
+conv_thr = 1e-8
+pseudos = { Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF" }
+
+[surrogate]
+backend = "scaled"
+scale = 1.0                       # PLACEHOLDER: use your calibrate-scale result
+calibration_note = "REPLACE: record your calibration source here (e.g. the scale.json sha256)"
+base = { name = "mace", kwargs = { model = "models/user.model", device = "cpu", default_dtype = "float64" } }

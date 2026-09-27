@@ -10,6 +10,11 @@ from pyraimd2.surrogate.base import (
     assert_compatible_energy_contract,
     surrogate_capabilities,
 )
+from pyraimd2.surrogate.calibration import (
+    CalibrationError,
+    ForceScaleFit,
+    fit_force_scale,
+)
 from pyraimd2.surrogate.committee import CommitteeSurrogate
 from pyraimd2.surrogate.corrections import (
     CorrectionDomainError,
@@ -20,8 +25,10 @@ from pyraimd2.surrogate.mace_surrogate import MaceSurrogate
 
 __all__ = [
     "AseSurrogate",
+    "CalibrationError",
     "CommitteeSurrogate",
     "CorrectionDomainError",
+    "ForceScaleFit",
     "MaceSurrogate",
     "QuadraticCorrectedSurrogate",
     "ScaledSurrogate",
@@ -31,5 +38,6 @@ __all__ = [
     "TrainReport",
     "TrainableSurrogate",
     "assert_compatible_energy_contract",
+    "fit_force_scale",
     "surrogate_capabilities",
 ]

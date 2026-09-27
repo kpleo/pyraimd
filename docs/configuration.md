@@ -97,6 +97,14 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   constructed and nothing is written).  Metrics only by default; the
   threshold flags add per-criterion pass/fail.  See "Trajectory
   comparison".
+- `pyramid calibrate-scale --pairs pairs.npz --output scale.json
+  [--force]`: fit the closed-form force least-squares scale
+  `alpha = sum(F_fast · F_ref) / sum(F_fast · F_fast)` for the `scaled`
+  surrogate wrapper, from one paired-forces `.npz` (all frames used; the
+  residual RMS values are training metrics over the fitted set, not
+  generalization bounds).  Offline: no backend is constructed, nothing
+  is launched or edited.  See "Correction wrappers" and
+  [../examples/calibrate_scale/](../examples/calibrate_scale/).
 
 Exit codes: 0 success, 1 run-time failure (the run directory keeps the
 failure record and the cost ledger), 2 usage/configuration error, 130
@@ -386,9 +394,13 @@ base model's.
   note and the base identity all enter the fingerprint; the frozen
   parameters are read-only (a resume with edited correction bytes refuses
   on the identity mismatch).
-- `uncertainty` forwarded by the wrappers is the BASE model's spread,
-  unchanged: no recalibrated confidence of the corrected potential
-  exists (the wrappers never recalibrate).
+- `uncertainty` reported by the wrappers stays the BASE model's spread —
+  no re-estimated post-calibration confidence of the corrected potential
+  exists (the wrappers never recalibrate).  `quadratic-corrected`
+  forwards the base values unchanged (a deterministic, member-independent
+  correction); `scaled` mechanically rescales them by the same factor as
+  the forces (`sigma_c = c sigma_b`), a unit-consistent rescale, still
+  not a recalibrated confidence.
 
 A minimal plain surrogate-MD configuration with a quadratic correction
 loaded from an `.npz` (parameters of one H-O dimer `params.npz` holding

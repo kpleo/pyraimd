@@ -1,0 +1,38 @@
+# QE + MACE MTS compare-chain skeleton (schema_version 1), REFERENCE arm:
+# plain reference-driven NVE through Quantum ESPRESSO.  NOT a verified
+# materials recipe — see README.md; steps and physics are illustrative
+# and your own convergence checks are required.
+# Relative paths resolve against THIS file's directory.
+schema_version = 1
+
+[run]
+id = "qe-mts-compare-reference"
+directory = "runs/reference"
+
+[task]
+kind = "md"                       # singlepoint | relax | md
+mode = "reference"                # plain NVE driven by the reference engine
+
+[structure]
+file = "si_diamond_2atom.extxyz"  # explicit initial momenta (MTS never thermalizes)
+
+[dynamics]
+ensemble = "nve"
+integrator = "verlet"
+timestep_fs = 1.0                 # fs (illustrative)
+steps = 16                        # 16 fs — the span the candidates must fit inside
+
+[checkpoint]
+interval_steps = 8
+
+[reference]
+backend = "qe"
+pseudo_dir = "pseudos"            # resolved relative to this file
+xc = "pbe"
+dispersion = "grimme-d3"
+ecutwfc = 40.0
+ecutrho = 320.0
+kpts = [2, 2, 2]
+conv_thr = 1e-8
+pseudos = { Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF" }
+# pw_cmd = ["mpirun", "-np", "4", "pw.x"]   # platform profile, not physics

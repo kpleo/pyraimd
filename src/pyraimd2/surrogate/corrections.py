@@ -219,8 +219,12 @@ class ScaledSurrogate:
 
     Scaling by a positive constant preserves the base model's
     energy/force consistency and conservativeness exactly, so those
-    declarations are mirrored; an honest base uncertainty spread scales
-    with the forces (``sigma_c = c sigma_b``).  Stress is not exposed:
+    declarations are mirrored.  The reported uncertainty VALUES are
+    mechanically rescaled by the same factor (``sigma_c = c sigma_b``) so
+    they stay on the corrected forces' scale — a unit-consistent
+    rescale of the BASE model's spread, not a re-estimated
+    post-calibration confidence of the corrected potential (the wrapper
+    never recalibrates).  Stress is not exposed:
     ``stress_available=False`` and predictions return ``stress=None``.
     """
 

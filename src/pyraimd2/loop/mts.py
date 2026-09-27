@@ -29,9 +29,10 @@ Scope and honesty boundaries (experimental, fixed-model NVE):
   shape- and finiteness-checked against the structure;
 - no thermostat, no barostat, no constraints (Atoms with constraints are
   refused rather than silently partially constrained), no adaptive step
-  size, no online model updates, no resume/checkpoint support in this
-  version — the run record says so, and documentation must not imply
-  otherwise;
+  size, no online model updates; this KERNEL is a pure integrator with
+  no store/checkpoint I/O of its own — resumable checkpoints live at the
+  workflow level (:mod:`pyraimd2.workflows.mts_md`, the configured
+  driver behind `pyramid run`/`resume`), never inside this module;
 - boundary momenta are the post-final-half-kick (synchronized) ones;
   inner-block momenta are intermediate integrator state and are never
   reported as physical boundary momenta;

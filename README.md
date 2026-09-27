@@ -33,6 +33,10 @@ python -m venv ~/.venvs/pyramid && . ~/.venvs/pyramid/bin/activate
 pip install pyraimd2-0.8.2-py3-none-any.whl
 ```
 
+New here? The [user guide](docs/user_guide.md) walks the whole path in
+order — install, the offline verify chain, your own structure,
+calibration, run/resume, compare and export.
+
 A first run with the built-in harmonic model — the analytic demo needs no
 backend installation and finishes in seconds.  Validation has three
 separate layers, and the CLI keeps them explicit:
@@ -406,6 +410,9 @@ these quantities, their units and the conditions for interpreting them.
 
 ## Documentation and development
 
+- [User guide](docs/user_guide.md) — the ordered path: install, the
+  offline verify chain, your own structure, calibration, run/resume,
+  compare, export.
 - [Configuration and CLI reference](docs/configuration.md)
 - [Architecture and backend integration](docs/architecture.md)
 - [API reference](docs/api.md)

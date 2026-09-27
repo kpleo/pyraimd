@@ -15,7 +15,7 @@ ROOT_FILES = {
 ROOT_DIRS = {'.github', '.githooks', 'scripts', 'src', 'tests', 'examples',
              'docs', 'reproducibility'}
 PUBLIC_DOCS = {'docs/api.md', 'docs/architecture.md', 'docs/configuration.md',
-               'docs/energetic_force_error.md'}
+               'docs/energetic_force_error.md', 'docs/user_guide.md'}
 PRIVATE_PARTS = {'manuscript', 'development_reports', 'private',
                  '.env', '.venv', '__pycache__', '.pytest_cache', '.ruff_cache'}
 GENERATED_SUFFIXES = {'.tex', '.pdf', '.png', '.jpg', '.jpeg', '.tiff',

@@ -1,0 +1,44 @@
+# QE + MACE MTS compare-chain skeleton (schema_version 1), CANDIDATE arm 1:
+# fixed-model MTS (respa) NVE with a MACE fast model — SAME reference
+# recipe, structure/initial momenta and physical-time span as the
+# reference arm.  NOT a verified materials recipe — see README.md.
+# Relative paths resolve against THIS file's directory.
+schema_version = 1
+
+[run]
+id = "qe-mts-compare-mts"
+directory = "runs/mts"
+
+[task]
+kind = "md"
+mode = "mts"
+
+[structure]
+file = "si_diamond_2atom.extxyz"  # the SAME initial state as the reference arm
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0                 # inner step (fs, illustrative)
+steps = 16                        # inner steps; must be a multiple of outer_ratio
+outer_ratio = 4                   # complete boundaries at t = 0, 4, 8, 12, 16 fs
+
+[checkpoint]
+interval_steps = 8                # inner steps; only complete outer boundaries are checkpointed
+
+[reference]
+backend = "qe"
+pseudo_dir = "pseudos"            # resolved relative to this file
+xc = "pbe"
+dispersion = "grimme-d3"
+ecutwfc = 40.0
+ecutrho = 320.0
+kpts = [2, 2, 2]
+conv_thr = 1e-8
+pseudos = { Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF" }
+
+[surrogate]
+backend = "mace"
+model = "models/user.model"       # PLACEHOLDER: an explicit local model file
+device = "cpu"
+default_dtype = "float64"
