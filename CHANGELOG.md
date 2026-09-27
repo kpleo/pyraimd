@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.3 (2026-09-27)
+
 ### Added
 
 - Offline force least-squares scale calibration: `pyramid calibrate-scale
