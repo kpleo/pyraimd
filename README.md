@@ -136,6 +136,19 @@ an outer step has no single driving force. Details and limits:
 checkout: [examples/mts_nve/](examples/mts_nve/), and the scaled-surrogate
 variant: [examples/scaled_mts/](examples/scaled_mts/).
 
+### Comparing two completed runs, offline
+
+`pyramid compare REFERENCE_RUN CANDIDATE_RUN` (Python:
+`pyraimd2.workflows.compare_runs`) compares two already-completed fixed-cell
+NVE runs from the same initial state — e.g. a plain reference trajectory and
+an MTS candidate — pointwise at identical physical times: per-atom position
+and velocity RMS over the matched window, per-trajectory Hamiltonian drift
+when its preconditions hold, and explicit pass/fail only for thresholds you
+pass yourself. It is fully read-only (no backend is constructed, nothing is
+written) and refuses anything outside that scope with a structured error.
+Walkthrough: [examples/compare_runs/](examples/compare_runs/); report
+contract: [docs/configuration.md](docs/configuration.md).
+
 ### A serial relax → NVT → NVE workflow, offline
 
 `examples/periodic_lj/` runs a 32-atom fcc Lennard-Jones cell through the three

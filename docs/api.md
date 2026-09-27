@@ -66,6 +66,25 @@ command line.
   valid sources. Missing labels are NaN-marked, never zero-filled. MTS runs
   refuse `force_source="driving"` (an outer step has no single driving
   force); use `reference` or `base`.
+- `compare_runs(reference_run, candidate_run, *, max_position_rms_A=None,
+  max_velocity_rms_A_fs=None) -> dict` (`pyraimd2.workflows.compare`,
+  rendered by `format_comparison(report)`) — the offline trajectory
+  accuracy comparison behind `pyramid compare`: two already-completed
+  fixed-cell NVE runs (`plain-nve` / `mts-nve-respa` drivers) from the same
+  initial state, compared pointwise at identical physical times (unique
+  match per candidate point, 1e-9 fs absolute, no interpolation).  Fully
+  read-only: no backend is constructed, nothing is written, and only
+  committed complete-step states count (incomplete tails are coverage
+  counts, not points).  The report carries the matched window, per-time
+  and max position/velocity RMS (per-atom normalization, `v = p/m *
+  ase.units.fs`), per-trajectory Hamiltonian drift when reference energy
+  labels with `energy_kind="energy"` and `force_consistent=True` exist at
+  every complete state, and `criteria_status` (`"not_requested"` unless
+  thresholds are passed explicitly).  Raises `CompareError` with a
+  machine-readable `reason` (`unsupported_scope`, `incompatible_inputs`,
+  `missing_information`, `usage`) — NVT, relax, single-point and adaptive
+  runs are refused.  See
+  [examples/compare_runs](../examples/compare_runs/).
 - `write_template(template, output_dir, *, force=False) -> Path` — write a
   runnable `run.toml` + `structure.extxyz`; `TEMPLATES` lists the available
   templates (including the experimental `harmonic-mts`, whose structure
@@ -91,7 +110,7 @@ command line.
   authoritative row. Prefer `export_run`/`frames_for_run` for a run
   directory.
 - Result/record types: `WorkflowResult`, `RunOutputs`. Errors: `WorkflowError`,
-  `ExportError`.
+  `ExportError`, `CompareError`.
 
 Configuration loading lives one layer down: `pyraimd2.config.load_config(path)
 -> PyramidConfig`, `load_resolved_config(path)`, `ConfigError`,

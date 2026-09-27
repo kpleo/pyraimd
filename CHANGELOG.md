@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Offline trajectory accuracy comparison: `pyramid compare REFERENCE_RUN
+  CANDIDATE_RUN [--max-position-rms A] [--max-velocity-rms A_PER_FS]
+  [--json]` (Python API `pyraimd2.workflows.compare_runs(reference_run,
+  candidate_run, *, max_position_rms_A=None, max_velocity_rms_A_fs=None)`,
+  human rendering `format_comparison(report)`).  Two already-completed
+  fixed-cell NVE runs from the same initial state (`plain-nve` /
+  `mts-nve-respa` drivers) are compared pointwise at identical physical
+  times: every complete candidate time point must match exactly one
+  reference point (1e-9 fs absolute, no interpolation, no grid snapping),
+  and only committed STEP_COMPLETED complete states count — incomplete
+  tail evaluations are reported in the coverage counts, never compared.
+  The report carries per-time and whole-window-max position/velocity RMS
+  (per-atom normalization, `v = p/m * ase.units.fs`), per-trajectory
+  Hamiltonian drift when every complete state carries a reference energy
+  label with `energy_kind="energy"` and `force_consistent=true`
+  (otherwise marked unavailable with the reason and coverage), and
+  `criteria_status: "not_requested"` unless the caller passes explicit
+  thresholds.  The comparison is fully read-only — no backend is
+  constructed, nothing is written, a missing database is never created —
+  and out-of-scope inputs (NVT, variable-cell, relax, single-point,
+  adaptive runs), incompatible pairs and missing records are refused with
+  structured errors (`CompareError.reason`: `unsupported_scope`,
+  `incompatible_inputs`, `missing_information`, `usage`).  Example:
+  `examples/compare_runs/`.
+
 ## 0.8.1 (2026-09-27)
 
 ### Added

@@ -87,10 +87,22 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   rendering and the human rendering come from the same structured source.
 - `pyramid export RUN_DIR [--force-source driving|reference|base]
   [--output PATH] [--force]`: export the committed trajectory as extxyz.
+- `pyramid compare REFERENCE_RUN CANDIDATE_RUN [--max-position-rms A]
+  [--max-velocity-rms A_PER_FS] [--json]`: offline accuracy comparison of
+  two completed fixed-cell NVE runs from the same initial state
+  (pointwise at identical physical times; read-only — no backend is
+  constructed and nothing is written).  Metrics only by default; the
+  threshold flags add per-criterion pass/fail.  See "Trajectory
+  comparison".
 
 Exit codes: 0 success, 1 run-time failure (the run directory keeps the
 failure record and the cost ledger), 2 usage/configuration error, 130
-interrupted.
+interrupted.  For `compare` specifically: 0 when every requested
+criterion passes, 1 when a requested criterion is exceeded or required
+records are missing, 2 for out-of-scope or incompatible inputs — the
+JSON `error.reason` (`unsupported_scope`, `incompatible_inputs`,
+`missing_information`, `usage`) and `criteria_status` distinguish the
+cases.
 
 ## Configuration reference
 
@@ -761,6 +773,57 @@ Every frame records `run_id`, `step_id`, `evaluation_id`,
 interpretable without the event log. ASE reads labeled frames back with a
 SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 
+## Trajectory comparison
+
+`pyramid compare REFERENCE_RUN CANDIDATE_RUN` (Python:
+`pyraimd2.workflows.compare_runs`) answers "is the cheaper run accurate
+enough" for two ALREADY-COMPLETED runs, without private scripts and
+without touching them: no backend is constructed, nothing is evaluated,
+and the run directories are opened read-only.  The scope of this version
+is deliberately narrow — fixed-cell deterministic NVE trajectories
+written by the `plain-nve` or `mts-nve-respa` drivers, same atoms in the
+same order, same initial state.  NVT, variable-cell, relax, single-point
+and adaptive runs are refused with a structured error.
+
+Rules of the comparison:
+
+- Only committed STEP_COMPLETED complete states are trajectory points (the
+  same verified read paths as `pyramid export`); a committed tail
+  evaluation without its boundary appears in the coverage counts, never in
+  the metrics.
+- Every complete candidate time point must match exactly one reference
+  time point (absolute tolerance 1e-9 fs, rtol 0; times come from the
+  recorded `physical_time_fs`, never from step/row numbers).  There is no
+  interpolation and no grid snapping: the reference may carry extra denser
+  points, the candidate may not carry unmatched ones.  Duplicate or
+  non-increasing time axes and fewer than 2 matched points are refused.
+- The two runs must describe the same system: identical species order,
+  masses within 1e-12 amu, cells within 1e-10 A per element, identical
+  pbc; initial positions within 1e-10 A, initial momenta within 1e-10
+  (ASE momentum units) and identical initial physical time.  If one side
+  has no recorded momenta, positions and the static structure are still
+  verified (`initial_momenta_match: "unavailable"`), velocity metrics are
+  reported unavailable (a missing momenta array is never read back as
+  ASE's default zeros), and requesting a velocity threshold then fails
+  with `missing_information`.
+- Metrics are pointwise in the stored continuous coordinates (no minimum
+  image, no alignment, no unwrapping, no reordering): position RMS
+  `sqrt(sum_{i,xyz} dq^2 / N)` in angstrom and velocity RMS in angstrom/fs
+  (`v = p/m * ase.units.fs`), both per-time and as a whole-window max.
+- Hamiltonian drift `(H(t) - H(0)) / N`, H = E_reference + kinetic, is
+  attached per trajectory (zeroed at each run's own start) only when every
+  complete state of that trajectory carries a reference energy label
+  declaring `energy_kind="energy"` with `force_consistent=true` —
+  otherwise the metric is marked unavailable with the reason and coverage
+  counts.  It is descriptive; this version defines no energy threshold.
+
+With no thresholds the report carries `criteria_status:
+"not_requested"` — metrics only, no pass/fail conclusion, and never a
+"reliable"/"recommended" verdict.  `--max-position-rms A` /
+`--max-velocity-rms A_PER_FS` add per-criterion pass/fail (`<=` passes).
+A runnable offline walkthrough lives in
+[../examples/compare_runs/](../examples/compare_runs/).
+
 ## Schema migration
 
 - The configuration carries `schema_version`; this pyraimd2 reads version 1
@@ -791,6 +854,9 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 
 - [Harmonic adaptive MD](../examples/harmonic_adaptive/README.md): the runnable
   offline demo (same content as the `harmonic` init template).
+- [Comparing two runs](../examples/compare_runs/README.md): offline
+  reference-vs-candidate trajectory comparison (plain NVE vs scaled+MTS)
+  with `pyramid compare`.
 - [QE + MACE skeleton](../examples/qe_mace_skeleton/README.md): configuration
   structure for a periodic material, with external inputs required before a run.
 - [Bulk Si](../examples/si_bulk_qe_mace/README.md) and

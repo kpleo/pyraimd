@@ -26,6 +26,16 @@ EXIT_FAILURE = 1
 EXIT_USAGE = 2
 EXIT_INTERRUPTED = 130
 
+# `compare` maps the structured failure classes onto the standard codes:
+# out-of-scope/incompatible inputs and malformed requests are usage errors;
+# information a finished run simply does not carry is a checked failure.
+_COMPARE_ERROR_EXITS = {
+    "unsupported_scope": EXIT_USAGE,
+    "incompatible_inputs": EXIT_USAGE,
+    "usage": EXIT_USAGE,
+    "missing_information": EXIT_FAILURE,
+}
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -128,6 +138,28 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--force", action="store_true",
                         help="overwrite an existing output file")
     export.set_defaults(func=_cmd_export)
+
+    compare = commands.add_parser(
+        "compare", help="compare two completed runs' trajectories offline "
+                        "(same-initial-state fixed-cell NVE pointwise "
+                        "accuracy; reads run directories only)")
+    compare.add_argument("reference_run", help="the reference run directory")
+    compare.add_argument("candidate_run", help="the candidate run directory")
+    compare.add_argument(
+        "--max-position-rms", type=float, default=None, metavar="A",
+        help="pass/fail criterion: whole-window max position RMS must be "
+             "<= A angstrom (metrics are reported either way; without "
+             "thresholds no pass/fail conclusion is drawn)")
+    compare.add_argument(
+        "--max-velocity-rms", type=float, default=None,
+        metavar="A_PER_FS",
+        help="pass/fail criterion: whole-window max velocity RMS must be "
+             "<= A_PER_FS angstrom/fs (requires real recorded momenta in "
+             "both runs)")
+    compare.add_argument("--json", action="store_true",
+                         help="write a single JSON report to stdout "
+                              "(handled errors are reported as JSON too)")
+    compare.set_defaults(func=_cmd_compare)
 
     backends = commands.add_parser(
         "backends", help="list registered backend factories")
@@ -476,6 +508,38 @@ def _cmd_export(args: argparse.Namespace) -> int:
               f"{report['force_source']} label: marked forces_available=F "
               "with NaN forces — missing data, never zero-filled")
     return EXIT_OK
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    from pyraimd2.workflows import CompareError, compare_runs, format_comparison
+
+    try:
+        report = compare_runs(
+            args.reference_run, args.candidate_run,
+            max_position_rms_A=args.max_position_rms,
+            max_velocity_rms_A_fs=args.max_velocity_rms)
+    except CompareError as error:
+        # one parseable object for --json; a one-line message otherwise —
+        # the reason class distinguishes incompatible inputs, missing
+        # required information and plain usage problems
+        if args.json:
+            print(json.dumps({
+                "schema_version": 1,
+                "ok": False,
+                "error": {"code": type(error).__name__,
+                          "reason": error.reason,
+                          "message": str(error)},
+            }, allow_nan=False))
+        else:
+            print(f"error: compare: {error}", file=sys.stderr)
+        return _COMPARE_ERROR_EXITS.get(error.reason, EXIT_FAILURE)
+    if args.json:
+        print(json.dumps(report, allow_nan=False))
+    else:
+        print(format_comparison(report))
+    # a requested criterion that its metric exceeds is a checked failure,
+    # distinct from an input error
+    return EXIT_OK if report["criteria_status"] != "failed" else EXIT_FAILURE
 
 
 def _cmd_backends(args: argparse.Namespace) -> int:

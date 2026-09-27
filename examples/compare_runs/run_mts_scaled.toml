@@ -1,0 +1,47 @@
+schema_version = 1
+# compare_runs example, CANDIDATE arm: fixed-model MTS (respa) NVE with
+# the public `scaled` wrapper around the harmonic fast model — the same
+# wiring as examples/scaled_mts/.  timestep_fs is the INNER step and steps
+# count inner steps: 16 fs as 4 complete outer steps of 4 inner steps
+# each, so committed complete states land at t = 0, 4, 8, 12, 16 fs — a
+# strict subset of the reference arm's 1 fs grid, which is exactly what
+# `pyramid compare` matches on.
+#
+# Teaching parameter choice: base k = 0.8 with scale = 1.2 gives
+# F_used = 0.96 * (-dr) against the reference k = 1.0, so the MTS residual
+# is small but nonzero and the trajectories genuinely diverge.  This is a
+# mechanical demonstration, not a calibration: a real scale must be
+# determined in advance on independent data and frozen — see
+# examples/scaled_mts/README.md.
+
+[run]
+id = "compare-runs-scaled-mts-demo"
+directory = "run-scaled-mts"
+
+[task]
+kind = "md"
+mode = "mts"
+
+[structure]
+file = "structure.extxyz"     # written by make_structure.py (with momenta)
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0             # inner step (fs)
+steps = 16                    # inner steps (16 fs)
+outer_ratio = 4               # inner steps per outer step
+
+[checkpoint]
+interval_steps = 8            # inner steps; only complete outer
+                              # boundaries are checkpointed
+
+[reference]
+backend = "harmonic-reference"
+k = 1.0
+r0 = 0.9
+
+[surrogate]
+backend = "scaled"
+scale = 1.2                   # frozen for the whole run; scales E AND F
+base = { name = "harmonic-surrogate", kwargs = { k = 0.8, r0 = 0.9, bias = 0.0 } }

@@ -1,6 +1,11 @@
 """Workflow orchestration: the single implementation behind the Python API
 and the CLI (``pyramid run/resume`` both land here)."""
 
+from pyraimd2.workflows.compare import (
+    CompareError,
+    compare_runs,
+    format_comparison,
+)
 from pyraimd2.workflows.export import (
     FORCE_SOURCES,
     ExportError,
@@ -30,14 +35,17 @@ from pyraimd2.workflows.templates import TEMPLATES, write_template
 __all__ = [
     "FORCE_SOURCES",
     "TEMPLATES",
+    "CompareError",
     "ExportError",
     "RunOutputs",
     "SurrogateProbeError",
     "WorkflowError",
     "WorkflowResult",
     "build_backends",
+    "compare_runs",
     "create_configured_backend",
     "export_run",
+    "format_comparison",
     "frames_from_store",
     "load_structure",
     "prepare_run_directory",

@@ -1,0 +1,30 @@
+schema_version = 1
+# compare_runs example, REFERENCE arm: plain reference-driven NVE on the
+# builtin analytic harmonic backend — no external program, no model
+# download.  16 steps of 1 fs: committed complete states at every fs,
+# t = 0 .. 16 fs (17 frames).
+
+[run]
+id = "compare-runs-reference-demo"
+directory = "run-reference"
+
+[task]
+kind = "md"
+mode = "reference"
+
+[structure]
+file = "structure.extxyz"     # written by make_structure.py (with momenta)
+
+[dynamics]
+ensemble = "nve"
+integrator = "verlet"
+timestep_fs = 1.0             # fs
+steps = 16                    # 16 fs
+
+[checkpoint]
+interval_steps = 8
+
+[reference]
+backend = "harmonic-reference"
+k = 1.0
+r0 = 0.9
