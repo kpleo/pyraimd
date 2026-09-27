@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.1 (release candidate)
+## 0.8.1 (2026-09-27)
 
 ### Added
 
