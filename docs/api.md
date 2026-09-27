@@ -73,10 +73,13 @@ command line.
   fixed-cell NVE runs (`plain-nve` / `mts-nve-respa` drivers) from the same
   initial state, compared pointwise at identical physical times (unique
   match per candidate point, 1e-9 fs absolute, no interpolation).  Fully
-  read-only at the connection level (`Store(path, read_only=True)`): no
-  backend is constructed, nothing is written or initialized, and compared
-  directories stay byte-identical; an empty, damaged or schema-less
-  database is refused up front.  Only
+  read-only (`Store(path, read_only=True)`): a file-level check before
+  any connection keeps compared directories byte-identical — completed
+  runs with the default rollback-journal database are supported, while
+  WAL-mode or sidecar-log databases, and empty, damaged or schema-less
+  ones, are refused up front (nothing is initialized, checkpointed,
+  converted or deleted); no backend is constructed.
+  Only
   committed complete-step states count (incomplete tails are coverage
   counts, not points).  The report carries the matched window, per-time
   and max position/velocity RMS (per-atom normalization, `v = p/m *

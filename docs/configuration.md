@@ -779,12 +779,16 @@ SinglePointCalculator (`get_forces()` / `get_potential_energy()`).
 `pyraimd2.workflows.compare_runs`) answers "is the cheaper run accurate
 enough" for two ALREADY-COMPLETED runs, without private scripts and
 without touching them: no backend is constructed, nothing is evaluated,
-and the run directories are opened through read-only SQLite connections
-(`Store(path, read_only=True)`) — no table creation, metadata write or
-commit can run, so compared directories stay byte-identical (no grown
-database, no `-wal`/`-shm`/`-journal` sidecars).  An empty, damaged or
-schema-less `trajectory.db` is refused up front, never initialized as a
-side effect.  The scope of this version
+and the run directories stay byte-identical.  The guarantee comes from a
+file-level check made before any connection
+(`Store(path, read_only=True)`): only completed runs with the default
+rollback-journal database are supported — a database in WAL journal mode
+or with `-wal`/`-shm`/`-journal` sidecar logs is refused with a
+structured error, because even a read-only SQLite connection would create
+sidecar files for it.  Nothing is ever checkpointed, converted or
+deleted in a compared directory; an empty, damaged or schema-less
+`trajectory.db` is refused up front, never initialized as a side effect.
+The scope of this version
 is deliberately narrow — fixed-cell deterministic NVE trajectories
 written by the `plain-nve` or `mts-nve-respa` drivers, same atoms in the
 same order, same initial state, constant masses.  NVT, variable-cell,

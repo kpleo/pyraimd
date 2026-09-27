@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -773,3 +774,76 @@ def test_invalid_masses_refused(tmp_path, bad_masses):
     with pytest.raises(CompareError, match="invalid masses") as e:
         compare_runs(reference, broken)
     assert e.value.reason == "missing_information"
+
+
+# --- WAL / sidecar-log databases are refused before any connection -----------
+
+
+def test_wal_journal_database_refused_without_touching(tmp_path, capsys):
+    """A cleanly closed WAL database (header marks WAL, no sidecars left):
+    a read-only SQLite connection would still create -wal/-shm files, so
+    the comparison refuses BEFORE connecting."""
+    reference, candidate = _analytic_pair(tmp_path)
+    db = candidate / "trajectory.db"
+    connection = sqlite3.connect(db)
+    with connection:
+        mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        assert mode == "wal"
+    connection.close()   # clean close checkpoints and removes sidecars
+    assert sorted(p.name for p in candidate.iterdir()) == ["events.jsonl",
+                                                           "trajectory.db"]
+    before = _tree_state(candidate)
+
+    with pytest.raises(CompareError, match="WAL journal mode") as e:
+        compare_runs(reference, candidate)
+    assert e.value.reason == "unsupported_scope"
+
+    code = cli_main(["compare", str(reference), str(candidate), "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)   # exactly one parseable JSON object
+    assert code == 2                     # out-of-scope input: usage exit
+    assert payload["ok"] is False
+    assert payload["error"]["reason"] == "unsupported_scope"
+    assert captured.err == ""
+    # the source directory is byte-identical: no -wal/-shm appeared
+    assert _tree_state(candidate) == before
+    assert sorted(p.name for p in candidate.iterdir()) == ["events.jsonl",
+                                                           "trajectory.db"]
+
+
+def test_wal_sidecar_database_refused_and_stale_main_db_not_read(tmp_path):
+    """A committed-but-not-checkpointed WAL transaction: the sidecar log
+    holds state the main file lacks — refused, never read as current."""
+    reference, candidate = _analytic_pair(tmp_path)
+    db = candidate / "trajectory.db"
+    writer = sqlite3.connect(db)
+    try:
+        assert writer.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        # commit a marker transaction and keep the writer open: the commit
+        # lives in the -wal sidecar, the main db file is stale
+        writer.execute("CREATE TABLE wal_marker (value INTEGER)")
+        writer.execute("INSERT INTO wal_marker VALUES (1)")
+        writer.commit()
+        assert (candidate / "trajectory.db-wal").exists()
+        assert (candidate / "trajectory.db-shm").exists()
+        # the main file is genuinely stale: an immutable reader (which
+        # ignores the WAL) cannot see the committed marker table
+        probe = sqlite3.connect(
+            f"file:{db}?immutable=1", uri=True)
+        try:
+            with pytest.raises(sqlite3.OperationalError,
+                               match="no such table"):
+                probe.execute("SELECT COUNT(*) FROM wal_marker").fetchone()
+        finally:
+            probe.close()
+        before = _tree_state(candidate)
+
+        with pytest.raises(CompareError, match="sidecar log") as e:
+            compare_runs(reference, candidate)
+        assert e.value.reason == "unsupported_scope"
+        # nothing checkpointed, converted or deleted; nothing was read
+        # from the stale main file as if it were current
+        assert _tree_state(candidate) == before
+        assert (candidate / "trajectory.db-wal").exists()
+    finally:
+        writer.close()

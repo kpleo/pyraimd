@@ -4,11 +4,18 @@
 
 ### Fixed
 
+- `pyramid compare` / `compare_runs` refuse WAL-journal-mode databases
+  and databases with `-wal`/`-shm`/`-journal` sidecar logs with a
+  structured error (`unsupported_scope`), checked at the file level
+  before any connection: even a read-only SQLite connection would create
+  sidecar files for such databases, so they cannot be guaranteed a
+  source-directory-unchanged comparison.  Completed runs with the
+  default rollback-journal database are unaffected; nothing is
+  checkpointed, converted or deleted in a compared directory.
 - `pyramid compare` / `compare_runs` now opens trajectory databases
   through a read-only SQLite connection (`Store(path, read_only=True)`):
-  no table creation, metadata write or commit can run, so a compared run
-  directory stays byte-identical (no grown database, no `-wal`/`-shm`/
-  `-journal` sidecars).  An empty, damaged or schema-less
+  no table creation, metadata write or commit can run.  An empty,
+  damaged or schema-less
   `trajectory.db` is refused up front instead of being initialized as a
   side effect.  The default `Store` mode is unchanged.
 - Read failures at the comparison boundary — unreadable or damaged

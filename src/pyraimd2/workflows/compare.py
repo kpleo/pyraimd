@@ -14,11 +14,11 @@ structured error, never silently approximated):
 - fully offline: no backend is constructed, no optional model package is
   imported, no predict/compute ever runs, and the run directories, their
   databases, event logs and checkpoints are opened read-only — the
-  trajectory database through a SQLite ``mode=ro`` connection
-  (``Store(path, read_only=True)``), so no table creation, metadata write
-  or commit can run and no sidecar files appear; an empty, damaged or
-  schema-less database is refused up front, never initialized as a side
-  effect;
+  trajectory database through ``Store(path, read_only=True)``, whose
+  file-level pre-check (before any connection) refuses WAL-mode or
+  sidecar-log databases, so compared directories stay byte-identical; an
+  empty, damaged or schema-less database is refused up front, never
+  initialized as a side effect;
 - only committed STEP_COMPLETED complete states are trajectory points,
   selected through the same verified read paths as ``pyramid export``
   (``frames_for_run`` over the commit-bound row view, with the store's
@@ -59,7 +59,7 @@ import numpy as np
 from ase import units
 
 from pyraimd2.runtime.inspect import _read_events
-from pyraimd2.store import Store
+from pyraimd2.store import Store, UnsupportedJournalError
 from pyraimd2.workflows.export import (
     ExportError,
     completed_step_ids,
@@ -196,6 +196,11 @@ def _load_run(run_dir: str | Path, *, role: str) -> _RunData:
                                     force_source="reference")
     except (CompareError, ExportError):
         raise
+    except UnsupportedJournalError as error:
+        # a storage format outside this version's supported scope: the
+        # run's records are intact, but reading them could not guarantee
+        # an unchanged source directory
+        raise CompareError(str(error), reason="unsupported_scope") from error
     except (OSError, sqlite3.DatabaseError, KeyError, json.JSONDecodeError,
             RuntimeError) as error:
         # the known read failures at this boundary: file I/O (OSError,

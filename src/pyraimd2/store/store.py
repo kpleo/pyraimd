@@ -39,6 +39,16 @@ class StoreError(RuntimeError):
     """The database file is not an initialized, readable ASE store."""
 
 
+class UnsupportedJournalError(StoreError):
+    """WAL-mode or sidecar-log database refused by the read-only entry.
+
+    SQLite creates ``-wal``/``-shm`` files even for ``mode=ro``
+    connections when the database uses the WAL journal (documented
+    behavior), so such databases cannot be guaranteed a
+    source-directory-unchanged offline read; this version supports only
+    completed rollback-journal databases without sidecar logs."""
+
+
 class Store:
     """Append-only wrapper around an ASE SQLite database.
 
@@ -52,17 +62,24 @@ class Store:
 
     ``read_only=True`` opens the database through a SQLite ``mode=ro``
     URI connection and verifies the schema with SELECTs only: no table
-    creation, metadata write, repair or commit ever runs, and no
-    ``-wal``/``-shm``/``-journal`` sidecar can appear — the file (and its
-    directory) stay byte-identical.  A file that is not an initialized
-    ASE database (empty, damaged or missing the schema) raises
-    immediately, before any read.  Readers such as the trajectory
-    comparison use this; the default stays the writable production mode.
+    creation, metadata write, repair or commit ever runs.  The
+    no-side-effect guarantee comes from a file-level check made BEFORE
+    any connection: a database in WAL journal mode (header format bytes)
+    or with ``-wal``/``-shm``/``-journal`` sidecar logs is refused with
+    :class:`UnsupportedJournalError`, because even a read-only SQLite
+    connection would create sidecar files for it — this version supports
+    only completed rollback-journal databases without sidecars.  A file
+    that is not an initialized ASE database (empty, damaged or missing
+    the schema) raises immediately, before any read.  Readers such as the
+    trajectory comparison use this; the default stays the writable
+    production mode.
     """
 
     def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
         self.path = str(path)
         self._read_only = bool(read_only)
+        if self._read_only:
+            self._check_read_only_source()  # plain file reads, no connection
         self._db = ase.db.connect(self.path)
         if self._read_only:
             uri = ("file:" + urllib.parse.quote(os.path.abspath(self.path))
@@ -74,7 +91,57 @@ class Store:
             self._db._connect = _connect_read_only
         self._db.__enter__()  # one owned connection per Store
         if self._read_only:
-            self._initialize_read_only()
+            try:
+                self._initialize_read_only()
+            except BaseException:
+                # a failed read-only open closes its connection here,
+                # deterministically — never left to __del__
+                connection = getattr(self._db, "connection", None)
+                if connection is not None:
+                    connection.close()
+                    self._db.connection = None
+                raise
+
+    def _check_read_only_source(self) -> None:
+        """Refuse databases a read-only connection could still modify.
+
+        SQLite creates ``-wal``/``-shm`` files even for ``mode=ro``
+        connections when the database is in WAL journal mode (documented
+        behavior), so the guarantee comes from this plain file-level
+        check, not from ``mode=ro``: WAL format bytes (header offsets
+        18/19 == 2) or existing sidecar logs refuse the entry.  Nothing
+        is checkpointed, converted or deleted, and ``immutable=1`` is
+        never used (it would ignore possibly uncheckpointed WAL
+        transactions).
+        """
+        path = Path(self.path)
+        sidecars = []
+        for suffix in ("-wal", "-shm", "-journal"):
+            candidate = path.with_name(path.name + suffix)
+            if candidate.exists():
+                sidecars.append(candidate.name)
+        if sidecars:
+            raise UnsupportedJournalError(
+                f"{self.path}: sidecar log file(s) {sidecars} exist; "
+                "the database may hold committed transactions not yet "
+                "checkpointed into the main file, and a read-only "
+                "connection would create sidecar files in the source "
+                "directory.  Offline comparison supports completed runs "
+                "with the default rollback-journal database; the "
+                "directory is left untouched (nothing checkpointed, "
+                "converted or deleted)")
+        with open(path, "rb") as handle:
+            header = handle.read(100)
+        if len(header) >= 20 and (header[18] == 2 or header[19] == 2):
+            raise UnsupportedJournalError(
+                f"{self.path}: the database header marks WAL journal "
+                "mode; a read-only SQLite connection would create "
+                "-wal/-shm files in the source directory, so an offline "
+                "comparison cannot guarantee an unchanged run directory.  "
+                "Offline comparison supports completed runs with the "
+                "default rollback-journal database; the directory is "
+                "left untouched (nothing checkpointed, converted or "
+                "deleted)")
 
     def _initialize_read_only(self) -> None:
         """SELECT-only schema verification for a read-only connection.
