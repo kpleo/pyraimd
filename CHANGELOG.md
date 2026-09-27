@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- New init template `harmonic-compare` (`pyramid init --template
+  harmonic-compare --output DIR`): the complete offline
+  accuracy-verification chain in five embedded files — a reference plain
+  NVE config, unscaled and `scaled`-wrapper fixed-model MTS configs, one
+  shared structure with fixed initial momenta, and a README walking
+  through validate -> three runs -> two `pyramid compare` calls.  It runs
+  entirely on the builtin analytic harmonic backends from a wheel-only
+  install (no source checkout, no external programs).  `write_template`
+  now handles multi-file templates with all-or-nothing conflict
+  semantics (without `--force`, any existing target refuses before
+  anything is written; `--force` overwrites only the template's own
+  files); the four existing templates' outputs and the return contract
+  are unchanged.  The user docs gained a short migration note for
+  carrying the same chain to a real reference engine and fast model
+  (e.g. QE + MACE).
+
 ## 0.8.2 (2026-09-27)
 
 ### Fixed

@@ -97,7 +97,12 @@ command line.
 - `write_template(template, output_dir, *, force=False) -> Path` — write a
   runnable `run.toml` + `structure.extxyz`; `TEMPLATES` lists the available
   templates (including the experimental `harmonic-mts`, whose structure
-  carries fixed initial momenta).
+  carries fixed initial momenta, and `harmonic-compare`, which writes five
+  files — reference/MTS/scaled-MTS configs, one shared structure and a
+  README — for the offline accuracy-verification chain).  Writes are
+  all-or-nothing: without `force`, any existing target refuses before
+  anything is written; with `force`, exactly the template's own files are
+  overwritten.
 - `pyraimd2.workflows.mts_md` — the experimental fixed-model MTS driver
   (driver id `mts-nve-respa`) behind `task.mode = "mts"`: `run_workflow`
   and `resume_workflow` dispatch to it, and it commits one record per

@@ -50,9 +50,12 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
 - `pyramid init --template harmonic --output DIR [--force]`: write
   `run.toml` + `structure.extxyz`. Existing template files are kept unless
   `--force`. Variants: `harmonic-nvt` (plain NVT),
-  `harmonic-adaptive-nvt` (adaptive Langevin NVT with a fixed base model)
-  and `harmonic-mts` (experimental fixed-model MTS NVE; the written
-  structure carries fixed initial momenta).
+  `harmonic-adaptive-nvt` (adaptive Langevin NVT with a fixed base model),
+  `harmonic-mts` (experimental fixed-model MTS NVE; the written
+  structure carries fixed initial momenta) and `harmonic-compare` (the
+  offline accuracy-verification chain: three configurations — reference
+  NVE, unscaled and scaled MTS — around one shared structure, plus a
+  README walking through validate -> run -> compare).
 - `pyramid validate CONFIG [--probe-backends | --check-environment |
   --probe-surrogate]`: check everything that can
   be checked without running: TOML and schema, structure readability and
@@ -844,7 +847,47 @@ With no thresholds the report carries `criteria_status:
 "reliable"/"recommended" verdict.  `--max-position-rms A` /
 `--max-velocity-rms A_PER_FS` add per-criterion pass/fail (`<=` passes).
 A runnable offline walkthrough lives in
-[../examples/compare_runs/](../examples/compare_runs/).
+[../examples/compare_runs/](../examples/compare_runs/), and the whole chain
+is one init template away (`pyramid init --template harmonic-compare`): the
+generated README guides validate -> run -> compare step by step.
+
+### Migrating the verify chain to your own setup (QE + MACE)
+
+The `harmonic-compare` chain transfers to a real reference engine and fast
+model by editing the three TOML sections, keeping the chain's shape:
+
+- **Structure**: use your own structure file with explicit initial momenta
+  (`structure.extxyz` with a `momenta` column) — one file shared by the
+  reference and candidate configs, so the same-initial-state precondition
+  holds by construction. Never let one arm re-thermalize.
+- **Reference**: keep your production recipe identical to what you trust —
+  same `xc`/dispersion settings, the same pseudopotentials (`pseudo_dir` +
+  `pseudos`), the same k-points/cutoffs you validated. The configuration
+  shape is [../examples/qe_mace_skeleton/](../examples/qe_mace_skeleton/).
+- **Candidate**: an explicit LOCAL model path (`surrogate.model`), and a
+  scale that is frozen for the whole run — determined beforehand on
+  independent calibration data, or simply `1` (no `scaled` wrapper). The
+  wrapper scales energy and forces together; never scale one side only.
+- **Grids**: choose the inner timestep and `outer_ratio` explicitly. The
+  reference run must cover at least the candidate's physical-time span,
+  sampled finely enough that every complete candidate boundary (every
+  `outer_ratio` inner steps) has an exact reference time point — the
+  reference arm may be denser, never coarser than the candidate's
+  boundaries. Same timestep on both arms makes this trivially hold.
+
+Order of operations: `pyramid validate CONFIG` on all three files, then
+`pyramid validate CONFIG --check-environment` (strictly read-only local
+prerequisites). Real probes (`--probe-backends`, `--probe-surrogate`) and
+the MD runs themselves execute your backend — run them explicitly, on
+compute-authorized nodes. Only then `pyramid compare` the two COMPLETED
+run directories.
+
+What this tool is and is not: it compares completed trajectories from the
+same initial state and reports pointwise metrics (plus pass/fail only for
+thresholds you pass yourself). The outer ratio and the scale are your
+choices; the tool does not forecast errors, does not adapt ratios, does
+not choose parameters for you, and says nothing about the accuracy of
+long-term properties.
 
 ## Schema migration
 

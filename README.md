@@ -149,6 +149,27 @@ written) and refuses anything outside that scope with a structured error.
 Walkthrough: [examples/compare_runs/](examples/compare_runs/); report
 contract: [docs/configuration.md](docs/configuration.md).
 
+The whole verification chain ships as one init template — no source checkout
+needed, everything runs on the builtin analytic backends:
+
+```sh
+pyramid init --template harmonic-compare --output demo
+# demo/README.md has the full guide; in short:
+pyramid validate demo/run.toml && pyramid validate demo/run_mts.toml \
+  && pyramid validate demo/run_mts_scaled.toml
+pyramid run demo/run.toml && pyramid run demo/run_mts.toml \
+  && pyramid run demo/run_mts_scaled.toml
+pyramid compare demo/runs/reference demo/runs/mts
+pyramid compare demo/runs/reference demo/runs/mts-scaled --json
+```
+
+The template writes three configurations (reference NVE, unscaled MTS,
+scaled MTS) around one shared initial structure, plus a README explaining
+each step and how to read the report. To move the same chain to your own
+reference engine and fast model (e.g. Quantum ESPRESSO + MACE), see the
+migration notes in [docs/configuration.md](docs/configuration.md) and the
+configuration shape in [examples/qe_mace_skeleton/](examples/qe_mace_skeleton/).
+
 ### A serial relax → NVT → NVE workflow, offline
 
 `examples/periodic_lj/` runs a 32-atom fcc Lennard-Jones cell through the three

@@ -114,6 +114,21 @@ jobs:
           wheel-venv/bin/pyramid resume smoke-mts/runs/harmonic-mts-demo --steps 64
           wheel-venv/bin/pyramid inspect smoke-mts/runs/harmonic-mts-demo
           wheel-venv/bin/pyramid export smoke-mts/runs/harmonic-mts-demo --force-source reference --output mts-reference-192.extxyz
+      - name: Compare-template user flow from the installed wheel
+        # The install-ready harmonic-compare template path: init -> validate
+        # x3 -> run x3 -> compare x2, all on analytic backends, from the
+        # installed wheel with no source checkout.
+        working-directory: ${{ runner.temp }}
+        run: |
+          wheel-venv/bin/pyramid init --template harmonic-compare --output smoke-compare
+          wheel-venv/bin/pyramid validate smoke-compare/run.toml
+          wheel-venv/bin/pyramid validate smoke-compare/run_mts.toml
+          wheel-venv/bin/pyramid validate smoke-compare/run_mts_scaled.toml
+          wheel-venv/bin/pyramid run smoke-compare/run.toml
+          wheel-venv/bin/pyramid run smoke-compare/run_mts.toml
+          wheel-venv/bin/pyramid run smoke-compare/run_mts_scaled.toml
+          wheel-venv/bin/pyramid compare smoke-compare/runs/reference smoke-compare/runs/mts --json
+          wheel-venv/bin/pyramid compare smoke-compare/runs/reference smoke-compare/runs/mts-scaled --json
       - name: Installed core carries no torch/PySCF
         run: |
           "$RUNNER_TEMP/wheel-venv/bin/python" -m pip list

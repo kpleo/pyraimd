@@ -198,12 +198,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _cmd_init(args: argparse.Namespace) -> int:
     from pyraimd2.workflows import write_template
+    from pyraimd2.workflows.templates import _CONTENT, PRIMARY_CONFIG
 
     config_path = write_template(args.template, args.output, force=args.force)
-    print(f"wrote {config_path} (+ structure.extxyz)")
+    written = list(_CONTENT[args.template])
+    rest = [name for name in written if name != PRIMARY_CONFIG]
+    print(f"wrote {config_path} (+ {', '.join(rest)})")
     print("next steps:")
-    print(f"  pyramid validate {config_path}")
-    print(f"  pyramid run {config_path}")
+    if "README.md" in written:
+        print(f"  see {config_path.parent / 'README.md'} — the full "
+              "validate -> run -> compare chain")
+    else:
+        print(f"  pyramid validate {config_path}")
+        print(f"  pyramid run {config_path}")
     return EXIT_OK
 
 
