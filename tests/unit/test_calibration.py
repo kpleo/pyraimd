@@ -214,6 +214,52 @@ def test_cli_protocol_refusals(tmp_path, capsys) -> None:
     assert valid.is_file()
 
 
+def test_npy_container_refused_cleanly(tmp_path, capsys) -> None:
+    # a valid NumPy file of the wrong container type (.npy, not .npz):
+    # a clear input-format error, exit 2, no traceback, no output file
+    wrong = tmp_path / "wrong.npy"
+    np.save(wrong, np.zeros((1, 1, 3)))
+    output = tmp_path / "out.json"
+    code = cli_main(["calibrate-scale", "--pairs", str(wrong),
+                     "--output", str(output)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "not an .npz archive" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+    assert not output.exists()
+
+
+def test_preexisting_tmp_file_never_touched(tmp_path, capsys) -> None:
+    # the user's own scale.json.tmp survives a successful write, a --force
+    # overwrite and a refused overwrite — byte-identical
+    pairs = _write_pairs(tmp_path / "pairs.npz", 1.25 * FAST, FAST)
+    user_tmp = tmp_path / "scale.json.tmp"
+    user_tmp.write_bytes(b"the user's own file\n")
+    user_tmp_hash = hashlib.sha256(user_tmp.read_bytes()).hexdigest()
+    output = tmp_path / "scale.json"
+
+    code = cli_main(["calibrate-scale", "--pairs", str(pairs),
+                     "--output", str(output)])
+    assert code == 0
+    assert json.loads(output.read_text())["scale"] == pytest.approx(1.25)
+    assert hashlib.sha256(user_tmp.read_bytes()).hexdigest() == user_tmp_hash
+
+    code = cli_main(["calibrate-scale", "--pairs", str(pairs),
+                     "--output", str(output), "--force"])
+    assert code == 0
+    assert hashlib.sha256(user_tmp.read_bytes()).hexdigest() == user_tmp_hash
+
+    capsys.readouterr()
+    code = cli_main(["calibrate-scale", "--pairs", str(pairs),
+                     "--output", str(output)])   # exists, no --force
+    assert code == 2
+    assert "--force" in capsys.readouterr().err
+    assert hashlib.sha256(user_tmp.read_bytes()).hexdigest() == user_tmp_hash
+    assert {p.name for p in tmp_path.iterdir()} == {
+        "pairs.npz", "scale.json", "scale.json.tmp"}  # no stray temps
+
+
 def test_documented_example_end_to_end(tmp_path) -> None:
     example = Path(__file__).parents[2] / "examples" / "calibrate_scale"
     pairs = tmp_path / "pairs.npz"

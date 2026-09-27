@@ -49,6 +49,15 @@
 
 ### Fixed
 
+- `docs/user_guide.md` was excluded by the docs ignore rule and never
+  tracked, so the README's link was broken from a fresh clone; the
+  manual is now tracked (single-file exception, the rest of the rule is
+  unchanged).
+- `pyramid calibrate-scale` refuses a valid `.npy` file (wrong container)
+  with a clear input-format error and exit 2 instead of an AttributeError
+  traceback, and writes its report through a unique temporary file: a
+  pre-existing `<output>.tmp` is the user's own file and is never
+  overwritten, moved or deleted.
 - The `scaled` wrapper's uncertainty description is precise: the
   reported values are mechanically rescaled by the scale factor
   (a unit-consistent rescale of the base model's spread), not a

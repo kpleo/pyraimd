@@ -30,6 +30,7 @@ import hashlib
 import io
 import json
 import os
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -183,6 +184,13 @@ def read_pairs_npz(path: str | Path) -> tuple[np.ndarray, np.ndarray, dict]:
     except Exception as error:
         raise CalibrationError(
             f"{path.name} is not a readable .npz archive: {error}") from error
+    if not isinstance(archive, np.lib.npyio.NpzFile):
+        # a valid .npy (plain array) or any other container: the protocol
+        # is a keyed archive, not "whatever np.load returned"
+        raise CalibrationError(
+            f"{path.name} is a valid NumPy file but not an .npz archive; "
+            f"the pairs protocol expects one .npz holding the keys "
+            f"{list(_REQUIRED_NPZ_KEYS)}")
     try:
         keys = set(archive.files)
     finally:
@@ -250,17 +258,28 @@ def report_dict(fit: ForceScaleFit, provenance: dict) -> dict:
 
 def write_report(report: dict, output: str | Path, *,
                  force: bool = False) -> Path:
-    """Write the report atomically (temp file, then replace).  An existing
-    output is kept unless ``force``; a failed fit never reaches here, so a
-    pre-existing output file is never corrupted."""
+    """Write the report atomically: one UNIQUE temp file in the output's
+    own directory (``tempfile.mkstemp`` — a pre-existing
+    ``<output>.tmp`` is the user's own file and is never touched),
+    then ``os.replace``; on failure only this run's temp file is removed.
+    An existing output is kept unless ``force``; a failed fit never
+    reaches here, so a pre-existing output file is never corrupted."""
     output = Path(output)
     if output.exists() and not force:
         raise CalibrationError(
             f"output file exists: {output}; pass --force to overwrite or "
             "choose a different --output")
     output.parent.mkdir(parents=True, exist_ok=True)
-    tmp = output.with_name(output.name + ".tmp")
-    tmp.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, output)
+    fd, tmp_name = tempfile.mkstemp(dir=output.parent,
+                                    prefix=output.name + ".",
+                                    suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(report, indent=2, allow_nan=False)
+                         + "\n")
+        os.replace(tmp, output)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return output

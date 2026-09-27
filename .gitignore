@@ -21,6 +21,7 @@
 !/docs/architecture.md
 !/docs/configuration.md
 !/docs/energetic_force_error.md
+!/docs/user_guide.md
 __pycache__/
 *.py[oc]
 *.egg-info/
