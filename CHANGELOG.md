@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- `pyramid inspect` now reports run durations explicitly: the `timing`
+  block (dict and `--json`) carries `last_reported_run_wall_time_s` and
+  `summed_reported_run_wall_time_s` over the current run's own valid
+  RUN_SUMMARY records, with `reported_segments`,
+  `invalid_or_missing_summary_durations` (missing/NaN/negative durations
+  counted, never backfilled as real seconds) and `scope` fixed to
+  `reported_run_summaries`.  After stop/resume the sum covers the
+  reported segments — a crashed segment that produced no summary is not
+  counted, and the values are never presented as a whole-job/full wall
+  clock (queue time, gaps and startup overhead stay outside).  The
+  top-level `wall_time_s` is unchanged for backward compatibility (the
+  last RUN_SUMMARY record's value); with no valid summaries the new
+  durations are null, not zero.
+
 ## 0.8.3 (2026-09-27)
 
 ### Added

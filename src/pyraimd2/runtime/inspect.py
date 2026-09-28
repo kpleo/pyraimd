@@ -109,7 +109,13 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
     Cost numbers come from the authoritative task events: actual physical
     reference executions, logical reference requests, cache hits, failed
     attempts and independent checks are reported separately — never merged
-    into one "reference calls" figure.  ``last_checkpoint`` is None until
+    into one "reference calls" figure.  Timing: ``wall_time_s`` is kept as
+    the LAST RUN_SUMMARY record's raw duration (backward compatibility);
+    ``timing`` makes the semantics explicit — the last valid and the
+    summed durations over the current run's own valid RUN_SUMMARY records
+    (``reported_run_summaries`` scope: reported segments only, never a
+    whole-job wall clock; missing/NaN/negative durations counted, never
+    backfilled).  ``last_checkpoint`` is None until
     WP03 exists.
     """
     run_dir = Path(run_dir)
@@ -152,6 +158,36 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         cost = {**cost, "cost_record_complete": True}
     committed = [e for e in events if e.get("type") == EVALUATION_COMMITTED]
     run_summaries = [e for e in events if e.get("type") == RUN_SUMMARY]
+    # RUN_SUMMARY records carry per-SEGMENT durations (one per run/resume
+    # invocation).  The top-level wall_time_s stays the last summary
+    # record's raw value for backward compatibility; `timing` makes the
+    # semantics explicit over the CURRENT run's valid summaries only: a
+    # crashed segment that produced no summary is simply absent (never
+    # backfilled), and missing/NaN/negative durations are counted, never
+    # treated as real seconds.  This is a sum of reported segments, not a
+    # whole-job wall clock (no queue time, gaps or startup overhead).
+    valid_durations: list[float] = []
+    invalid_durations = 0
+    for event in run_summaries:
+        if event.get("run_id") != run_id:
+            continue  # only the current run's own summary records
+        try:
+            duration = float(event.get("wall_time_s"))
+        except (TypeError, ValueError):
+            duration = np.nan
+        if not np.isfinite(duration) or duration < 0:
+            invalid_durations += 1
+        else:
+            valid_durations.append(duration)
+    timing = {
+        "scope": "reported_run_summaries",
+        "last_reported_run_wall_time_s": (valid_durations[-1]
+                                          if valid_durations else None),
+        "summed_reported_run_wall_time_s": (float(sum(valid_durations))
+                                            if valid_durations else None),
+        "reported_segments": len(valid_durations),
+        "invalid_or_missing_summary_durations": invalid_durations,
+    }
     run_end = next((e for e in reversed(events) if e.get("type") == RUN_END), None)
     updates = [e for e in events if e.get("type") == MODEL_UPDATE]
     complete_steps = {int(e["step_id"]) for e in events
@@ -332,8 +368,9 @@ def inspect_run(run_dir: str | Path, run_id: str | None = None) -> dict:
         "trajectory": trajectory,
         "checks": checks,
         "cost": cost,
-        "wall_time_s": (run_summaries[-1]["wall_time_s"] if run_summaries
+        "wall_time_s": (run_summaries[-1].get("wall_time_s") if run_summaries
                         else None),
+        "timing": timing,
         "last_checkpoint": _last_checkpoint(run_dir),
         "failure": failure,
         "pacing": pacing,
@@ -348,6 +385,7 @@ def format_inspection(info: dict) -> str:
     reference = info["cost"]["reference"]
     checks = info["checks"]
     workflow = info.get("workflow") or {}
+    timing = info["timing"]
     mts_line = None
     if workflow.get("driver") == "mts-nve-respa":
         integ = workflow.get("integrator") or {}
@@ -389,7 +427,15 @@ def format_inspection(info: dict) -> str:
         (f"  inference/training/io : {info['cost']['counts']['inference']}/"
          f"{info['cost']['counts']['training']}/{info['cost']['counts']['io']}"),
         f"  leaf task elapsed     : {info['cost']['total_elapsed_s']:.3f} s",
-        f"  run wall time         : {info['wall_time_s']}",
+        (f"  run wall time         : {info['wall_time_s']} "
+         "(last RUN_SUMMARY record)"),
+        (f"  reported wall time    : last reported segment "
+         f"{timing['last_reported_run_wall_time_s']} s; sum of reported "
+         f"segments {timing['summed_reported_run_wall_time_s']} s "
+         f"({timing['reported_segments']} valid segment(s), "
+         f"{timing['invalid_or_missing_summary_durations']} "
+         "invalid/missing; RUN_SUMMARY records only — a crashed segment "
+         "without a summary is not counted; not a whole-job wall clock)"),
         f"  last checkpoint       : {info['last_checkpoint']}",
         f"  failure               : {info['failure']}",
     ]

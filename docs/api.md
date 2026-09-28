@@ -211,7 +211,15 @@ Persistence, identity and accounting behind resumable runs.
   progress adopts complete outer boundaries only — a committed tail
   evaluation without its boundary is reported separately in
   `last_evaluation` (`complete = false`), with its spent calls kept in the
-  ledger.
+  ledger.  Timing: the top-level `wall_time_s` stays the last RUN_SUMMARY
+  record's raw value; `timing` reports `last_reported_run_wall_time_s` and
+  `summed_reported_run_wall_time_s` over the current run's own valid
+  RUN_SUMMARY durations, with `reported_segments`,
+  `invalid_or_missing_summary_durations` (missing/NaN/negative counted,
+  never backfilled) and `scope` fixed to `reported_run_summaries` —
+  reported segments only, never a whole-job wall clock (no queue time,
+  gaps or startup overhead; a crashed segment without a summary is not
+  counted; no valid summaries shows nulls, not zero).
 - Recovery: `CheckpointManager` (atomic generation snapshots with hash
   manifests; reads fall back to the last valid generation) /
   `CheckpointError` / `ResumeError`.

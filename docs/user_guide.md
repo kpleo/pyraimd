@@ -110,11 +110,20 @@ Hamiltonian drift, and applies pass/fail ONLY to thresholds you pass
 yourself (`--max-position-rms`, `--max-velocity-rms`). Without thresholds
 it reports metrics and never declares a run "reliable".
 
-On timing: `inspect`'s `wall_time_s` is the last segment's `run_summary`
-wall time, while the cost ledger can cover all events of a run. A
-meaningful speed comparison needs the same resources over the same
-physical interval, measured deliberately — never read a whole-trajectory
-speedup off a single field.
+On timing: `inspect`'s `timing` block reports durations of the run's own
+RUN_SUMMARY records explicitly — `last_reported_run_wall_time_s` and
+`summed_reported_run_wall_time_s` over `reported_segments` valid segments
+(`invalid_or_missing_summary_durations` counts records with missing or
+invalid durations, never backfilled). After a run of a 20 s segment and a
+30 s resume segment this reads **last 30 / sum 50** — and that is NOT an
+end-to-end 50 s: queue waits, startup overhead and gaps between separate
+invocations are outside the reported records, a crashed segment that
+produced no summary is not counted, and old logs with partial records sum
+only what is there (no valid summaries at all shows both as null). The
+top-level `wall_time_s` remains, for backward compatibility, the last
+RUN_SUMMARY record's raw value. A meaningful speed comparison needs the
+same resources over the same physical interval, measured deliberately —
+never read a whole-trajectory speedup off a single field.
 
 ## 8. Export and clean up
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 
 import ase.db
 import numpy as np
@@ -146,3 +147,124 @@ def test_summary_csv_rows_and_old_format_compat(tmp_path):
     assert old_info["n_evaluations"] == 0  # no committed events recorded
     assert old_info["trajectory"]["n_rows"] == 2
     assert old_info["cost"]["reference"]["actual_executions"] == 0
+
+
+# --- inspect timing: last/summed reported segment durations -------------------
+
+
+def _run_summaries(run_dir):
+    import json
+    return [json.loads(line) for line in
+            (run_dir / "events.jsonl").read_text().splitlines()
+            if line.strip() and json.loads(line).get("type") == "run_summary"]
+
+
+def test_timing_single_segment(tmp_path):
+    with EventLog(tmp_path) as log:
+        runner, _store = _runner(tmp_path, log)
+        runner.run(2)
+        info = inspect_run(tmp_path)
+    summary = _run_summaries(tmp_path)
+    assert len(summary) == 1
+    timing = info["timing"]
+    assert timing["scope"] == "reported_run_summaries"
+    assert timing["reported_segments"] == 1
+    assert timing["invalid_or_missing_summary_durations"] == 0
+    assert timing["last_reported_run_wall_time_s"] == pytest.approx(
+        summary[0]["wall_time_s"])
+    assert timing["summed_reported_run_wall_time_s"] == pytest.approx(
+        summary[0]["wall_time_s"])
+    # backward compatibility: the top-level field is unchanged
+    assert info["wall_time_s"] == summary[-1]["wall_time_s"]
+    text = format_inspection(info)
+    assert "last reported segment" in text
+    assert "sum of reported segments" in text
+
+
+def test_timing_two_segments_run_and_resume(tmp_path):
+    # a real analytic run + resume: two RUN_SUMMARY records, real values
+    from pyraimd2.config import load_config
+    from pyraimd2.workflows import resume_workflow, run_workflow
+    from pyraimd2.workflows.templates import (
+        HARMONIC_CONFIG,
+        HARMONIC_STRUCTURE,
+    )
+    text = HARMONIC_CONFIG
+    for section in ("[surrogate]", "[policy]", "[verification]"):
+        start = text.index(section)
+        following = text.index("\n[", start + 1)
+        text = text[:start] + text[following + 1:]
+    text = text.replace('mode = "adaptive"', 'mode = "reference"')
+    text = text.replace("steps = 20", "steps = 12")
+    (tmp_path / "structure.extxyz").write_text(HARMONIC_STRUCTURE)
+    (tmp_path / "run.toml").write_text(text)
+    config = load_config(tmp_path / "run.toml")
+    run_workflow(config, verbose=False, handle_sigint=False)
+    resume_workflow(config.run.directory, 4, verbose=False,
+                    handle_sigint=False)
+    summaries = _run_summaries(config.run.directory)
+    assert len(summaries) == 2
+    info = inspect_run(config.run.directory)
+    timing = info["timing"]
+    assert timing["reported_segments"] == 2
+    assert timing["invalid_or_missing_summary_durations"] == 0
+    assert timing["last_reported_run_wall_time_s"] == pytest.approx(
+        summaries[-1]["wall_time_s"])
+    assert timing["summed_reported_run_wall_time_s"] == pytest.approx(
+        sum(event["wall_time_s"] for event in summaries))
+    text_out = format_inspection(info)
+    assert "last reported segment" in text_out
+    assert "sum of reported segments" in text_out
+
+
+def test_timing_failed_segment_and_invalid_durations(tmp_path):
+    engine = Reference()
+    with EventLog(tmp_path) as log:
+        runner, _store = _runner(tmp_path, log, engine=engine)
+        runner.run(2)                      # segment 1: summary written
+        runner.run(1)                      # segment 2: summary written
+        engine.fail_on = {engine.attempts + 1}
+        with pytest.raises(EngineError, match="deliberate"):
+            runner.run(1)                  # segment 3 fails: NO new summary
+    runner_summaries = _run_summaries(tmp_path)
+    assert len(runner_summaries) == 2      # the failed segment left none
+    events_path = tmp_path / "events.jsonl"
+    lines = events_path.read_text().splitlines()
+    seq = len(lines) + 1
+    # invalid/missing durations are counted, never backfilled as real seconds
+    lines.append(json.dumps({"seq": seq, "type": "run_summary",
+                             "run_id": "run", "wall_time_s": float("nan")}))
+    lines.append(json.dumps({"seq": seq + 1, "type": "run_summary",
+                             "run_id": "run", "wall_time_s": -1.0}))
+    lines.append(json.dumps({"seq": seq + 2, "type": "run_summary",
+                             "run_id": "run"}))  # no duration at all
+    events_path.write_text("\n".join(lines) + "\n")
+
+    info = inspect_run(tmp_path)
+    timing = info["timing"]
+    assert timing["reported_segments"] == 2
+    assert timing["invalid_or_missing_summary_durations"] == 3
+    assert timing["last_reported_run_wall_time_s"] == pytest.approx(
+        runner_summaries[-1]["wall_time_s"])
+    assert timing["summed_reported_run_wall_time_s"] == pytest.approx(
+        sum(event["wall_time_s"] for event in runner_summaries))
+    assert info["failure"]["status"] == "failed"
+
+
+def test_timing_no_summaries_is_null_not_zero(tmp_path):
+    # an old db-only directory (no events.jsonl): no summary records at
+    # all — both durations null, never a fabricated zero
+    old_db = tmp_path / "old" / "legacy.db"
+    old_db.parent.mkdir()
+    atoms = Atoms("H2", positions=[[0, 0, 0], [0.74, 0, 0]])
+    raw = ase.db.connect(str(old_db))
+    raw.write(atoms, run_id="legacy", step=-1, route="ml",
+              data={"reason": "old", "surrogate": None, "engine": None})
+    info = inspect_run(old_db.parent)
+    timing = info["timing"]
+    assert timing["scope"] == "reported_run_summaries"
+    assert timing["reported_segments"] == 0
+    assert timing["invalid_or_missing_summary_durations"] == 0
+    assert timing["last_reported_run_wall_time_s"] is None
+    assert timing["summed_reported_run_wall_time_s"] is None
+    assert info["wall_time_s"] is None
