@@ -97,10 +97,21 @@ candidate boundary has an exact reference time point — the reference may
 be denser, never coarser than the candidate's boundaries.
 
 Driving `EnergeticRunner` directly from Python instead of the CLI: always
-finish with `runner.close()` (or a context manager) — it releases the
-event-log writer lock and, when the runner was asked to handle SIGINT,
-restores the previous SIGINT handler, so a finished runner never keeps
-catching Ctrl-C meant for later code in the same process.
+finish with `runner.close()` — it releases the event-log writer lock and,
+when the runner was asked to handle SIGINT, restores the previous SIGINT
+handler, so a finished runner never keeps catching Ctrl-C meant for later
+code in the same process. `EnergeticRunner` has no `__enter__`/`__exit__`,
+so use try/finally or `contextlib.closing`:
+
+```python
+runner = EnergeticRunner(atoms, surrogate, engine, store, "run", ...)
+try:
+    runner.run(100)
+finally:
+    runner.close()
+
+# or: with contextlib.closing(EnergeticRunner(...)) as runner: ...
+```
 
 ## 7. Inspect and compare
 

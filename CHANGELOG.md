@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+
+- `examples/prepared_qe_launcher/` (source tree only; not part of the
+  wheel/sdist): an OPTIONAL, stdlib-only launcher that prepares the QE
+  environment ONCE per Slurm allocation and reuses it per call for
+  many-QE-call jobs.  `launcher.py prepare` sources the user's trusted
+  setup script in a separate subprocess (never modifying the parent
+  environment), resolves `mpirun`/`pw.x` in the prepared environment,
+  records an allowlisted environment delta (removals honored; added or
+  changed credential-class variables abort by name only) into a
+  job-private 0700 state directory bound to the `SLURM_JOB_ID` and a
+  content hash; `launcher.py run` verifies job id and hash before
+  spawning and then execs the prepared argv with the extra argv (QE's
+  `-in`) appended — no shell, no supervisor process.  No default
+  behavior changes; Pyramid's engine cache, identity and resume checks
+  are untouched.  Tested with fake mpirun/pw.x stubs only.
+
 ### Fixed
 
 - The direct `EnergeticRunner` Python API now restores the previous
