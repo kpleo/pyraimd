@@ -96,6 +96,12 @@ least the candidate's physical-time span, sampled so every complete
 candidate boundary has an exact reference time point — the reference may
 be denser, never coarser than the candidate's boundaries.
 
+Driving `EnergeticRunner` directly from Python instead of the CLI: always
+finish with `runner.close()` (or a context manager) — it releases the
+event-log writer lock and, when the runner was asked to handle SIGINT,
+restores the previous SIGINT handler, so a finished runner never keeps
+catching Ctrl-C meant for later code in the same process.
+
 ## 7. Inspect and compare
 
 ```sh

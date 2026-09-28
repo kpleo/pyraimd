@@ -460,6 +460,107 @@ def test_sigint_sets_flag_and_stops_at_boundary(tmp_path):
     continuous.close()
 
 
+# --- SIGINT handler lifecycle (direct API) ------------------------------------
+
+
+def _user_handler(signum, frame):
+    """A non-default pre-existing handler used by the lifecycle tests."""
+
+
+def test_close_restores_the_previous_user_handler(tmp_path):
+    import signal
+
+    previous = signal.signal(signal.SIGINT, _user_handler)
+    try:
+        runner, *_ = make_run(tmp_path / "restore")
+        runner._install_sigint_handler()
+        assert signal.getsignal(signal.SIGINT) is not _user_handler
+        runner.close()
+        assert signal.getsignal(signal.SIGINT) is _user_handler
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def test_reinstall_keeps_the_original_previous_handler(tmp_path):
+    import signal
+
+    previous = signal.signal(signal.SIGINT, _user_handler)
+    try:
+        runner, *_ = make_run(tmp_path / "reinstall")
+        runner._install_sigint_handler()
+        runner._install_sigint_handler()  # same runner again: no re-record
+        runner.close()
+        assert signal.getsignal(signal.SIGINT) is _user_handler
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def test_double_close_preserves_a_foreign_handler(tmp_path):
+    import signal
+
+    runner, *_ = make_run(tmp_path / "twice")
+    runner._install_sigint_handler()
+    runner.close()  # restores whatever was there before the runner
+    previous = signal.signal(signal.SIGINT, _user_handler)
+    try:
+        runner.close()  # already closed: must not touch the foreign handler
+        assert signal.getsignal(signal.SIGINT) is _user_handler
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def test_handle_sigint_false_leaves_an_external_handler(tmp_path):
+    import signal
+
+    previous = signal.signal(signal.SIGINT, _user_handler)
+    try:
+        # the default constructor path (handle_sigint=False) never touches
+        # the process-wide handler, at construction or at close
+        runner, *_ = make_run(tmp_path / "hands-off")
+        assert signal.getsignal(signal.SIGINT) is _user_handler
+        runner.run(2)
+        assert signal.getsignal(signal.SIGINT) is _user_handler
+        runner.close()
+        assert signal.getsignal(signal.SIGINT) is _user_handler
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def test_third_party_handler_is_not_clobbered(tmp_path):
+    import signal
+
+    original = signal.getsignal(signal.SIGINT)  # the true pre-test state
+    runner, *_ = make_run(tmp_path / "third-party")
+    runner._install_sigint_handler()
+    signal.signal(signal.SIGINT, _user_handler)  # a third party replaces it
+    try:
+        runner.close()  # the third party replaced it: close keeps its hands off
+        assert signal.getsignal(signal.SIGINT) is _user_handler
+    finally:
+        signal.signal(signal.SIGINT, original)
+
+
+def test_close_restores_the_handler_even_when_resource_close_raises(
+        tmp_path, monkeypatch):
+    import signal
+
+    previous = signal.signal(signal.SIGINT, _user_handler)
+    try:
+        runner, *_ = make_run(tmp_path / "raiser")
+        runner._install_sigint_handler()
+
+        def boom():
+            raise OSError("injected close failure")
+
+        monkeypatch.setattr(runner.calc._event_log, "close", boom)
+        with pytest.raises(OSError, match="injected close failure"):
+            runner.close()
+        # the runner's own handler is not left installed behind the error
+        assert signal.getsignal(signal.SIGINT) is _user_handler
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
 def test_missing_model_artifact_stops_resume_as_pending(tmp_path):
     stopped, _, _, _, _, log = make_run(tmp_path / "artifact",
                                         checkpoint_interval=5)

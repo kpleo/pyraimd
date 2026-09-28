@@ -2566,26 +2566,61 @@ class EnergeticRunner:
             self._model_registry = ModelRegistry(self.run_dir)
             self.calc._model_publisher = self._publish_model_artifact
             self.dyn.attach(self._maybe_checkpoint, interval=1)
+        self._sigint_handler = None      # this runner's own installed handler
+        self._sigint_previous = None     # the handler it replaced (restore target)
         if handle_sigint:
             self._install_sigint_handler()
 
     def _install_sigint_handler(self) -> None:
         """SIGINT only sets the stop flag; the checkpoint is written by the
-        normal control flow at the next complete-step boundary."""
+        normal control flow at the next complete-step boundary.
+
+        The handler is process-wide, so its lifecycle is owned explicitly:
+        the FIRST install records the pre-existing handler as the restore
+        target; re-installing while this runner's own handler is still
+        current never re-records (the original target survives).  close()
+        restores it only while this runner still owns the current one.
+        """
         import signal
 
-        signal.signal(signal.SIGINT, lambda signum, frame: self.request_stop())
+        def handler(signum, frame):
+            self.request_stop()
+
+        if self._sigint_handler is None or \
+                signal.getsignal(signal.SIGINT) is not self._sigint_handler:
+            # first install, or a third party replaced ours in between:
+            # record what is current now as the restore target
+            self._sigint_previous = signal.getsignal(signal.SIGINT)
+        self._sigint_handler = handler
+        signal.signal(signal.SIGINT, handler)
 
     def request_stop(self) -> None:
         """Ask the run to checkpoint and stop at the next complete step."""
         self._stop_requested = True
 
     def close(self) -> None:
-        """Release the event-log writer lock (a deliberate end of writing)."""
-        if self.calc._event_log is not None:
-            self.calc._event_log.close()
-        if self._owns_store:
-            self.calc.store.close()
+        """Release the event-log writer lock (a deliberate end of writing)
+        and restore the previous SIGINT handler — only while this runner
+        still owns the current one (never when it never installed one, was
+        already closed, or a third party replaced the handler in between).
+        The restore happens even if releasing the resources raises."""
+        try:
+            if self.calc._event_log is not None:
+                self.calc._event_log.close()
+            if self._owns_store:
+                self.calc.store.close()
+        finally:
+            self._restore_sigint_handler()
+
+    def _restore_sigint_handler(self) -> None:
+        if self._sigint_handler is None:
+            return  # never installed here, or already restored
+        import signal
+
+        if signal.getsignal(signal.SIGINT) is self._sigint_handler:
+            signal.signal(signal.SIGINT, self._sigint_previous)
+        self._sigint_handler = None
+        self._sigint_previous = None
 
     def _publish_model_artifact(self, model_id: str, record: dict) -> dict:
         """Immutable model artifact, persisted before the update event;
@@ -2769,6 +2804,8 @@ class EnergeticRunner:
                                             else int(checkpoint_interval_steps))
         runner._stop_requested = False
         runner._failed = False
+        runner._sigint_handler = None
+        runner._sigint_previous = None
         runner._checkpoints = CheckpointManager(run_dir)
         runner._model_registry = ModelRegistry(run_dir)
         calc._model_publisher = runner._publish_model_artifact

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+- The direct `EnergeticRunner` Python API now restores the previous
+  SIGINT handler on `close()`: a finished or resumed runner no longer
+  leaves its stop-flag handler installed process-wide, so later code in
+  the same process (another runner, a recipe, or user code expecting the
+  default Ctrl-C interrupt) is not affected.  The restore happens only
+  while the runner still owns the current handler — a handler replaced
+  by a third party is never clobbered, `handle_sigint=False` never
+  touches external handlers, and the restore runs even if releasing the
+  log/store raises.
+
 ### Added
 
 - `pyramid inspect` now reports run durations explicitly: the `timing`
