@@ -527,7 +527,7 @@ def test_spooled_template_end_to_end(tmp_path) -> None:
     assert "@PREPARED_PW_CMD@" in (work / "run.toml.template").read_text()
     assert script.read_text() == SBATCH_TEMPLATE.read_text()
     # temp artifacts cleaned: no rendered config, no job-private state
-    assert not (work / "run.job-fake-alloc-7.toml").exists()
+    assert not list(work.glob("run.job-*.toml"))
     assert [p.name for p in (tmp_path / "slurmtmp").iterdir()] == []
     # the launcher was found via SLURM_SUBMIT_DIR, not the spool copy
     assert not (spool / "launcher.py").exists()
@@ -548,8 +548,178 @@ def test_template_failure_cleans_only_own_artifacts(tmp_path) -> None:
     assert result.returncode != 0
     # own temp config and state are gone; the failed run's data and every
     # pre-existing file stay untouched
-    assert not (work / "run.job-fake-alloc-7.toml").exists()
+    assert not list(work.glob("run.job-*.toml"))
     assert [p.name for p in (tmp_path / "slurmtmp").iterdir()] == []
     assert (work / "runs" / "demo").is_dir()     # the failure record stays
     assert (work / "pseudos" / "Si.UPF").is_file()
     assert (work / "run.toml.template").is_file()
+
+
+# --- F3a/F3b: config ownership, no-clobber publish, actual-template base -------
+
+
+def test_prepare_failure_preserves_every_preexisting_file(tmp_path) -> None:
+    # a failing setup must delete NOTHING — above all not a user-owned
+    # config that happens to carry the old-style name
+    work = _fake_submit_dir(tmp_path)
+    decoy = work / "run.job-fake-alloc-7.toml"
+    decoy_content = "user-owned configuration; preserve exactly\n"
+    decoy.write_text(decoy_content)
+    (work / "setup.sh").write_text("return 7\n")
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    import shutil
+    script = spool / "slurm_script"
+    shutil.copy(SBATCH_TEMPLATE, script)
+    result = subprocess.run(["bash", str(script)], cwd=spool,
+                            env=_slurm_env(tmp_path, work,
+                                           tmp_path / "record"),
+                            capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    assert decoy.read_text() == decoy_content     # byte-identical
+    assert not (tmp_path / "record").exists()     # fakeQE never started
+    # nothing was created at all: exactly the original files remain
+    assert sorted(p.name for p in work.iterdir()) == sorted(
+        ["launcher.py", "bin", "setup.sh", "structure.extxyz", "pseudos",
+         "run.toml.template", "run.job-fake-alloc-7.toml"])
+
+
+def _render(state: Path, template: Path, output: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(LAUNCHER), "render-config", "--template",
+         str(template), "--state", str(state), "--output", str(output)],
+        capture_output=True, text=True, check=False)
+
+
+def test_render_config_no_clobber_file_symlink_and_race(tmp_path,
+                                                        monkeypatch) -> None:
+    state = _prepare(tmp_path / "s1", monkeypatch)
+    template = tmp_path / "s1" / "run.toml.template"
+    template.write_text('x = @PREPARED_PW_CMD@\n')
+    output = tmp_path / "s1" / "out.toml"
+
+    # an existing regular file is refused and left byte-identical
+    output.write_text("user content\n")
+    result = _render(state, template, output)
+    assert result.returncode == 2
+    assert output.read_text() == "user content\n"
+
+    # an existing symlink is refused too — never dereferenced, target safe
+    link = tmp_path / "s1" / "link.toml"
+    link_target = tmp_path / "s1" / "link-target.toml"
+    link_target.write_text("link target content\n")
+    link.symlink_to(link_target)
+    result = _render(state, template, link)
+    assert result.returncode == 2
+    assert link.is_symlink() and link.readlink() == link_target
+    assert link_target.read_text() == "link target content\n"
+
+    # two concurrent renders to one fresh target: exactly one creator,
+    # the loser deletes nothing of the winner's
+    state2 = _prepare(tmp_path / "s2", monkeypatch)
+    raced = tmp_path / "s1" / "raced.toml"
+    env = dict(os.environ)
+    argv = [sys.executable, str(LAUNCHER), "render-config", "--template",
+            str(template), "--output", str(raced)]
+    first = subprocess.Popen(argv + ["--state", str(state)], env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True)
+    second = subprocess.Popen(argv + ["--state", str(state2)], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True)
+    rc = sorted(p.wait() for p in (first, second))
+    assert rc == [0, 2], [p.communicate() for p in (first, second)]
+    winner_hash = (_digest(state) if first.wait() == 0 else _digest(state2))
+    assert winner_hash in raced.read_text()
+    # a successful render parses as TOML and binds the prepared argv
+    import tomllib
+    parsed = tomllib.loads(raced.read_text())
+    assert parsed["x"][-1] == "--"
+    assert template.read_text() == 'x = @PREPARED_PW_CMD@\n'  # template intact
+
+
+def test_invalid_toml_never_publishes(tmp_path, monkeypatch) -> None:
+    state = _prepare(tmp_path, monkeypatch)
+    broken = tmp_path / "state" / "broken.toml.template"
+    broken.write_text('[unclosed\npw_cmd = @PREPARED_PW_CMD@\n')
+    output = tmp_path / "state" / "broken.out.toml"
+    result = _render(state, broken, output)
+    assert result.returncode == 2
+    assert "not valid TOML" in result.stderr
+    assert not output.exists()
+    # a template with no (or two) placeholders is refused as well
+    plain = tmp_path / "state" / "plain.toml.template"
+    plain.write_text("[run]\nid = 'x'\n")
+    result = _render(state, plain, output)
+    assert result.returncode == 2
+    assert not output.exists()
+
+
+def _external_project(tmp_path: Path, work: Path) -> Path:
+    """Move template+structure+pseudos into a separate space-carrying
+    project dir and point RUN_CONFIG_TEMPLATE at it (the reviewer's
+    scenario)."""
+    import shutil
+    project = tmp_path / "separate scientific project"
+    project.mkdir()
+    for name in ("run.toml.template", "structure.extxyz", "pseudos"):
+        shutil.move(str(work / name), str(project / name))
+    return project
+
+
+def test_alternate_template_dir_end_to_end(tmp_path) -> None:
+    work = _fake_submit_dir(tmp_path)
+    project = _external_project(tmp_path, work)
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    import shutil
+    script = spool / "slurm_script"
+    shutil.copy(SBATCH_TEMPLATE, script)
+    record = tmp_path / "record"
+    env = _slurm_env(tmp_path, work, record)
+    env["RUN_CONFIG_TEMPLATE"] = str(project / "run.toml.template")
+    template_text = (project / "run.toml.template").read_text()
+    result = subprocess.run(["bash", str(script)], cwd=spool, env=env,
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr[-2000:]
+    # the prepared state drove the real engine path with -in args inside
+    # the ACTUAL project (relative semantics of the template's own dir)
+    lines = record.read_text().splitlines()
+    assert len(lines) == 3
+    for line in lines:
+        assert line.startswith("argv: <-in> <")
+        assert str(project) in line
+        assert line.endswith("pw.in>")
+    # results land in the actual template's project, not the example dir
+    assert (project / "runs" / "demo" / "events.jsonl").is_file()
+    assert not (work / "runs").exists()
+    # the actual template and the user's files are unchanged
+    assert (project / "run.toml.template").read_text() == template_text
+    assert not list(project.glob("run.job-*.toml"))
+    assert [p.name for p in (tmp_path / "slurmtmp").iterdir()] == []
+
+
+def test_alternate_template_failure_keeps_records(tmp_path) -> None:
+    work = _fake_submit_dir(tmp_path)
+    project = _external_project(tmp_path, work)
+    decoy = project / "run.job-someone-elses.toml"
+    decoy.write_text("pre-existing user config\n")
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    import shutil
+    script = spool / "slurm_script"
+    shutil.copy(SBATCH_TEMPLATE, script)
+    env = _slurm_env(tmp_path, work, tmp_path / "record")
+    env["RUN_CONFIG_TEMPLATE"] = str(project / "run.toml.template")
+    env["PW_EXIT"] = "3"
+    result = subprocess.run(["bash", str(script)], cwd=spool, env=env,
+                            capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    # this run's temp config and state are cleaned; the failure record
+    # and every pre-existing user file survive byte-identically
+    assert not list(project.glob("run.job-fake-alloc-7-*.toml"))
+    assert [p.name for p in (tmp_path / "slurmtmp").iterdir()] == []
+    assert (project / "runs" / "demo").is_dir()
+    assert decoy.read_text() == "pre-existing user config\n"
+    assert (project / "pseudos" / "Si.UPF").is_file()
+    assert "@PREPARED_PW_CMD@" in (project / "run.toml.template").read_text()

@@ -29,6 +29,20 @@
 
 ### Fixed
 
+- The `prepared_qe_launcher` Slurm chain can no longer delete user files:
+  the generated run config gets a unique per-execution name (job id plus
+  a random component), cleanup ownership is registered ONLY after this
+  run's render succeeded, and cleanup preserves the original exit code —
+  a failed setup or render deletes nothing (previously a pre-existing
+  same-named config was removed on failure).  `render-config` now
+  syntax-checks the rendered TOML with the standard library before
+  publishing and publishes atomically without clobbering
+  (`os.link` of a same-directory temp — existing files AND symlinks are
+  refused, never overwritten or dereferenced).  When
+  `RUN_CONFIG_TEMPLATE` points at another project directory, the
+  generated config lands in the actual template's own directory, so
+  structure/pseudo/run-directory relative paths resolve like the
+  template's instead of the example directory's.
 - The direct `EnergeticRunner` Python API now restores the previous
   SIGINT handler on `close()`: a finished or resumed runner no longer
   leaves its stop-flag handler installed process-wide, so later code in

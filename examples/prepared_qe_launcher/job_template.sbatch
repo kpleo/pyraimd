@@ -18,19 +18,35 @@ EXAMPLE_DIR="${PYRAMID_EXAMPLE_DIR:-${SLURM_SUBMIT_DIR:?submit from the example 
 LAUNCHER="$EXAMPLE_DIR/launcher.py"
 CONFIG_TEMPLATE="${RUN_CONFIG_TEMPLATE:-$EXAMPLE_DIR/run.toml.template}"
 
-# A unique job-private parent for the state; the generated job config
-# lives NEXT TO the user's template so its relative paths (structure,
-# pseudos, run.directory) resolve exactly like the template's.
+# The generated config follows the ACTUAL template's directory — with
+# RUN_CONFIG_TEMPLATE pointing at another project, the job config lands
+# next to THAT template, so its relative paths (structure.file,
+# pseudo_dir, run.directory) resolve exactly like the template's.  Never
+# the spool dir, never assumed next to the launcher.
+TEMPLATE_DIR="$(cd "$(dirname "$CONFIG_TEMPLATE")" && pwd)"
+CONFIG_TEMPLATE="$TEMPLATE_DIR/$(basename "$CONFIG_TEMPLATE")"
+
+# A unique job-private parent for the state; the run config name is
+# unique PER EXECUTION (job id AND a random component — never a
+# predictable name another file could collide with).
 JOB_WORK="$(mktemp -d "${SLURM_TMPDIR:-/tmp}/prepared-qe-${SLURM_JOB_ID}.XXXXXX")"
 STATE="$JOB_WORK/state"
-RUN_CONFIG="$EXAMPLE_DIR/run.job-${SLURM_JOB_ID}.toml"
+RUN_CONFIG="$TEMPLATE_DIR/run.job-${SLURM_JOB_ID}-${RANDOM}${RANDOM}.toml"
 
+# Cleanup ownership starts EMPTY and is registered ONLY after this run's
+# render succeeded and the new file's creation is confirmed — a failed
+# setup/render deletes nothing, and a pre-existing user file is never
+# touched.  The original exit code is preserved (compute failures are
+# never masked), and only registered self-created paths are removed:
+# run results, failure records, pseudos and user configs stay.
+OWNED_RUN_CONFIG=""
 cleanup() {
-    # ONLY what this job created: the job-private state parent and the
-    # generated config.  Run results, pseudos, caches and every
-    # pre-existing user file/directory stay untouched.
+    rc=$?
     rm -rf "$JOB_WORK"
-    if [ -f "$RUN_CONFIG" ]; then rm -f "$RUN_CONFIG"; fi
+    if [ -n "$OWNED_RUN_CONFIG" ] && [ -e "$OWNED_RUN_CONFIG" ]; then
+        rm -f -- "$OWNED_RUN_CONFIG"
+    fi
+    exit "$rc"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -41,11 +57,15 @@ python3 "$LAUNCHER" prepare \
     --setup "$EXAMPLE_DIR/setup.sh" --state "$STATE" \
     --mpi mpirun --pw pw.x --ranks "$SLURM_NTASKS"
 
-# 2. render the job-specific config with THIS job's state argv/hash
-#    (the user's template keeps its single @PREPARED_PW_CMD@ placeholder
-#    and is never modified)
+# 2. render the job-specific config with THIS job's state argv/hash —
+#    the render's atomic no-clobber publish refuses to touch any
+#    existing file; the user's template is never modified
 python3 "$LAUNCHER" render-config \
     --template "$CONFIG_TEMPLATE" --state "$STATE" --output "$RUN_CONFIG"
+# the render succeeded: THIS run created that file, so this run owns it
+if [ -f "$RUN_CONFIG" ]; then
+    OWNED_RUN_CONFIG="$RUN_CONFIG"
+fi
 
 # 3. validate with the project's own loader, then run (resume keeps
 #    working inside THIS allocation; a resubmission is a new allocation

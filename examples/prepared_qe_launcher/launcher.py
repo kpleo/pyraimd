@@ -52,6 +52,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 SCHEMA_VERSION = 2
@@ -364,12 +365,45 @@ def cmd_render_config(args: argparse.Namespace) -> int:
     toml_array = "[" + ", ".join(json.dumps(element) for element in pw_cmd) \
         + "]"
     rendered = text.replace(PW_CMD_PLACEHOLDER, toml_array)
-    if output.exists():
-        print(f"error: output config exists: {output}; a job-specific "
-              "config is never overwritten — remove it or choose a new "
-              "name", file=sys.stderr)
+    # syntax-check the rendered text BEFORE anything is published: an
+    # invalid render never becomes a runnable target (the full Pyramid
+    # schema still goes through the template's own validate step)
+    try:
+        tomllib.loads(rendered)
+    except tomllib.TOMLDecodeError as error:
+        print(f"error: the rendered configuration is not valid TOML: "
+              f"{error}; nothing was written", file=sys.stderr)
         return USAGE
-    _write_0600_atomic(output, rendered)
+    if not output.parent.is_dir():
+        print(f"error: the output directory does not exist: "
+              f"{output.parent}; place the generated config in an "
+              "existing directory (next to the template)",
+              file=sys.stderr)
+        return USAGE
+    # atomic no-clobber publish: full content to a same-directory temp,
+    # then os.link — an existing file OR symlink at the target is
+    # refused, and two concurrent renders leave exactly one creator
+    fd, tmp_name = tempfile.mkstemp(dir=output.parent,
+                                    prefix=output.name + ".",
+                                    suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(rendered)
+        try:
+            os.link(tmp, output)
+        except FileExistsError:
+            print(f"error: output config exists: {output}; a "
+                  "job-specific config is never overwritten or "
+                  "dereferenced — remove it or choose a new name",
+                  file=sys.stderr)
+            return USAGE
+        except OSError as error:
+            print(f"error: cannot publish {output}: {error}",
+                  file=sys.stderr)
+            return FAILURE
+    finally:
+        tmp.unlink(missing_ok=True)
     print(f"wrote {output} (pw_cmd bound to state "
           f"{Path(args.state).resolve()})")
     return 0

@@ -73,19 +73,29 @@ cd /path/to/prepared_qe_launcher && sbatch job_template.sbatch
    expected hash).
 
 2. **Configure**: the job script renders your `run.toml.template` into a
-   job-specific `run.job-$SLURM_JOB_ID.toml` NEXT TO the template — the
-   placeholder `@PREPARED_PW_CMD@` becomes this job's prepared pw_cmd
-   argv with every element properly TOML-quoted, so the rendered config's
+   job-specific config NEXT TO THE ACTUAL template — when
+   `RUN_CONFIG_TEMPLATE` points at another project directory, the
+   generated config lands in that template's own directory, so its
    relative paths (structure, pseudos, `run.directory`) resolve exactly
-   like the template's. The template itself is never modified, an
-   existing output is refused, and the rendered config is validated with
-   the project's own loader (`pyramid validate`) before any compute.
+   like the template's. The file name is unique per execution (job id
+   plus a random component); the placeholder `@PREPARED_PW_CMD@` becomes
+   this job's prepared pw_cmd argv with every element properly
+   TOML-quoted; the rendered text is syntax-checked as TOML before it is
+   published atomically WITHOUT clobbering (an existing file or symlink
+   at the target is refused, never overwritten or dereferenced). The
+   template itself is never modified, and the rendered config is
+   validated with the project's own loader (`pyramid validate`) before
+   any compute.
 
 3. **Run and finish**: the job script runs `pyramid run` on the rendered
    config — no manual hash pasting after the job starts. On success or
-   failure (EXIT/INT/TERM), cleanup removes ONLY what the job created
-   (the job-private state parent and the rendered config); run results,
-   pseudos, caches and pre-existing user files stay untouched. You only
+   failure (EXIT/INT/TERM), cleanup preserves the original exit code and
+   removes ONLY what this run created and confirmed: the job-private
+   state parent and this run's own rendered config (ownership is
+   registered only after a successful render — a failed setup or render
+   deletes nothing, and no pre-existing file is ever touched). Run
+   results, failure records, pseudos, caches and pre-existing user files
+   stay untouched. You only
    supply your own structure, QE parameters and setup before submission.
 
 ## What `run` rebuilds (the environment boundary)
