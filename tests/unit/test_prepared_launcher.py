@@ -72,7 +72,6 @@ def _prepare(tmp_path: Path, monkeypatch, *, extra: str = "") -> Path:
     setup = _setup_script(tmp_path, bin_dir, extra=extra)
     monkeypatch.setenv("SLURM_JOB_ID", JOB_ID)
     monkeypatch.setenv("LD_LIBRARY_PATH", "/original/lib")
-    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
     launcher = _load_launcher()
     state = tmp_path / "state"
     code = launcher.main(["prepare", "--setup", str(setup),
@@ -213,7 +212,7 @@ def test_prepare_refusals(tmp_path, monkeypatch, capsys) -> None:
                           str(state), "--mpi", "mpirun", "--pw", "pw.x",
                           "--ranks", "1"])
     assert code == 2                              # never overwrites a state
-    assert "never overwritten" in capsys.readouterr().err
+    assert "already exists" in capsys.readouterr().err
 
     # a credential-class variable added by the setup aborts by NAME ONLY
     secret_setup = _setup_script(tmp_path, bin_dir,
@@ -273,3 +272,284 @@ def test_qe_engine_through_prepared_launcher(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("PW_RECORD", str(tmp_path / "bad-record"))
     with pytest.raises(EngineError, match="exited with code 3"):
         engine.compute(si, label="boom")
+
+
+# --- F1/F2/F3: reviewer usage fixes -------------------------------------------
+
+
+def test_unallowed_setup_change_refused_and_allow_var_works(
+        tmp_path, monkeypatch) -> None:
+    launcher = _load_launcher()
+    bin_dir = _fake_bin(tmp_path)
+    setup = _setup_script(tmp_path, bin_dir,
+                          extra="export OMPI_MCA_btl=self,tcp\n")
+    monkeypatch.setenv("SLURM_JOB_ID", JOB_ID)
+    # an unallowed real change fails BEFORE any state is written,
+    # reported by NAME with the --allow-var remedy
+    state = tmp_path / "state"
+    code = launcher.main(["prepare", "--setup", str(setup), "--state",
+                          str(state), "--mpi", "mpirun", "--pw", "pw.x",
+                          "--ranks", "1"])
+    assert code == 2
+    assert not state.exists()
+    # explicitly allowed: the variable is recorded and reaches the child
+    code = launcher.main(["prepare", "--setup", str(setup), "--state",
+                          str(state), "--mpi", "mpirun", "--pw", "pw.x",
+                          "--ranks", "1", "--allow-var", "OMPI_MCA_btl"])
+    assert code == 0
+    record = tmp_path / "record"
+    result = _run(state, _digest(state), "-in", "pw.in",
+                  env_extra={"PW_RECORD": str(record)})
+    assert result.returncode == 0, result.stderr
+    child_env = Path(str(record) + ".env").read_text()
+    assert "OMPI_MCA_btl=self,tcp" in child_env
+
+    # an explicitly allowed REMOVAL is honored too: the parent exports it,
+    # the setup unsets it, the child must not see it
+    monkeypatch.setenv("CUSTOM_PRUNE", "present")
+    prune_setup = _setup_script(tmp_path, bin_dir, extra="unset CUSTOM_PRUNE\n")
+    prune_state = tmp_path / "prune-state"
+    code = launcher.main(["prepare", "--setup", str(prune_setup),
+                          "--state", str(prune_state), "--mpi", "mpirun",
+                          "--pw", "pw.x", "--ranks", "1",
+                          "--allow-var", "CUSTOM_PRUNE"])
+    assert code == 0
+    record2 = tmp_path / "record2"
+    result = _run(prune_state, _digest(prune_state), "-in", "pw.in",
+                  env_extra={"PW_RECORD": str(record2),
+                             "CUSTOM_PRUNE": "still-present-at-run"})
+    assert result.returncode == 0, result.stderr
+    assert "CUSTOM_PRUNE" not in Path(str(record2) + ".env").read_text()
+
+    # credential-class names fail even via --allow-var
+    code = launcher.main(["prepare", "--setup", str(setup), "--state",
+                          str(tmp_path / "cred"), "--mpi", "mpirun",
+                          "--pw", "pw.x", "--ranks", "1",
+                          "--allow-var", "MY_SECRET_VAR"])
+    assert code == 2
+    assert not (tmp_path / "cred").exists()
+
+
+def test_unallowed_change_reports_names_not_values(tmp_path, monkeypatch,
+                                                   capsys) -> None:
+    launcher = _load_launcher()
+    bin_dir = _fake_bin(tmp_path)
+    setup = _setup_script(tmp_path, bin_dir,
+                          extra="export OMPI_MCA_btl=self,tcp\n")
+    monkeypatch.setenv("SLURM_JOB_ID", JOB_ID)
+    code = launcher.main(["prepare", "--setup", str(setup), "--state",
+                          str(tmp_path / "state"), "--mpi", "mpirun",
+                          "--pw", "pw.x", "--ranks", "1"])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "OMPI_MCA_btl" in err
+    assert "self,tcp" not in err              # names only, never values
+    assert "--allow-var" in err
+
+
+def test_prepared_managed_set_wins_over_changed_run_env(tmp_path,
+                                                        monkeypatch) -> None:
+    # prepare with OMP_NUM_THREADS=1 present and UNTOUCHED by the setup;
+    # run later with 6: the child gets the PREPARED value under the same
+    # hash (verified in the actual child environment, not just fields)
+    launcher = _load_launcher()
+    bin_dir = _fake_bin(tmp_path)
+    tmp_path.mkdir(exist_ok=True)
+    setup = tmp_path / "setup.sh"
+    setup.write_text(f'export PATH="{bin_dir}:$PATH"\n')  # no OMP change
+    monkeypatch.setenv("SLURM_JOB_ID", JOB_ID)
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    state = tmp_path / "state"
+    assert launcher.main(["prepare", "--setup", str(setup), "--state",
+                          str(state), "--mpi", "mpirun", "--pw", "pw.x",
+                          "--ranks", "1"]) == 0
+    digest = _digest(state)
+    record = tmp_path / "record"
+    result = _run(state, digest, "-in", "pw.in",
+                  env_extra={"PW_RECORD": str(record),
+                             "OMP_NUM_THREADS": "6",
+                             "MKL_VERBOSE": "1"})
+    assert result.returncode == 0, result.stderr
+    child_env = Path(str(record) + ".env").read_text()
+    assert "OMP_NUM_THREADS=1" in child_env
+    assert "OMP_NUM_THREADS=6" not in child_env
+    # a managed variable NOT present at prepare is unset even when set now
+    assert "MKL_VERBOSE" not in child_env
+    # unmanaged variables keep inheriting
+    assert "PW_RECORD=" in child_env
+
+
+def test_racing_and_preexisting_state_dirs(tmp_path, monkeypatch) -> None:
+    # a pre-existing state dir is refused and its contents stay untouched
+    launcher = _load_launcher()
+    bin_dir = _fake_bin(tmp_path)
+    setup = _setup_script(tmp_path, bin_dir)
+    monkeypatch.setenv("SLURM_JOB_ID", JOB_ID)
+    preexisting = tmp_path / "taken"
+    preexisting.mkdir()
+    (preexisting / "user.txt").write_text("keep me\n")
+    code = launcher.main(["prepare", "--setup", str(setup), "--state",
+                          str(preexisting), "--mpi", "mpirun", "--pw",
+                          "pw.x", "--ranks", "1"])
+    assert code == 2
+    assert (preexisting / "user.txt").read_text() == "keep me\n"
+
+    # two racing prepares: exactly one succeeds, the loser is refused and
+    # the winner's state is complete
+    raced = tmp_path / "raced"
+    env = dict(os.environ)
+    argv = [sys.executable, str(LAUNCHER), "prepare", "--setup",
+            str(setup), "--state", str(raced), "--mpi", "mpirun", "--pw",
+            "pw.x", "--ranks", "1"]
+    first = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    second = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, text=True)
+    rc = sorted(p.wait() for p in (first, second))
+    assert rc == [0, 2], [p.communicate() for p in (first, second)]
+    assert (raced / "state.json").is_file()
+    assert (raced / "pw_cmd.json").is_file()
+    # and the winning state actually launches
+    record = tmp_path / "race-record"
+    result = _run(raced, _digest(raced), "-in", "pw.in",
+                  env_extra={"PW_RECORD": str(record)})
+    assert result.returncode == 0, result.stderr
+
+
+# --- the complete spooled-template fake end-to-end ------------------------------
+
+SBATCH_TEMPLATE = (LAUNCHER.parent / "job_template.sbatch")
+
+
+def _fake_submit_dir(tmp_path: Path) -> Path:
+    """The example as a submit/work dir (with spaces), fake QE stubs, and
+    a run.toml.template whose rendered run goes through the REAL pyramid
+    parse/run path with the fake pw.x."""
+    work = tmp_path / "submit dir"
+    work.mkdir()
+    import shutil
+    shutil.copy(LAUNCHER, work / "launcher.py")
+    bin_dir = work / "bin"
+    bin_dir.mkdir()
+    _write_stub(bin_dir / "mpirun", 'exec "${@:3}"\n')
+    _write_stub(bin_dir / "pw.x",
+                'printf "argv:" >> "$PW_RECORD"; for a in "$@"; do '
+                'printf " <%s>" "$a" >> "$PW_RECORD"; done; '
+                'printf "\\n" >> "$PW_RECORD"\n'
+                'env | sort > "$PW_RECORD.env"\n'
+                f"cat {QE_FIXTURE.resolve()}\n"
+                'exit "${PW_EXIT:-0}"\n')
+    (work / "setup.sh").write_text(
+        f'export PATH="{bin_dir}:$PATH"\n'
+        'export OMP_NUM_THREADS=3\n'
+        'unset LD_LIBRARY_PATH\n')
+    (work / "structure.extxyz").write_text(
+        '2\n'
+        'Lattice="0.0 2.715 2.715 2.715 0.0 2.715 2.715 2.715 0.0" '
+        'Properties=species:S:1:pos:R:3:momenta:R:3 pbc="T T T"\n'
+        'Si 0.0 0.0 0.0 -0.28591950 0.42887925 -0.57183900\n'
+        'Si 1.3575 1.3575 1.3575 0.28591950 -0.42887925 0.57183900\n')
+    (work / "pseudos").mkdir()
+    (work / "pseudos" / "Si.UPF").write_text("dummy pseudo for existence checks\n")
+    (work / "run.toml.template").write_text(
+        'schema_version = 1\n'
+        '[run]\n'
+        'id = "fake-prepared-demo"\n'
+        'directory = "runs/demo"\n'
+        '[task]\n'
+        'kind = "md"\n'
+        'mode = "reference"\n'
+        '[structure]\n'
+        'file = "structure.extxyz"\n'
+        '[dynamics]\n'
+        'ensemble = "nve"\n'
+        'integrator = "verlet"\n'
+        'timestep_fs = 1.0\n'
+        'steps = 2\n'
+        '[checkpoint]\n'
+        'interval_steps = 2\n'
+        '[reference]\n'
+        'backend = "qe"\n'
+        'pseudo_dir = "pseudos"\n'
+        'xc = "pbe"\n'
+        'pseudos = { Si = "Si.UPF" }\n'
+        'pw_cmd = @PREPARED_PW_CMD@\n')
+    return work
+
+
+def _slurm_env(tmp_path: Path, work: Path, record: Path) -> dict:
+    venv_bin = str(Path(sys.executable).parent)
+    slurm_tmp = tmp_path / "slurmtmp"
+    slurm_tmp.mkdir(exist_ok=True)
+    env = dict(os.environ)
+    env.update({
+        "PATH": venv_bin + os.pathsep + env.get("PATH", ""),
+        "SLURM_JOB_ID": "fake-alloc-7",
+        "SLURM_SUBMIT_DIR": str(work),
+        "SLURM_NTASKS": "2",
+        "SLURM_TMPDIR": str(slurm_tmp),
+        "PW_RECORD": str(record),
+    })
+    env.pop("PYRAMID_EXAMPLE_DIR", None)
+    return env
+
+
+def test_spooled_template_end_to_end(tmp_path) -> None:
+    work = _fake_submit_dir(tmp_path)
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    import shutil
+    script = spool / "slurm_script"
+    shutil.copy(SBATCH_TEMPLATE, script)   # Slurm's spool copy, no launcher
+    record = tmp_path / "record"
+    template_text = (work / "run.toml.template").read_text()
+    result = subprocess.run(["bash", str(script)], cwd=spool,
+                            env=_slurm_env(tmp_path, work, record),
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr[-2000:]
+    # no manual hash pasting: the prepared state was actually used, with
+    # QE's -in appended through the real engine path
+    lines = record.read_text().splitlines()
+    assert len(lines) == 3                       # initial + 2 MD steps
+    for line in lines:
+        assert line.startswith("argv: <-in> <")
+        assert str(work) in line
+        assert line.endswith("pw.in>")
+    child_env = Path(str(record) + ".env").read_text()
+    assert "OMP_NUM_THREADS=3" in child_env      # the prepared value won
+    assert "LD_LIBRARY_PATH" not in child_env    # the setup's removal held
+    # relative paths preserved: structure/pseudos/run.directory resolved
+    # next to the template, and the run results are KEPT
+    assert (work / "runs" / "demo" / "events.jsonl").is_file()
+    assert (work / "runs" / "demo" / "trajectory.db").is_file()
+    # the user's template and the spool copy are unmodified
+    assert (work / "run.toml.template").read_text() == template_text
+    assert "@PREPARED_PW_CMD@" in (work / "run.toml.template").read_text()
+    assert script.read_text() == SBATCH_TEMPLATE.read_text()
+    # temp artifacts cleaned: no rendered config, no job-private state
+    assert not (work / "run.job-fake-alloc-7.toml").exists()
+    assert [p.name for p in (tmp_path / "slurmtmp").iterdir()] == []
+    # the launcher was found via SLURM_SUBMIT_DIR, not the spool copy
+    assert not (spool / "launcher.py").exists()
+
+
+def test_template_failure_cleans_only_own_artifacts(tmp_path) -> None:
+    work = _fake_submit_dir(tmp_path)
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    import shutil
+    script = spool / "slurm_script"
+    shutil.copy(SBATCH_TEMPLATE, script)
+    record = tmp_path / "record"
+    env = _slurm_env(tmp_path, work, record)
+    env["PW_EXIT"] = "3"                        # every QE call fails
+    result = subprocess.run(["bash", str(script)], cwd=spool, env=env,
+                            capture_output=True, text=True, check=False)
+    assert result.returncode != 0
+    # own temp config and state are gone; the failed run's data and every
+    # pre-existing file stay untouched
+    assert not (work / "run.job-fake-alloc-7.toml").exists()
+    assert [p.name for p in (tmp_path / "slurmtmp").iterdir()] == []
+    assert (work / "runs" / "demo").is_dir()     # the failure record stays
+    assert (work / "pseudos" / "Si.UPF").is_file()
+    assert (work / "run.toml.template").is_file()

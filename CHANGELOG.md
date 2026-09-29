@@ -7,17 +7,25 @@
 - `examples/prepared_qe_launcher/` (source tree only; not part of the
   wheel/sdist): an OPTIONAL, stdlib-only launcher that prepares the QE
   environment ONCE per Slurm allocation and reuses it per call for
-  many-QE-call jobs.  `launcher.py prepare` sources the user's trusted
-  setup script in a separate subprocess (never modifying the parent
-  environment), resolves `mpirun`/`pw.x` in the prepared environment,
-  records an allowlisted environment delta (removals honored; added or
-  changed credential-class variables abort by name only) into a
-  job-private 0700 state directory bound to the `SLURM_JOB_ID` and a
-  content hash; `launcher.py run` verifies job id and hash before
-  spawning and then execs the prepared argv with the extra argv (QE's
-  `-in`) appended — no shell, no supervisor process.  No default
-  behavior changes; Pyramid's engine cache, identity and resume checks
-  are untouched.  Tested with fake mpirun/pw.x stubs only.
+  many-QE-call jobs under a per-call re-setup wrapper.  `launcher.py
+  prepare` sources the user's trusted setup script in a separate
+  subprocess (never modifying the parent environment), refuses any real
+  setup change outside the managed variable set (reported by name, with
+  the `--allow-var` remedy; credential-class names are refused even
+  there), and records the COMPLETE managed runtime set plus the allow
+  policy into an exclusively created 0700 state directory bound to the
+  `SLURM_JOB_ID` and a content hash; `launcher.py run` verifies job id
+  and hash before spawning, rebuilds exactly the managed set (unmanaged
+  variables keep inheriting), and execs the prepared argv with QE's
+  `-in` appended — no shell, no supervisor process.  The Slurm template
+  forms a working prepare -> configure -> run chain: submit-directory or
+  `PYRAMID_EXAMPLE_DIR` resource location (never the spool copy), a
+  `run.toml.template` placeholder rendered into a job-specific config
+  next to the template (relative paths preserved, template unmodified),
+  real `pyramid validate`/`run`, and cleanup of only job-created
+  artifacts.  No default behavior changes; Pyramid's engine cache,
+  identity and resume checks are untouched.  Tested with fake
+  mpirun/pw.x stubs only.
 
 ### Fixed
 

@@ -96,6 +96,16 @@ least the candidate's physical-time span, sampled so every complete
 candidate boundary has an exact reference time point — the reference may
 be denser, never coarser than the candidate's boundaries.
 
+On clusters, `examples/prepared_qe_launcher/` (source tree only, not in
+the wheel/sdist) is an OPTIONAL Slurm helper for allocations making many
+QE calls under a per-call re-setup wrapper: it prepares the environment
+once per allocation and reuses it per call through `reference.pw_cmd`.
+The plain default `pw_cmd = ["pw.x"]` has no per-call setup cost. The
+prepared state is valid only inside its own allocation — resume in the
+same job works as usual; a resubmission must re-prepare, and the changed
+command identity then goes through the same checkpoint/cache
+compatibility checks as any configuration change.
+
 Driving `EnergeticRunner` directly from Python instead of the CLI: always
 finish with `runner.close()` — it releases the event-log writer lock and,
 when the runner was asked to handle SIGINT, restores the previous SIGINT

@@ -1,0 +1,38 @@
+# Prepared-launcher run config TEMPLATE (schema_version 1) — EDIT ME.
+# The job script renders the ONE placeholder @PREPARED_PW_CMD@ (exactly
+# once, below) into this job's prepared pw_cmd argv and runs the rendered
+# copy — this template itself is never modified.  Everything else is
+# yours to fill in before submission: structure, pseudopotentials, QE
+# recipe, steps.  NOT a verified materials recipe.
+schema_version = 1
+
+[run]
+id = "prepared-qe-demo"
+directory = "runs/prepared-qe-demo"   # resolves relative to this file
+
+[task]
+kind = "md"
+mode = "reference"                    # plain reference-driven NVE
+
+[structure]
+file = "structure.extxyz"             # YOUR structure (place it next to this file)
+
+[dynamics]
+ensemble = "nve"
+integrator = "verlet"
+timestep_fs = 1.0                     # illustrative
+steps = 8                             # illustrative
+
+[checkpoint]
+interval_steps = 4
+
+[reference]
+backend = "qe"
+pseudo_dir = "pseudos"                # resolved relative to this file
+xc = "pbe"
+ecutwfc = 40.0
+ecutrho = 320.0
+kpts = [2, 2, 2]
+conv_thr = 1e-8
+pseudos = { Si = "Si.UPF" }           # YOUR pseudopotential file name(s)
+pw_cmd = @PREPARED_PW_CMD@            # rendered by the job script — keep exactly this line
