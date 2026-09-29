@@ -723,3 +723,53 @@ def test_alternate_template_failure_keeps_records(tmp_path) -> None:
     assert decoy.read_text() == "pre-existing user config\n"
     assert (project / "pseudos" / "Si.UPF").is_file()
     assert "@PREPARED_PW_CMD@" in (project / "run.toml.template").read_text()
+
+
+def test_relative_template_anchors_at_submit_dir_across_depths(
+        tmp_path) -> None:
+    """The reviewer scenario: submit dir `root/submit dir`, template value
+    `../separate scientific project/run.toml.template`, run cwd a spool
+    tree at a DIFFERENT depth — the relative template resolves against
+    SLURM_SUBMIT_DIR, never the process cwd."""
+    root = tmp_path / "root"
+    root.mkdir()
+    work = _fake_submit_dir(root)               # -> root/"submit dir"
+    project = _external_project(root, work)
+    spool = root / "spool" / "job123"          # different, deeper tree
+    spool.mkdir(parents=True)
+    import shutil
+    script = spool / "slurm_script"
+    shutil.copy(SBATCH_TEMPLATE, script)
+    record = root / "record"
+    env = _slurm_env(root, work, record)
+    env["SLURM_SUBMIT_DIR"] = str(work)
+    env["RUN_CONFIG_TEMPLATE"] = ("../separate scientific project"
+                                  "/run.toml.template")
+    template_text = (project / "run.toml.template").read_text()
+    result = subprocess.run(["bash", str(script)], cwd=spool, env=env,
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr[-2000:]
+    lines = record.read_text().splitlines()
+    assert len(lines) == 3
+    for line in lines:
+        assert line.startswith("argv: <-in> <")
+        assert str(project) in line
+        assert line.endswith("pw.in>")
+    # results land under the template's own project; temp state and this
+    # run's config are cleaned; every user file is untouched
+    assert (project / "runs" / "demo" / "events.jsonl").is_file()
+    assert not list(project.glob("run.job-*.toml"))
+    assert [p.name for p in (root / "slurmtmp").iterdir()] == []
+    assert (project / "run.toml.template").read_text() == template_text
+    assert (project / "pseudos" / "Si.UPF").is_file()
+
+    # a relative template with NO submit directory errors clearly instead
+    # of silently depending on cwd
+    env = {key: value for key, value in env.items()
+           if key != "SLURM_SUBMIT_DIR"}
+    env["PYRAMID_EXAMPLE_DIR"] = str(work)     # resources still found
+    result = subprocess.run(["bash", str(script)], cwd=spool, env=env,
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 2
+    assert "RUN_CONFIG_TEMPLATE" in result.stderr
+    assert "SLURM_SUBMIT_DIR" in result.stderr

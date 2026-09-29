@@ -77,7 +77,11 @@ cd /path/to/prepared_qe_launcher && sbatch job_template.sbatch
    `RUN_CONFIG_TEMPLATE` points at another project directory, the
    generated config lands in that template's own directory, so its
    relative paths (structure, pseudos, `run.directory`) resolve exactly
-   like the template's. The file name is unique per execution (job id
+   like the template's. A RELATIVE `RUN_CONFIG_TEMPLATE` resolves
+   against `SLURM_SUBMIT_DIR` (the submit directory), never the job's
+   working directory; a relative template with no submit directory
+   available stops with a clear error naming the convention. The file
+   name is unique per execution (job id
    plus a random component); the placeholder `@PREPARED_PW_CMD@` becomes
    this job's prepared pw_cmd argv with every element properly
    TOML-quoted; the rendered text is syntax-checked as TOML before it is

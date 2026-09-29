@@ -31,6 +31,12 @@
 
 ### Fixed
 
+- The `prepared_qe_launcher` Slurm template now anchors a RELATIVE
+  `RUN_CONFIG_TEMPLATE` at `SLURM_SUBMIT_DIR` (the documented
+  submit-directory convention) instead of the job's working directory;
+  a relative template with no submit directory available stops with a
+  clear error naming the variable and the convention.  Absolute-path
+  behavior is unchanged.
 - The `prepared_qe_launcher` Slurm chain can no longer delete user files:
   the generated run config gets a unique per-execution name (job id plus
   a random component), cleanup ownership is registered ONLY after this

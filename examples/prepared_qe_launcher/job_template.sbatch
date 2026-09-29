@@ -18,6 +18,21 @@ EXAMPLE_DIR="${PYRAMID_EXAMPLE_DIR:-${SLURM_SUBMIT_DIR:?submit from the example 
 LAUNCHER="$EXAMPLE_DIR/launcher.py"
 CONFIG_TEMPLATE="${RUN_CONFIG_TEMPLATE:-$EXAMPLE_DIR/run.toml.template}"
 
+# A RELATIVE RUN_CONFIG_TEMPLATE anchors at SLURM_SUBMIT_DIR (the
+# documented submit-directory convention) — never at this script's
+# spool/working directory.  With no submit directory available the job
+# stops with a clear error instead of silently depending on cwd.
+case "$CONFIG_TEMPLATE" in
+    /*) ;;
+    *)
+        if [ -z "${SLURM_SUBMIT_DIR:-}" ]; then
+            echo "error: RUN_CONFIG_TEMPLATE is relative but SLURM_SUBMIT_DIR is not set; submit from the example/project directory (the SLURM_SUBMIT_DIR convention) or pass an absolute template path" >&2
+            exit 2
+        fi
+        CONFIG_TEMPLATE="$SLURM_SUBMIT_DIR/$CONFIG_TEMPLATE"
+        ;;
+esac
+
 # The generated config follows the ACTUAL template's directory — with
 # RUN_CONFIG_TEMPLATE pointing at another project, the job config lands
 # next to THAT template, so its relative paths (structure.file,
