@@ -1,0 +1,11 @@
+endpoint,time_fs,atom_i_zero_based,atom_j_zero_based,endpoint_length_A,semantics
+A2,0.5,106,107,1.2579078812339815,saved_initial_template_edge
+A2,0.5,107,108,1.3699607498318465,saved_initial_template_edge
+A2,0.5,107,111,1.2412126780795643,saved_initial_template_edge
+A2,0.5,108,109,1.5985390577675573,saved_initial_template_edge
+A2,0.5,109,110,1.5126229634277912,saved_initial_template_edge
+A2,0.5,109,112,1.1137425170627606,saved_initial_template_edge
+A2,0.5,109,113,1.1046552370723426,saved_initial_template_edge
+A2,0.5,110,111,1.480842459071267,saved_initial_template_edge
+A2,0.5,110,114,1.1278761794902286,saved_initial_template_edge
+A2,0.5,110,115,1.1472503083736563,saved_initial_template_edge

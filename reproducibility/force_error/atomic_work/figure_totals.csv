@@ -1,0 +1,3 @@
+endpoint,time_fs,atom_count,net_Q_meV,positive_Q_meV,negative_Q_meV,positive_atom_count,negative_atom_count,zero_atom_count
+B1,1.0,474,52.7638285524305,63.19177360684717,-10.427945054416663,349,125,0
+A2,0.5,474,6.325486804367888,12.27142459296719,-5.945937788599303,306,168,0

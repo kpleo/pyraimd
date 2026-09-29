@@ -1,0 +1,71 @@
+{
+  "baseline": {
+    "Q_eV_A2": 1.851069965440574,
+    "C_A2_eV": 4.738249118615767,
+    "chi_A2_eV": 0.2177345628632835,
+    "n_infty": 21.761584639141258,
+    "g2_eV2_A4": 0.3906653954027107
+  },
+  "baseline_work_eV": {
+    "plus": 0.0014780995109778868,
+    "minus": 0.0014839978700659177
+  },
+  "comparisons": {
+    "cutoff": {
+      "Q_eV_A2": 1.8534996761244305,
+      "C_A2_eV": 4.747284809812796,
+      "chi_A2_eV": 0.21792944351644983,
+      "n_infty": 21.783586160786303,
+      "g2_eV2_A4": 0.390433637411681,
+      "HVP_relative_difference": 0.006407423444490529,
+      "C_relative_difference": 0.0019069683697147996,
+      "screen_passed": true,
+      "anchored_work_eV": {
+        "plus": 0.001479905862524826,
+        "minus": 0.0014861371757456995
+      },
+      "work_relative_difference": {
+        "plus": 0.0012220770885338465,
+        "minus": 0.0014415827158072462
+      },
+      "work_check_passed": true
+    },
+    "kpoints": {
+      "Q_eV_A2": 1.8343251435393972,
+      "C_A2_eV": 4.724309689652951,
+      "chi_A2_eV": 0.21823294492531878,
+      "n_infty": 21.64801327897422,
+      "g2_eV2_A4": 0.38827368738270573,
+      "HVP_relative_difference": 0.010316544187708524,
+      "C_relative_difference": 0.002941894487575687,
+      "screen_passed": true,
+      "anchored_work_eV": {
+        "plus": 0.0014646126714210096,
+        "minus": 0.0014705454474524503
+      },
+      "work_relative_difference": {
+        "plus": 0.009124446261371483,
+        "minus": 0.009064987817583492
+      },
+      "work_check_passed": true
+    },
+    "half_step": {
+      "Q_eV_A2": 1.8514194924663778,
+      "C_A2_eV": 4.737677804789822,
+      "chi_A2_eV": 0.21765944060563006,
+      "n_infty": 21.766470554217147,
+      "g2_eV2_A4": 0.3907862815395722,
+      "HVP_relative_difference": 0.0003531862085793258,
+      "C_relative_difference": 0.00012057488148946619,
+      "check_passed": true,
+      "anchored_work_eV": {
+        "plus": 0.00036986827490938234,
+        "minus": 0.00037058195328353114
+      },
+      "scaled_work_relative_difference": {
+        "plus": 0.0009292937650279133,
+        "minus": 0.0011253769061804124
+      }
+    }
+  }
+}

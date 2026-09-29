@@ -1,0 +1,9 @@
+ref         : E = -8892.246897 Ry, n_forces = 474, max|F| = 7.0603 eV/A
+kmesh2x2x1  : E = -8892.180054 Ry, n_forces = 474, max|F| = 7.0547 eV/A
+fd001       : E = -8892.097018 Ry, n_forces = 474, max|F| = 6.9523 eV/A
+ecut70      : E = -8892.397859 Ry, n_forces = 474, max|F| = 7.0661 eV/A
+
+deltas vs reference 'ref' (Γ, fd 0.02, 60/600), 474 atoms:
+kmesh2x2x1  : |dE|/atom = 1.919 meV/atom, max|dF| = 0.0832 eV/A, RMS|dF| = 0.0151 eV/A
+fd001       : |dE|/atom = 4.302 meV/atom, max|dF| = 0.3890 eV/A, RMS|dF| = 0.0581 eV/A
+ecut70      : |dE|/atom = 4.333 meV/atom, max|dF| = 0.0164 eV/A, RMS|dF| = 0.0032 eV/A

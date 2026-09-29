@@ -1,0 +1,34 @@
+[
+  {
+    "reference": "MACE",
+    "configuration": 1,
+    "segments": 500,
+    "input_sha256": "a3ffba28736706ae31931b19d63386e1347471f09aa6f662275b18b1ecc10179",
+    "driver_sha256": "150288680ef8657504e897c5fd6a0abb1f327076fd6336d3da89fa691f96b98b",
+    "protocol_sha256": "b5dd821da15939ee57ea718d15a88d64c59bf948914ac9f6d947037759c55b23"
+  },
+  {
+    "reference": "MACE",
+    "configuration": 2,
+    "segments": 500,
+    "input_sha256": "2a41ec2ba59636a6bf16f39be1981735d5f5d80ed4d85a36bd59f26277711850",
+    "driver_sha256": "150288680ef8657504e897c5fd6a0abb1f327076fd6336d3da89fa691f96b98b",
+    "protocol_sha256": "b5dd821da15939ee57ea718d15a88d64c59bf948914ac9f6d947037759c55b23"
+  },
+  {
+    "reference": "PBE",
+    "configuration": 1,
+    "segments": 80,
+    "input_sha256": "1aa4eb0a2a612cb43e917bf2aa992d73dea0d1f6b552afebde8e8915c294b65b",
+    "driver_sha256": "150288680ef8657504e897c5fd6a0abb1f327076fd6336d3da89fa691f96b98b",
+    "protocol_sha256": "b5dd821da15939ee57ea718d15a88d64c59bf948914ac9f6d947037759c55b23"
+  },
+  {
+    "reference": "PBE",
+    "configuration": 2,
+    "segments": 80,
+    "input_sha256": "a62ab024d68591e5d76fa733811c80cf0fb449c4a208e9e95e61bb2b4ee1b1c8",
+    "driver_sha256": "150288680ef8657504e897c5fd6a0abb1f327076fd6336d3da89fa691f96b98b",
+    "protocol_sha256": "b5dd821da15939ee57ea718d15a88d64c59bf948914ac9f6d947037759c55b23"
+  }
+]

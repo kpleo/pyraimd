@@ -1,0 +1,120 @@
+{
+  "new_DFT_calls": 0,
+  "new_trajectories": 6,
+  "reused_trajectories": 2,
+  "initial_states": "initial_states.json",
+  "dt_fs": 0.05,
+  "probe_h_A": 0.02,
+  "new_diagnostic_times_fs": [
+    0,
+    32,
+    64
+  ],
+  "baseline_diagnostic_times_fs": [
+    0,
+    35,
+    65
+  ],
+  "reused_baseline_was_previously_known": true,
+  "frozen_driver_sha256": "150288680ef8657504e897c5fd6a0abb1f327076fd6336d3da89fa691f96b98b",
+  "frozen_protocol_sha256": "11b1147e0a3ba2ac3dd236ee62fd54caca0e09f2ed2a93cb673c20ea5a6f98aa",
+  "array_acceptance": {
+    "passed": true,
+    "formal_completion": true,
+    "duration_fs": 80.0,
+    "branches": 8,
+    "segments": 1200,
+    "independent_endpoint_work_and_integration_defect": true,
+    "momentum_velocity_and_curvature": true,
+    "same_initial_states": true,
+    "all_metrics_and_plot_rows": true,
+    "new_DFT_calls": 0,
+    "no_model_calls": true
+  },
+  "branches": [
+    {
+      "configuration": 1,
+      "tau_fs": 0.25,
+      "duration_fs": 80,
+      "new_trajectory": true,
+      "baseline_reused_prefix_fs": null,
+      "independent_array_report_sha256": "347b032d8f47fd7bd135d7b5133c79a42a60bbdbe946c35794990c86d80328b1",
+      "exported_array_sha256": "d671dfe82f0defc2a82102f3bc7dd54d40179a00821cafe87969ee8caa72c2fe",
+      "input_file_sha256": "613d38e733c43d837e8c94ba2096e117fcf6fd069490965f60980b9fd90227a9"
+    },
+    {
+      "configuration": 1,
+      "tau_fs": 0.5,
+      "duration_fs": 80,
+      "new_trajectory": true,
+      "baseline_reused_prefix_fs": null,
+      "independent_array_report_sha256": "3b423937ea25840576b73b82e1b7883e2896e539b82b6f900f3cc32dab87ffba",
+      "exported_array_sha256": "d72cf2eae9f1a18816a2fcc283929381999208bdcd2e2255158deaa5116ec4ef",
+      "input_file_sha256": "279188aa7594cfd2f7b0cf7e5acb44bbbf6d56dea517a0cee79f5112ac6c4807"
+    },
+    {
+      "configuration": 1,
+      "tau_fs": 1.0,
+      "duration_fs": 80,
+      "new_trajectory": false,
+      "baseline_reused_prefix_fs": 80,
+      "independent_array_report_sha256": "07b9bdc808c71586e607945749333bce9d2a7b76ffc47713e505db3033c101af",
+      "exported_array_sha256": "9761f77809be3787a8d0de2e1ccce839901b50e99700270914b74d4f69c61430",
+      "metadata_sha256": "4e7b3acee371649bf83bde64e374158fd4f56e572d02aa164284abe83194d60d",
+      "input_file_sha256": "a3ffba28736706ae31931b19d63386e1347471f09aa6f662275b18b1ecc10179"
+    },
+    {
+      "configuration": 1,
+      "tau_fs": 2.0,
+      "duration_fs": 80,
+      "new_trajectory": true,
+      "baseline_reused_prefix_fs": null,
+      "independent_array_report_sha256": "1195bf85af593dadce3f65968228296a9996ffd024cb5687d452142155c896df",
+      "exported_array_sha256": "f979a7694904d5005659baae2eff5a965e64b31565c82d3a7b996d77cbc14ef8",
+      "input_file_sha256": "c2614a2c2807f2e55d451e12dd6fe70be025d782bbb029ce97ed9067aff98f88"
+    },
+    {
+      "configuration": 2,
+      "tau_fs": 0.25,
+      "duration_fs": 80,
+      "new_trajectory": true,
+      "baseline_reused_prefix_fs": null,
+      "independent_array_report_sha256": "b716f6375a1ad5a80c8ce6e7277822d753daba7e0f751775def42884e86a7b3b",
+      "exported_array_sha256": "ddaa9ca3f8c12efd9e14480e8fa75a9143a9a3684bd63be2128e531dfd6714be",
+      "input_file_sha256": "a29cd39286aa5980e1eb950b7a8875885b5cc79d5d6ef93fa6ae372fe2afc789"
+    },
+    {
+      "configuration": 2,
+      "tau_fs": 0.5,
+      "duration_fs": 80,
+      "new_trajectory": true,
+      "baseline_reused_prefix_fs": null,
+      "independent_array_report_sha256": "36b3d29dce1a61191fd06afdc964a5fe51bce9a15c086b64251aa20df8cbcabb",
+      "exported_array_sha256": "5d22bd11c99ebea6bc4fde3586d50c3fb08f581272c31bab6dc3fee7229eedbf",
+      "input_file_sha256": "3aa273753c6ceeeded2ab894c672c20a67016608c327260deb67c061ff70c32f"
+    },
+    {
+      "configuration": 2,
+      "tau_fs": 1.0,
+      "duration_fs": 80,
+      "new_trajectory": false,
+      "baseline_reused_prefix_fs": 80,
+      "independent_array_report_sha256": "520e2234af49f49042bc693ffb6ca4d598a210c485ea91ed5e9f13f327d50b85",
+      "exported_array_sha256": "5158a29c43480856b5ef269ffd5bb888c6c4ee2809bcb078ad5d01ab6b9b8986",
+      "metadata_sha256": "cc12590eb20367f002696d2759cf56b2830e6912c110f7f6827c997a8434fbfa",
+      "input_file_sha256": "2a41ec2ba59636a6bf16f39be1981735d5f5d80ed4d85a36bd59f26277711850"
+    },
+    {
+      "configuration": 2,
+      "tau_fs": 2.0,
+      "duration_fs": 80,
+      "new_trajectory": true,
+      "baseline_reused_prefix_fs": null,
+      "independent_array_report_sha256": "66be654565dad867a6d4662bbc91038f5f3ef72783db89db43d1d8fd8c8e9f55",
+      "exported_array_sha256": "4d0b6433e4fbbe7b3390c4614bd36f8b7c6a17bb7c281e6b160dfa5f2afeadc3",
+      "input_file_sha256": "ca72267f3949dd466439ae37ba7efe5923828a5ae8e87c0bbfe2430d00bb6f7b"
+    }
+  ],
+  "trajectory_completion": "All six new trajectories cover 80 fs; production allocation and every step exited successfully.",
+  "analysis_rule": "All segments retained; two initial configurations, not 1200 independent samples."
+}
