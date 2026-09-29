@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.4 (2026-09-29)
+
 ### Added
 
 - `examples/prepared_qe_launcher/` (source tree only; not part of the
@@ -52,8 +54,6 @@
   by a third party is never clobbered, `handle_sigint=False` never
   touches external handlers, and the restore runs even if releasing the
   log/store raises.
-
-### Added
 
 - `pyramid inspect` now reports run durations explicitly: the `timing`
   block (dict and `--json`) carries `last_reported_run_wall_time_s` and
