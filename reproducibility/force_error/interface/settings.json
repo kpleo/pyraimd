@@ -1,0 +1,123 @@
+{
+  "interface": {
+    "atom_count": 474,
+    "formula": "C114H186F18Li39O114P3",
+    "groups": {
+      "0": {
+        "name": "initial lithium slab",
+        "atom_range_half_open": [
+          0,
+          36
+        ]
+      },
+      "1": {
+        "name": "initial ethylene carbonate",
+        "atom_range_half_open": [
+          36,
+          246
+        ]
+      },
+      "2": {
+        "name": "initial dimethyl carbonate",
+        "atom_range_half_open": [
+          246,
+          450
+        ]
+      },
+      "3": {
+        "name": "initial salt",
+        "atom_range_half_open": [
+          450,
+          474
+        ]
+      }
+    },
+    "paths": [
+      {
+        "path_index": 0,
+        "probe_archive_index": 0,
+        "direction_index": 0,
+        "horizon_fs": 0.375
+      },
+      {
+        "path_index": 1,
+        "probe_archive_index": 0,
+        "direction_index": 1,
+        "horizon_fs": 0.25
+      },
+      {
+        "path_index": 2,
+        "probe_archive_index": 1,
+        "direction_index": 0,
+        "horizon_fs": 0.25
+      },
+      {
+        "path_index": 3,
+        "probe_archive_index": 1,
+        "direction_index": 1,
+        "horizon_fs": 0.375
+      }
+    ],
+    "base": "Frozen stored two-member MACE committee with a fixed origin force correction; numerical force and energy records are supplied, fitted weights are excluded.",
+    "reference": {
+      "method": "Quantum ESPRESSO PBE + D3, PAW",
+      "energy": "fixed-smearing variational E-TS, consistent with printed forces",
+      "ecutwfc_Ry": 60,
+      "ecutrho_Ry": 600,
+      "kpoints": "Gamma",
+      "nbnd": 942,
+      "smearing": "fd",
+      "degauss_Ry": 0.02,
+      "conv_thr_Ry": 1e-08,
+      "mixing_beta": 0.2,
+      "mixing_ndim": 12,
+      "diago_david_ndim": 8,
+      "diago_full_acc": true,
+      "electron_maxstep": 400
+    },
+    "forecast": {
+      "force_budget_eV_A": 0.25,
+      "floor_eV_A": 0.00025,
+      "time_cap_fs": 1.0,
+      "transverse_fraction_cap": 0.1
+    },
+    "integrator": {
+      "method": "velocity Verlet, fixed cell, unwrapped positions",
+      "primary_step_fs": 0.125,
+      "half_step_fs": 0.0625,
+      "duration_fs": 4.0,
+      "thermostat": false,
+      "constraints": false
+    },
+    "incomplete_quadrature_grids": [
+      {
+        "path_index": 0,
+        "end_fs": 1.0,
+        "spacing_fs": 0.125,
+        "missing_times_fs": [
+          0.625,
+          0.875
+        ]
+      },
+      {
+        "path_index": 1,
+        "end_fs": 1.0,
+        "spacing_fs": 0.125,
+        "missing_times_fs": [
+          0.625,
+          0.875
+        ]
+      },
+      {
+        "path_index": 3,
+        "end_fs": 1.0,
+        "spacing_fs": 0.125,
+        "missing_times_fs": [
+          0.625,
+          0.875
+        ]
+      }
+    ]
+  },
+  "source_version": "force-error-repro-v1.2.0"
+}

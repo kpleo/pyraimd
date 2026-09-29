@@ -1,0 +1,9 @@
+panel,replica,target_budget_eV_A,error_type,signed_work_error_percent,marker_fill,marker,color,x_offset_eV_A,final_result_row,configuration_label
+d,0,0.02,nominal_budget,0.4024928376762068,open,o,#0072B2,0,r0_eps020,1
+d,0,0.02,measured_residual,1.3345532968718492,filled,o,#0072B2,0,r0_eps020,1
+d,0,0.04,nominal_budget,0.7917033507559006,open,o,#0072B2,0,r0_eps040,1
+d,0,0.04,measured_residual,2.4535885428687543,filled,o,#0072B2,0,r0_eps040,1
+d,1,0.02,nominal_budget,-0.3684971871862828,open,s,#D97719,0,r1_eps020,2
+d,1,0.02,measured_residual,1.8986366048244594,filled,s,#D97719,0,r1_eps020,2
+d,1,0.04,nominal_budget,-0.729258164955377,open,s,#D97719,0,r1_eps040,2
+d,1,0.04,measured_residual,3.6435025276575694,filled,s,#D97719,0,r1_eps040,2

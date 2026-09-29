@@ -1,0 +1,4 @@
+panel,vector,x_A,y_A,z_A,periodic
+a,0,10.86,0.0,0.0,True
+a,1,0.0,10.86,0.0,True
+a,2,0.0,0.0,10.86,True

@@ -1,0 +1,1165 @@
+{
+  "cases": {
+    "isotropic_iid_control_N2": {
+      "N": 2,
+      "active_N": 2,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 6.0,
+        "Q_gaussian_sd": 3.4641016151377544,
+        "R_gaussian_mean": 6.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 1.4535209105297298,
+        "Cmax_sd": 0.2705426408797678,
+        "iid_integral_mass": 1.0000000000000364,
+        "iid_quadrature_abs_change": 1.5987211554602254e-14
+      },
+      "pairing_group": 4
+    },
+    "isotropic_COM_N2": {
+      "N": 2,
+      "active_N": 2,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 3.0,
+        "Q_gaussian_sd": 2.449489742783178,
+        "R_gaussian_mean": 3.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.5
+      },
+      "pairing_group": 4
+    },
+    "isotropic_iid_control_N16": {
+      "N": 16,
+      "active_N": 16,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 48.0,
+        "Q_gaussian_sd": 9.797958971132712,
+        "R_gaussian_mean": 48.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 5.856616044042243,
+        "Cmax_sd": 1.2906489245237955,
+        "iid_integral_mass": 1.000000000000013,
+        "iid_quadrature_abs_change": 3.979039320256561e-13
+      },
+      "pairing_group": 2
+    },
+    "isotropic_COM_N16": {
+      "N": 16,
+      "active_N": 16,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 45.0,
+        "Q_gaussian_sd": 9.486832980505138,
+        "R_gaussian_mean": 45.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.09973404255319149
+      },
+      "pairing_group": 2
+    },
+    "isotropic_iid_control_N27": {
+      "N": 27,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 81.0,
+        "Q_gaussian_sd": 12.727922061357855,
+        "R_gaussian_mean": 81.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 8.702305788395323,
+        "Cmax_sd": 1.8346943996298117,
+        "iid_integral_mass": 1.0000000000000164,
+        "iid_quadrature_abs_change": 5.684341886080802e-14
+      },
+      "pairing_group": 6
+    },
+    "isotropic_COM_N27": {
+      "N": 27,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 78.0,
+        "Q_gaussian_sd": 12.489995996796797,
+        "R_gaussian_mean": 78.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.06018518518518518
+      },
+      "pairing_group": 6
+    },
+    "isotropic_iid_control_N64": {
+      "N": 64,
+      "active_N": 64,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 192.0,
+        "Q_gaussian_sd": 19.595917942265423,
+        "R_gaussian_mean": 192.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 17.18981341041188,
+        "Cmax_sd": 3.305798395072002,
+        "iid_integral_mass": 1.0000000000000184,
+        "iid_quadrature_abs_change": 2.1600499167107046e-12
+      },
+      "pairing_group": 10
+    },
+    "isotropic_COM_N64": {
+      "N": 64,
+      "active_N": 64,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 189.0,
+        "Q_gaussian_sd": 19.44222209522358,
+        "R_gaussian_mean": 189.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.025768979057591623
+      },
+      "pairing_group": 10
+    },
+    "isotropic_iid_control_N216": {
+      "N": 216,
+      "active_N": 216,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 648.0,
+        "Q_gaussian_sd": 36.0,
+        "R_gaussian_mean": 648.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 46.92668394289308,
+        "Cmax_sd": 7.812140701654584,
+        "iid_integral_mass": 1.000000000000011,
+        "iid_quadrature_abs_change": 6.366462912410498e-12
+      },
+      "pairing_group": 5
+    },
+    "isotropic_COM_N216": {
+      "N": 216,
+      "active_N": 216,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 645.0,
+        "Q_gaussian_sd": 35.91656999213594,
+        "R_gaussian_mean": 645.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.0076921976071898795
+      },
+      "pairing_group": 5
+    },
+    "isotropic_iid_control_N474": {
+      "N": 474,
+      "active_N": 474,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 1422.0,
+        "Q_gaussian_sd": 53.32916650389353,
+        "R_gaussian_mean": 1422.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 91.69053727083872,
+        "Cmax_sd": 13.908262795954494,
+        "iid_integral_mass": 1.000000000000008,
+        "iid_quadrature_abs_change": 1.4210854715202004e-14
+      },
+      "pairing_group": 8
+    },
+    "isotropic_COM_N474": {
+      "N": 474,
+      "active_N": 474,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 1419.0,
+        "Q_gaussian_sd": 53.27288240746881,
+        "R_gaussian_mean": 1419.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.0035112255290592883
+      },
+      "pairing_group": 8
+    },
+    "isotropic_iid_control_N512": {
+      "N": 512,
+      "active_N": 512,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 1536.0,
+        "Q_gaussian_sd": 55.42562584220407,
+        "R_gaussian_mean": 1536.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 97.99017312929116,
+        "Cmax_sd": 14.731241037875254,
+        "iid_integral_mass": 1.000000000000008,
+        "iid_quadrature_abs_change": 5.4569682106375694e-12
+      },
+      "pairing_group": 9
+    },
+    "isotropic_COM_N512": {
+      "N": 512,
+      "active_N": 512,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 1533.0,
+        "Q_gaussian_sd": 55.37147279962851,
+        "R_gaussian_mean": 1533.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.003250967019543974
+      },
+      "pairing_group": 9
+    },
+    "isotropic_iid_control_N1000": {
+      "N": 1000,
+      "active_N": 1000,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 3000.0,
+        "Q_gaussian_sd": 77.45966692414834,
+        "R_gaussian_mean": 3000.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 175.2818670188404,
+        "Cmax_sd": 24.42110850478247,
+        "iid_integral_mass": 1.0000000000000104,
+        "iid_quadrature_abs_change": 2.000888343900442e-10
+      },
+      "pairing_group": 1
+    },
+    "isotropic_COM_N1000": {
+      "N": 1000,
+      "active_N": 1000,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 2997.0,
+        "Q_gaussian_sd": 77.42092740338364,
+        "R_gaussian_mean": 2997.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.0016655551850616873
+      },
+      "pairing_group": 1
+    },
+    "isotropic_iid_control_N1728": {
+      "N": 1728,
+      "active_N": 1728,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 5184.0,
+        "Q_gaussian_sd": 101.82337649086284,
+        "R_gaussian_mean": 5184.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 283.48220418125203,
+        "Cmax_sd": 37.21374374229227,
+        "iid_integral_mass": 1.0000000000000089,
+        "iid_quadrature_abs_change": 2.6193447411060333e-10
+      },
+      "pairing_group": 3
+    },
+    "isotropic_COM_N1728": {
+      "N": 1728,
+      "active_N": 1728,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 5181.0,
+        "Q_gaussian_sd": 101.79390944452423,
+        "R_gaussian_mean": 5181.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.0009641339921824197
+      },
+      "pairing_group": 3
+    },
+    "isotropic_iid_control_N4096": {
+      "N": 4096,
+      "active_N": 4096,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 12288.0,
+        "Q_gaussian_sd": 156.76734353812338,
+        "R_gaussian_mean": 12288.0,
+        "quadrature_abs_change": 0.0,
+        "Cmax_mean": 610.5472885038233,
+        "Cmax_sd": 73.34462812810584,
+        "iid_integral_mass": 0.999999999999989,
+        "iid_quadrature_abs_change": 1.0302755981683731e-08
+      },
+      "pairing_group": 7
+    },
+    "isotropic_COM_N4096": {
+      "N": 4096,
+      "active_N": 4096,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 12285.0,
+        "Q_gaussian_sd": 156.7482057313576,
+        "R_gaussian_mean": 12285.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.000406834808893546
+      },
+      "pairing_group": 7
+    },
+    "periodic_L1d_N16": {
+      "N": 16,
+      "active_N": 16,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.337229255938908,
+        "chi_sd": 0.023792309634137067,
+        "Q_gaussian_mean": 95.99999999999999,
+        "Q_gaussian_sd": 24.000000000000515,
+        "R_gaussian_mean": 288.0000000000124,
+        "quadrature_abs_change": 5.551115123125783e-16
+      },
+      "pairing_group": 12
+    },
+    "periodic_L1d_N64": {
+      "N": 64,
+      "active_N": 64,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.33430018981880305,
+        "chi_sd": 0.01147709073027578,
+        "Q_gaussian_mean": 384.0,
+        "Q_gaussian_sd": 47.999999999998494,
+        "R_gaussian_mean": 1151.9999999999277,
+        "quadrature_abs_change": 5.551115123125783e-16
+      },
+      "pairing_group": 16
+    },
+    "periodic_L1d_N216": {
+      "N": 216,
+      "active_N": 216,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.3336193189048904,
+        "chi_sd": 0.0061948347971427275,
+        "Q_gaussian_mean": 1295.9999999999998,
+        "Q_gaussian_sd": 88.18163074019411,
+        "R_gaussian_mean": 3887.9999999999736,
+        "quadrature_abs_change": 4.996003610813204e-16
+      },
+      "pairing_group": 13
+    },
+    "periodic_L1d_N474": {
+      "N": 474,
+      "active_N": 474,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.3334636047676613,
+        "chi_sd": 0.004173752930544569,
+        "Q_gaussian_mean": 2844.0,
+        "Q_gaussian_sd": 130.6292463424631,
+        "R_gaussian_mean": 8531.999999999953,
+        "quadrature_abs_change": 4.996003610813204e-16
+      },
+      "pairing_group": 15
+    },
+    "periodic_L1d_N1000": {
+      "N": 1000,
+      "active_N": 1000,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.33339507133216933,
+        "chi_sd": 0.002871082043133739,
+        "Q_gaussian_mean": 6000.0,
+        "Q_gaussian_sd": 189.73665961010224,
+        "R_gaussian_mean": 17999.999999999898,
+        "quadrature_abs_change": 4.996003610813204e-16
+      },
+      "pairing_group": 11
+    },
+    "periodic_L1d_N4096": {
+      "N": 4096,
+      "active_N": 4096,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.3333484043146429,
+        "chi_sd": 0.0014177947732174668,
+        "Q_gaussian_mean": 24576.0,
+        "Q_gaussian_sd": 384.00000000000085,
+        "R_gaussian_mean": 73728.00000000033,
+        "quadrature_abs_change": 7.216449660063518e-16
+      },
+      "pairing_group": 14
+    },
+    "periodic_L3d_N64": {
+      "N": 64,
+      "active_N": 64,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.14320674423279053,
+        "chi_sd": 0.004996543508590574,
+        "Q_gaussian_mean": 1152.0,
+        "Q_gaussian_sd": 126.99606293110035,
+        "R_gaussian_mean": 8064.0,
+        "quadrature_abs_change": 2.220446049250313e-16
+      },
+      "pairing_group": 23
+    },
+    "periodic_L3d_N125": {
+      "N": 125,
+      "active_N": 125,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.14303489432285618,
+        "chi_sd": 0.003539117515968251,
+        "Q_gaussian_mean": 2250.0,
+        "Q_gaussian_sd": 177.48239349298967,
+        "R_gaussian_mean": 15750.000000000211,
+        "quadrature_abs_change": 2.498001805406602e-16
+      },
+      "pairing_group": 18
+    },
+    "periodic_L3d_N216": {
+      "N": 216,
+      "active_N": 216,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.1429602583356634,
+        "chi_sd": 0.0026947788682944113,
+        "Q_gaussian_mean": 3888.0,
+        "Q_gaussian_sd": 233.30666514268296,
+        "R_gaussian_mean": 27216.0,
+        "quadrature_abs_change": 4.440892098500626e-16
+      },
+      "pairing_group": 20
+    },
+    "periodic_L3d_N512": {
+      "N": 512,
+      "active_N": 512,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.14290073333570782,
+        "chi_sd": 0.001751862663957784,
+        "Q_gaussian_mean": 9216.0,
+        "Q_gaussian_sd": 359.1991091302966,
+        "R_gaussian_mean": 64511.999999999374,
+        "quadrature_abs_change": 2.220446049250313e-16
+      },
+      "pairing_group": 22
+    },
+    "periodic_L3d_N1000": {
+      "N": 1000,
+      "active_N": 1000,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.1428794774755848,
+        "chi_sd": 0.001253933057708279,
+        "Q_gaussian_mean": 17999.999999999996,
+        "Q_gaussian_sd": 501.99601592044866,
+        "R_gaussian_mean": 126000.00000000167,
+        "quadrature_abs_change": 2.7755575615628914e-16
+      },
+      "pairing_group": 17
+    },
+    "periodic_L3d_N1728": {
+      "N": 1728,
+      "active_N": 1728,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.14287007216584463,
+        "chi_sd": 0.0009540355030979629,
+        "Q_gaussian_mean": 31104.000000000004,
+        "Q_gaussian_sd": 659.8909000736443,
+        "R_gaussian_mean": 217728.00000000218,
+        "quadrature_abs_change": 3.608224830031759e-16
+      },
+      "pairing_group": 19
+    },
+    "periodic_L3d_N4096": {
+      "N": 4096,
+      "active_N": 4096,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.14286259881310398,
+        "chi_sd": 0.0006197348510464199,
+        "Q_gaussian_mean": 73728.0,
+        "Q_gaussian_sd": 1015.9685034488027,
+        "R_gaussian_mean": 516095.99999999994,
+        "quadrature_abs_change": 8.326672684688674e-17
+      },
+      "pairing_group": 21
+    },
+    "local_projector27_N27": {
+      "N": 27,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 78.0,
+        "Q_gaussian_sd": 12.489995996796797,
+        "R_gaussian_mean": 78.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.06018518518518518
+      },
+      "pairing_group": 24
+    },
+    "local_freecube27_N27": {
+      "N": 27,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.19530194977707382,
+        "chi_sd": 0.013161693121938807,
+        "Q_gaussian_mean": 324.0,
+        "Q_gaussian_sd": 57.86190456595773,
+        "R_gaussian_mean": 1674.0,
+        "quadrature_abs_change": 3.0531133177191805e-16
+      },
+      "pairing_group": 24
+    },
+    "local_projector27_N64": {
+      "N": 64,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 78.0,
+        "Q_gaussian_sd": 12.489995996796797,
+        "R_gaussian_mean": 78.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.06018518518518518
+      },
+      "pairing_group": 24
+    },
+    "local_freecube27_N64": {
+      "N": 64,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.19530194977707382,
+        "chi_sd": 0.013161693121938807,
+        "Q_gaussian_mean": 324.0,
+        "Q_gaussian_sd": 57.86190456595773,
+        "R_gaussian_mean": 1674.0,
+        "quadrature_abs_change": 3.0531133177191805e-16
+      },
+      "pairing_group": 24
+    },
+    "local_projector27_N216": {
+      "N": 216,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 78.0,
+        "Q_gaussian_sd": 12.489995996796797,
+        "R_gaussian_mean": 78.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.06018518518518518
+      },
+      "pairing_group": 24
+    },
+    "local_freecube27_N216": {
+      "N": 216,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.19530194977707382,
+        "chi_sd": 0.013161693121938807,
+        "Q_gaussian_mean": 324.0,
+        "Q_gaussian_sd": 57.86190456595773,
+        "R_gaussian_mean": 1674.0,
+        "quadrature_abs_change": 3.0531133177191805e-16
+      },
+      "pairing_group": 24
+    },
+    "local_projector27_N474": {
+      "N": 474,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 78.0,
+        "Q_gaussian_sd": 12.489995996796797,
+        "R_gaussian_mean": 78.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.06018518518518518
+      },
+      "pairing_group": 24
+    },
+    "local_freecube27_N474": {
+      "N": 474,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.19530194977707382,
+        "chi_sd": 0.013161693121938807,
+        "Q_gaussian_mean": 324.0,
+        "Q_gaussian_sd": 57.86190456595773,
+        "R_gaussian_mean": 1674.0,
+        "quadrature_abs_change": 3.0531133177191805e-16
+      },
+      "pairing_group": 24
+    },
+    "local_projector27_N1000": {
+      "N": 1000,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 78.0,
+        "Q_gaussian_sd": 12.489995996796797,
+        "R_gaussian_mean": 78.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.06018518518518518
+      },
+      "pairing_group": 24
+    },
+    "local_freecube27_N1000": {
+      "N": 1000,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.19530194977707382,
+        "chi_sd": 0.013161693121938807,
+        "Q_gaussian_mean": 324.0,
+        "Q_gaussian_sd": 57.86190456595773,
+        "R_gaussian_mean": 1674.0,
+        "quadrature_abs_change": 3.0531133177191805e-16
+      },
+      "pairing_group": 24
+    },
+    "local_projector27_N4096": {
+      "N": 4096,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 1.0,
+        "chi_sd": 0.0,
+        "Q_gaussian_mean": 78.0,
+        "Q_gaussian_sd": 12.489995996796797,
+        "R_gaussian_mean": 78.0,
+        "quadrature_abs_change": 0.0,
+        "inverse_PR_mean": 0.06018518518518518
+      },
+      "pairing_group": 24
+    },
+    "local_freecube27_N4096": {
+      "N": 4096,
+      "active_N": 27,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.0,
+      "negative_fraction_wilson_ci95": [
+        0,
+        0.000959478516832434
+      ],
+      "exact": {
+        "chi_mean": 0.19530194977707382,
+        "chi_sd": 0.013161693121938807,
+        "Q_gaussian_mean": 324.0,
+        "Q_gaussian_sd": 57.86190456595773,
+        "R_gaussian_mean": 1674.0,
+        "quadrature_abs_change": 3.0531133177191805e-16
+      },
+      "pairing_group": 24
+    },
+    "indefinite_COM_balanced_N2": {
+      "N": 2,
+      "active_N": 2,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.581,
+      "negative_fraction_wilson_ci95": [
+        0.5656389406320532,
+        0.5962056238482198
+      ],
+      "exact": {
+        "chi_mean": -0.20919957659816113,
+        "chi_sd": 0.49702712399781707,
+        "Q_gaussian_mean": 0.0,
+        "Q_gaussian_sd": 3.4641016151377544,
+        "R_gaussian_mean": 6.0,
+        "quadrature_abs_change": 6.946462072221493e-09,
+        "Cmax_mean_closed_form": -0.41839915231229075,
+        "negative_fraction": 0.5773502691896258
+      },
+      "pairing_group": 26
+    },
+    "indefinite_COM_positive_trace_N2": {
+      "N": 2,
+      "active_N": 2,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.57175,
+      "negative_fraction_wilson_ci95": [
+        0.5563535707460584,
+        0.5870087440867761
+      ],
+      "exact": {
+        "chi_mean": -0.20173842008843162,
+        "chi_sd": 0.4895083557330218,
+        "Q_gaussian_mean": 0.10000000000000009,
+        "Q_gaussian_sd": 3.5805027579936315,
+        "R_gaussian_mean": 6.41,
+        "quadrature_abs_change": 7.332877305366026e-09,
+        "Cmax_mean_closed_form": -0.40347683923241484,
+        "negative_fraction": 0.5679618342470648
+      },
+      "pairing_group": 26
+    },
+    "indefinite_COM_balanced_N64": {
+      "N": 64,
+      "active_N": 64,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.51325,
+      "negative_fraction_wilson_ci95": [
+        0.49775499565855924,
+        0.5287195781607448
+      ],
+      "exact": {
+        "chi_mean": -0.0052620167346228925,
+        "chi_sd": 0.07309403618175289,
+        "Q_gaussian_mean": 0.0,
+        "Q_gaussian_sd": 27.49545416973504,
+        "R_gaussian_mean": 378.0,
+        "quadrature_abs_change": 2.3418766925686896e-17
+      },
+      "pairing_group": 29
+    },
+    "indefinite_COM_positive_trace_N64": {
+      "N": 64,
+      "active_N": 64,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.424,
+      "negative_fraction_wilson_ci95": [
+        0.4087649812938818,
+        0.4393808594406767
+      ],
+      "exact": {
+        "chi_mean": 0.010271011789307382,
+        "chi_sd": 0.06963022545164292,
+        "Q_gaussian_mean": 6.300000000000011,
+        "Q_gaussian_sd": 28.419359598696097,
+        "R_gaussian_mean": 403.83,
+        "quadrature_abs_change": 1.5612511283791264e-17
+      },
+      "pairing_group": 29
+    },
+    "indefinite_COM_balanced_N474": {
+      "N": 474,
+      "active_N": 474,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.506,
+      "negative_fraction_wilson_ci95": [
+        0.4905076321012058,
+        0.5214808541565921
+      ],
+      "exact": {
+        "chi_mean": -0.0007042225660224417,
+        "chi_sd": 0.026565104190877823,
+        "Q_gaussian_mean": 0.0,
+        "Q_gaussian_sd": 75.33923280734945,
+        "R_gaussian_mean": 2838.0,
+        "quadrature_abs_change": 2.4936649967166602e-18
+      },
+      "pairing_group": 28
+    },
+    "indefinite_COM_positive_trace_N474": {
+      "N": 474,
+      "active_N": 474,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.26775,
+      "negative_fraction_wilson_ci95": [
+        0.25425551570600446,
+        0.28169016206506414
+      ],
+      "exact": {
+        "chi_mean": 0.014888207056376312,
+        "chi_sd": 0.025260958896919056,
+        "Q_gaussian_mean": 47.30000000000007,
+        "Q_gaussian_sd": 77.87079041591912,
+        "R_gaussian_mean": 3031.9300000000003,
+        "quadrature_abs_change": 1.214306433183765e-17
+      },
+      "pairing_group": 28
+    },
+    "indefinite_COM_balanced_N1000": {
+      "N": 1000,
+      "active_N": 1000,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.491,
+      "negative_fraction_wilson_ci95": [
+        0.47552341699960887,
+        0.506493853613694
+      ],
+      "exact": {
+        "chi_mean": -0.00033355540730969804,
+        "chi_sd": 0.018272618610063854,
+        "Q_gaussian_mean": 0.0,
+        "Q_gaussian_sd": 109.48972554536796,
+        "R_gaussian_mean": 5994.0,
+        "quadrature_abs_change": 2.3852447794681098e-18
+      },
+      "pairing_group": 25
+    },
+    "indefinite_COM_positive_trace_N1000": {
+      "N": 1000,
+      "active_N": 1000,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.17925,
+      "negative_fraction_wilson_ci95": [
+        0.16767277686407653,
+        0.1914427286044714
+      ],
+      "exact": {
+        "chi_mean": 0.015263220741909233,
+        "chi_sd": 0.01737300235436386,
+        "Q_gaussian_mean": 99.90000000000009,
+        "Q_gaussian_sd": 113.16881195806555,
+        "R_gaussian_mean": 6403.59,
+        "quadrature_abs_change": 1.3704315460216776e-16
+      },
+      "pairing_group": 25
+    },
+    "indefinite_COM_balanced_N4096": {
+      "N": 4096,
+      "active_N": 4096,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.51625,
+      "negative_fraction_wilson_ci95": [
+        0.5007548571237574,
+        0.5317139598244456
+      ],
+      "exact": {
+        "chi_mean": -8.139345165376572e-05,
+        "chi_sd": 0.009022932877233627,
+        "Q_gaussian_mean": 0.0,
+        "Q_gaussian_sd": 221.67543842293398,
+        "R_gaussian_mean": 24570.0,
+        "quadrature_abs_change": 8.40256683676266e-18
+      },
+      "pairing_group": 27
+    },
+    "indefinite_COM_positive_trace_N4096": {
+      "N": 4096,
+      "active_N": 4096,
+      "samples": 4000,
+      "k": 1,
+      "negative_fraction": 0.04025,
+      "negative_fraction_wilson_ci95": [
+        0.03458709025055263,
+        0.04679515024567479
+      ],
+      "exact": {
+        "chi_mean": 0.015518297181142898,
+        "chi_sd": 0.00857784210241571,
+        "Q_gaussian_mean": 409.5,
+        "Q_gaussian_sd": 229.12420212627038,
+        "R_gaussian_mean": 26248.95,
+        "quadrature_abs_change": 1.1102230246251565e-16
+      },
+      "pairing_group": 27
+    }
+  },
+  "max_spectral_quadrature_change": 7.332877305366026e-09
+}

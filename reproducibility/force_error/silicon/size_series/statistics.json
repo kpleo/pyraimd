@@ -1,0 +1,824 @@
+{
+  "Si64_ideal": {
+    "N": 64,
+    "directions": 32,
+    "statistics": {
+      "C_A2_eV": {
+        "mean": -6.83709836639882,
+        "sd": 1.345088008968325,
+        "direction_CV": 0.1967337512034069,
+        "conditional_mean_bootstrap95": [
+          -7.2992330342894745,
+          -6.386378618751574
+        ],
+        "direction_quantiles_05_50_95": [
+          -8.841525222269395,
+          -6.863652031866403,
+          -4.65803976668905
+        ]
+      },
+      "curvature_factor_A2_eV": {
+        "mean": -0.3776692633252691,
+        "sd": 0.032392129353588435,
+        "direction_CV": 0.08576850831964736,
+        "conditional_mean_bootstrap95": [
+          -0.3885442362961211,
+          -0.36641176305998946
+        ],
+        "direction_quantiles_05_50_95": [
+          -0.42115437508808656,
+          -0.3818158271726916,
+          -0.3170678303061965
+        ]
+      },
+      "n_infty": {
+        "mean": 18.136039138001244,
+        "sd": 3.290215656868552,
+        "direction_CV": 0.18141864559469426,
+        "conditional_mean_bootstrap95": [
+          17.012841482435466,
+          19.24438057334664
+        ],
+        "direction_quantiles_05_50_95": [
+          12.4623853362829,
+          18.231350829484477,
+          23.70926987422484
+        ]
+      },
+      "n2": {
+        "mean": 40.42077926675828,
+        "sd": 3.4270530152499137,
+        "direction_CV": 0.0847844370498887,
+        "conditional_mean_bootstrap95": [
+          39.25432213477475,
+          41.58234391266978
+        ],
+        "direction_quantiles_05_50_95": [
+          35.49396816451478,
+          40.43304008315464,
+          45.27824754596322
+        ]
+      },
+      "C_rms_A2_eV": {
+        "mean": -24.170832852817224,
+        "sd": 2.07309627862966,
+        "direction_CV": 0.08576850831964736,
+        "conditional_mean_bootstrap95": [
+          -24.86683112295175,
+          -23.450352835839325
+        ],
+        "direction_quantiles_05_50_95": [
+          -26.95388000563754,
+          -24.43621293905226,
+          -20.292341139596576
+        ]
+      }
+    },
+    "mean_C_per_atom_A2_eV": -0.10682966197498156,
+    "n_infty_fraction": 0.28337561153126944,
+    "n2_fraction": 0.6315746760430981,
+    "mean_product_chi_ninf": -6.849424540887179,
+    "covariance_chi_ninf": 0.012326174488358349,
+    "covariance_fraction_of_mean_C": -0.0018028370849446605,
+    "fd_two_scale_max": 0.0047296205212228855,
+    "hessian_symmetry_relative": 0.0010676843252199735,
+    "positive_C_count": 0,
+    "summary_csv": {
+      "mean_C": -6.83709836639882,
+      "mean_chi": -0.3776692633252691,
+      "mean_n_infty": 18.136039138001244,
+      "mean_n2": 40.42077926675828,
+      "C_CV": 0.1967337512034069,
+      "chi_CV": 0.08576850831964736,
+      "C_mean_CI_low": -7.2992330342894745,
+      "C_mean_CI_high": -6.386378618751574
+    },
+    "budget_ratios": {
+      "force_budget_ratio_for_equal_mean_total_work": 1.0,
+      "force_budget_ratio_for_equal_mean_per_atom_work": 1.0
+    }
+  },
+  "Si64_displaced": {
+    "N": 64,
+    "directions": 32,
+    "statistics": {
+      "C_A2_eV": {
+        "mean": -5.350556504192093,
+        "sd": 1.578850906158966,
+        "direction_CV": 0.2950816246724909,
+        "conditional_mean_bootstrap95": [
+          -5.873682684312137,
+          -4.796686307178579
+        ],
+        "direction_quantiles_05_50_95": [
+          -7.561380125656486,
+          -5.631513313073757,
+          -2.5617931035940886
+        ]
+      },
+      "curvature_factor_A2_eV": {
+        "mean": -0.3015721793350645,
+        "sd": 0.05537670000643342,
+        "direction_CV": 0.18362668641561472,
+        "conditional_mean_bootstrap95": [
+          -0.3202889932206154,
+          -0.2823163771307779
+        ],
+        "direction_quantiles_05_50_95": [
+          -0.3667653353523305,
+          -0.31468021807257035,
+          -0.20810945675122466
+        ]
+      },
+      "n_infty": {
+        "mean": 17.60149915004403,
+        "sd": 3.909307702006662,
+        "direction_CV": 0.22210083747309006,
+        "conditional_mean_bootstrap95": [
+          16.259591121039257,
+          18.9076004136453
+        ],
+        "direction_quantiles_05_50_95": [
+          10.628090450152328,
+          17.854826709044076,
+          23.223155028638207
+        ]
+      },
+      "n2": {
+        "mean": 39.08740899819561,
+        "sd": 3.8228751541910784,
+        "direction_CV": 0.09780323772208982,
+        "conditional_mean_bootstrap95": [
+          37.77393456345585,
+          40.369080566465385
+        ],
+        "direction_quantiles_05_50_95": [
+          32.8947375802724,
+          39.45520754289473,
+          44.4567728335148
+        ]
+      },
+      "C_rms_A2_eV": {
+        "mean": -19.30061947744413,
+        "sd": 3.5441088004117387,
+        "direction_CV": 0.18362668641561472,
+        "conditional_mean_bootstrap95": [
+          -20.498495566119384,
+          -18.068248136369785
+        ],
+        "direction_quantiles_05_50_95": [
+          -23.472981462549154,
+          -20.139533956644502,
+          -13.319005232078378
+        ]
+      }
+    },
+    "mean_C_per_atom_A2_eV": -0.08360244537800145,
+    "n_infty_fraction": 0.275023424219438,
+    "n2_fraction": 0.6107407655968065,
+    "mean_product_chi_ninf": -5.308122458243064,
+    "covariance_chi_ninf": -0.04243404594902912,
+    "covariance_fraction_of_mean_C": 0.0079307724188657,
+    "fd_two_scale_max": 0.00397272746289997,
+    "hessian_symmetry_relative": 0.001607465681169691,
+    "positive_C_count": 0,
+    "summary_csv": {
+      "mean_C": -5.350556504192093,
+      "mean_chi": -0.3015721793350645,
+      "mean_n_infty": 17.60149915004403,
+      "mean_n2": 39.08740899819561,
+      "C_CV": 0.2950816246724909,
+      "chi_CV": 0.18362668641561472,
+      "C_mean_CI_low": -5.873682684312137,
+      "C_mean_CI_high": -4.796686307178579
+    },
+    "budget_ratios": {
+      "force_budget_ratio_for_equal_mean_total_work": 1.0,
+      "force_budget_ratio_for_equal_mean_per_atom_work": 1.0
+    }
+  },
+  "Si216_ideal": {
+    "N": 216,
+    "directions": 32,
+    "statistics": {
+      "C_A2_eV": {
+        "mean": -17.158041752006092,
+        "sd": 2.7519944710665896,
+        "direction_CV": 0.16039094150967612,
+        "conditional_mean_bootstrap95": [
+          -18.106505604210707,
+          -16.225820374474566
+        ],
+        "direction_quantiles_05_50_95": [
+          -21.873811960083252,
+          -17.481027213310067,
+          -12.950748246427564
+        ]
+      },
+      "curvature_factor_A2_eV": {
+        "mean": -0.37364705275230514,
+        "sd": 0.014261614864144788,
+        "direction_CV": 0.03816868019991843,
+        "conditional_mean_bootstrap95": [
+          -0.3785714366268305,
+          -0.36892039852003045
+        ],
+        "direction_quantiles_05_50_95": [
+          -0.39682310929790543,
+          -0.371731553606926,
+          -0.3521411696122447
+        ]
+      },
+      "n_infty": {
+        "mean": 45.921556788157915,
+        "sd": 7.149961506002216,
+        "direction_CV": 0.15569945807773708,
+        "conditional_mean_bootstrap95": [
+          43.48714041804528,
+          48.415194906282196
+        ],
+        "direction_quantiles_05_50_95": [
+          34.742199137279805,
+          45.91699138284312,
+          58.68421832366716
+        ]
+      },
+      "n2": {
+        "mean": 130.07116114178442,
+        "sd": 6.808214771888708,
+        "direction_CV": 0.05234223106894076,
+        "conditional_mean_bootstrap95": [
+          127.77209374429933,
+          132.43254681165556
+        ],
+        "direction_quantiles_05_50_95": [
+          119.71686276949085,
+          129.49519002303006,
+          141.43851172700877
+        ]
+      },
+      "C_rms_A2_eV": {
+        "mean": -80.7077633944979,
+        "sd": 3.080508810655274,
+        "direction_CV": 0.03816868019991844,
+        "conditional_mean_bootstrap95": [
+          -81.7714303113954,
+          -79.68680608032656
+        ],
+        "direction_quantiles_05_50_95": [
+          -85.71379160834758,
+          -80.29401557909601,
+          -76.06249263624485
+        ]
+      }
+    },
+    "mean_C_per_atom_A2_eV": -0.07943537848150968,
+    "n_infty_fraction": 0.21259979994517553,
+    "n2_fraction": 0.6021813015823353,
+    "mean_product_chi_ninf": -17.158454351692818,
+    "covariance_chi_ninf": 0.0004125996867258338,
+    "covariance_fraction_of_mean_C": -2.404701496180899e-05,
+    "fd_two_scale_max": 0.0011517861120114148,
+    "hessian_symmetry_relative": 0.00021273784565764453,
+    "positive_C_count": 0,
+    "summary_csv": {
+      "mean_C": -17.158041752006092,
+      "mean_chi": -0.37364705275230514,
+      "mean_n_infty": 45.921556788157915,
+      "mean_n2": 130.07116114178442,
+      "C_CV": 0.16039094150967612,
+      "chi_CV": 0.03816868019991843,
+      "C_mean_CI_low": -18.106505604210707,
+      "C_mean_CI_high": -16.225820374474566
+    },
+    "budget_ratios": {
+      "force_budget_ratio_for_equal_mean_total_work": 0.6312509634283691,
+      "force_budget_ratio_for_equal_mean_per_atom_work": 1.1596820700298418
+    }
+  },
+  "Si216_displaced": {
+    "N": 216,
+    "directions": 32,
+    "statistics": {
+      "C_A2_eV": {
+        "mean": -15.672022915252105,
+        "sd": 3.2600991539595614,
+        "direction_CV": 0.20802031566625734,
+        "conditional_mean_bootstrap95": [
+          -16.807800453779993,
+          -14.580307436346216
+        ],
+        "direction_quantiles_05_50_95": [
+          -21.153787401896587,
+          -15.11193167670342,
+          -11.145216166856333
+        ]
+      },
+      "curvature_factor_A2_eV": {
+        "mean": -0.328387360020724,
+        "sd": 0.029736433695859245,
+        "direction_CV": 0.09055291803552556,
+        "conditional_mean_bootstrap95": [
+          -0.33848210602856316,
+          -0.31812269652680325
+        ],
+        "direction_quantiles_05_50_95": [
+          -0.36786460904301616,
+          -0.32861895990660206,
+          -0.2825988670463911
+        ]
+      },
+      "n_infty": {
+        "mean": 47.78048732860623,
+        "sd": 9.109159421423302,
+        "direction_CV": 0.1906460132726532,
+        "conditional_mean_bootstrap95": [
+          44.749162824586755,
+          50.886870059377486
+        ],
+        "direction_quantiles_05_50_95": [
+          34.810936090918844,
+          48.23942248862994,
+          62.172628540163515
+        ]
+      },
+      "n2": {
+        "mean": 128.5385341292223,
+        "sd": 6.78936121589084,
+        "direction_CV": 0.05281965647021742,
+        "conditional_mean_bootstrap95": [
+          126.22841255241916,
+          130.80893897323415
+        ],
+        "direction_quantiles_05_50_95": [
+          117.45704975575822,
+          129.2179615519505,
+          137.49818751128345
+        ]
+      },
+      "C_rms_A2_eV": {
+        "mean": -70.93166976447638,
+        "sd": 6.423069678305598,
+        "direction_CV": 0.09055291803552559,
+        "conditional_mean_bootstrap95": [
+          -73.11213490216963,
+          -68.7145024497895
+        ],
+        "direction_quantiles_05_50_95": [
+          -79.4587555532915,
+          -70.98169533982605,
+          -61.04135528202047
+        ]
+      }
+    },
+    "mean_C_per_atom_A2_eV": -0.07255566164468567,
+    "n_infty_fraction": 0.22120595985465846,
+    "n2_fraction": 0.595085806153807,
+    "mean_product_chi_ninf": -15.690508094344654,
+    "covariance_chi_ninf": 0.018485179092549337,
+    "covariance_fraction_of_mean_C": -0.0011795017907075321,
+    "fd_two_scale_max": 0.0011236760011145849,
+    "hessian_symmetry_relative": 0.0002704075676795028,
+    "positive_C_count": 0,
+    "summary_csv": {
+      "mean_C": -15.672022915252105,
+      "mean_chi": -0.328387360020724,
+      "mean_n_infty": 47.78048732860623,
+      "mean_n2": 128.5385341292223,
+      "C_CV": 0.20802031566625734,
+      "chi_CV": 0.09055291803552556,
+      "C_mean_CI_low": -16.807800453779993,
+      "C_mean_CI_high": -14.580307436346216
+    },
+    "budget_ratios": {
+      "force_budget_ratio_for_equal_mean_total_work": 0.584301428906766,
+      "force_budget_ratio_for_equal_mean_per_atom_work": 1.0734302676005083
+    }
+  },
+  "Si512_ideal": {
+    "N": 512,
+    "directions": 32,
+    "statistics": {
+      "C_A2_eV": {
+        "mean": -37.85266914301668,
+        "sd": 6.188252835953271,
+        "direction_CV": 0.16348260178357651,
+        "conditional_mean_bootstrap95": [
+          -39.94028843719308,
+          -35.68835283205595
+        ],
+        "direction_quantiles_05_50_95": [
+          -47.582361638413865,
+          -39.378355338034254,
+          -28.421811136314737
+        ]
+      },
+      "curvature_factor_A2_eV": {
+        "mean": -0.3716696405664028,
+        "sd": 0.011174023890637525,
+        "direction_CV": 0.030064397709775183,
+        "conditional_mean_bootstrap95": [
+          -0.37542595586851474,
+          -0.3678316280923449
+        ],
+        "direction_quantiles_05_50_95": [
+          -0.3864382515313475,
+          -0.37111807203482194,
+          -0.35196768168739906
+        ]
+      },
+      "n_infty": {
+        "mean": 101.70093052755303,
+        "sd": 15.488328228456794,
+        "direction_CV": 0.1522928860937085,
+        "conditional_mean_bootstrap95": [
+          96.31016456763551,
+          106.90013189612763
+        ],
+        "direction_quantiles_05_50_95": [
+          78.75203212042786,
+          103.70673931164472,
+          125.28360831900908
+        ]
+      },
+      "n2": {
+        "mean": 310.182457678226,
+        "sd": 11.039144031832194,
+        "direction_CV": 0.03558919519324936,
+        "conditional_mean_bootstrap95": [
+          306.39534666995564,
+          313.9147849854147
+        ],
+        "direction_quantiles_05_50_95": [
+          291.18795943735296,
+          311.8292361888724,
+          325.7950928095123
+        ]
+      },
+      "C_rms_A2_eV": {
+        "mean": -190.29485596999822,
+        "sd": 5.721100232006413,
+        "direction_CV": 0.030064397709775183,
+        "conditional_mean_bootstrap95": [
+          -192.21808940467955,
+          -188.32979358328058
+        ],
+        "direction_quantiles_05_50_95": [
+          -197.8563847840499,
+          -190.01245288182884,
+          -180.20745302394832
+        ]
+      }
+    },
+    "mean_C_per_atom_A2_eV": -0.07393099441995446,
+    "n_infty_fraction": 0.198634629936627,
+    "n2_fraction": 0.6058251126527852,
+    "mean_product_chi_ninf": -37.799148294444336,
+    "covariance_chi_ninf": -0.05352084857234387,
+    "covariance_fraction_of_mean_C": 0.0014139253527968914,
+    "fd_two_scale_max": 0.00046065450192314775,
+    "hessian_symmetry_relative": 5.335274269685593e-05,
+    "positive_C_count": 0,
+    "summary_csv": {
+      "mean_C": -37.85266914301668,
+      "mean_chi": -0.3716696405664028,
+      "mean_n_infty": 101.70093052755303,
+      "mean_n2": 310.182457678226,
+      "C_CV": 0.16348260178357651,
+      "chi_CV": 0.030064397709775183,
+      "C_mean_CI_low": -39.94028843719308,
+      "C_mean_CI_high": -35.68835283205595
+    },
+    "budget_ratios": {
+      "force_budget_ratio_for_equal_mean_total_work": 0.42499875686388455,
+      "force_budget_ratio_for_equal_mean_per_atom_work": 1.202078011897222
+    },
+    "frozen_transfer": {
+      "N": 512,
+      "frozen_prediction_A2_eV": -37.00787649885498,
+      "measured_mean_A2_eV": -37.85266914301668,
+      "absolute_relative_mean_discrepancy": 0.022317914780853782,
+      "observed_minus_frozen_A2_eV": -0.8447926441617,
+      "conditional_difference_bootstrap95": [
+        -3.204353511812675,
+        1.5447606454159653
+      ],
+      "observed_n_infty_mean": 101.70093052755303,
+      "iid_n_infty_mean": 97.99017312929116,
+      "frozen_constant_chi_direction_sd": 5.563536950641321,
+      "observed_direction_sd": 6.188252835953271
+    }
+  },
+  "Si512_displaced": {
+    "N": 512,
+    "directions": 32,
+    "statistics": {
+      "C_A2_eV": {
+        "mean": -28.334303131710637,
+        "sd": 4.321130210045309,
+        "direction_CV": 0.15250525802447812,
+        "conditional_mean_bootstrap95": [
+          -29.775882384985394,
+          -26.833501978652837
+        ],
+        "direction_quantiles_05_50_95": [
+          -35.550784699028576,
+          -28.09411102225782,
+          -21.65676394045776
+        ]
+      },
+      "curvature_factor_A2_eV": {
+        "mean": -0.3167928116196629,
+        "sd": 0.024419065125902306,
+        "direction_CV": 0.07708213138124959,
+        "conditional_mean_bootstrap95": [
+          -0.3254114501008922,
+          -0.30883348456450255
+        ],
+        "direction_quantiles_05_50_95": [
+          -0.3496385639251382,
+          -0.31616069854630846,
+          -0.28993420336408615
+        ]
+      },
+      "n_infty": {
+        "mean": 89.87439449517238,
+        "sd": 14.52972690670227,
+        "direction_CV": 0.1616670352920457,
+        "conditional_mean_bootstrap95": [
+          84.8572397684797,
+          94.65778398949347
+        ],
+        "direction_quantiles_05_50_95": [
+          64.47343086013207,
+          91.24429936544462,
+          110.26810634243509
+        ]
+      },
+      "n2": {
+        "mean": 300.7928921553224,
+        "sd": 12.823629920806434,
+        "direction_CV": 0.04263275581054825,
+        "conditional_mean_bootstrap95": [
+          296.37241813930666,
+          305.1349351921104
+        ],
+        "direction_quantiles_05_50_95": [
+          282.28552131044296,
+          302.41841147737813,
+          319.89043779663984
+        ]
+      },
+      "C_rms_A2_eV": {
+        "mean": -162.1979195492674,
+        "sd": 12.50256134446198,
+        "direction_CV": 0.07708213138124959,
+        "conditional_mean_bootstrap95": [
+          -166.6106624516568,
+          -158.1227440970253
+        ],
+        "direction_quantiles_05_50_95": [
+          -179.01494472967076,
+          -161.87427765570993,
+          -148.4463121224121
+        ]
+      }
+    },
+    "mean_C_per_atom_A2_eV": -0.05534043580412234,
+    "n_infty_fraction": 0.17553592674838356,
+    "n2_fraction": 0.5874861174908641,
+    "mean_product_chi_ninf": -28.471562124740412,
+    "covariance_chi_ninf": 0.13725899302977324,
+    "covariance_fraction_of_mean_C": -0.0048442692375997905,
+    "fd_two_scale_max": 0.0004904649429095904,
+    "hessian_symmetry_relative": 9.160865389196013e-05,
+    "positive_C_count": 0,
+    "summary_csv": {
+      "mean_C": -28.334303131710637,
+      "mean_chi": -0.3167928116196629,
+      "mean_n_infty": 89.87439449517238,
+      "mean_n2": 300.7928921553224,
+      "C_CV": 0.15250525802447812,
+      "chi_CV": 0.07708213138124959,
+      "C_mean_CI_low": -29.775882384985394,
+      "C_mean_CI_high": -26.833501978652837
+    },
+    "budget_ratios": {
+      "force_budget_ratio_for_equal_mean_total_work": 0.4345534572406027,
+      "force_budget_ratio_for_equal_mean_per_atom_work": 1.2291027856115542
+    }
+  },
+  "Si1000_ideal": {
+    "N": 1000,
+    "directions": 32,
+    "statistics": {
+      "C_A2_eV": {
+        "mean": -63.07546189009572,
+        "sd": 8.250937935575397,
+        "direction_CV": 0.13081058288486322,
+        "conditional_mean_bootstrap95": [
+          -65.83268608419021,
+          -60.25411511777667
+        ],
+        "direction_quantiles_05_50_95": [
+          -73.92725616319431,
+          -63.46317574396372,
+          -46.90023015819165
+        ]
+      },
+      "curvature_factor_A2_eV": {
+        "mean": -0.37391933894256607,
+        "sd": 0.00669628065414788,
+        "direction_CV": 0.017908356045677615,
+        "conditional_mean_bootstrap95": [
+          -0.3762144863646011,
+          -0.3716706103354659
+        ],
+        "direction_quantiles_05_50_95": [
+          -0.38371126515960813,
+          -0.37309741282755393,
+          -0.36599331726769835
+        ]
+      },
+      "n_infty": {
+        "mean": 168.6112580137938,
+        "sd": 21.245836653806677,
+        "direction_CV": 0.12600485225054542,
+        "conditional_mean_bootstrap95": [
+          161.28701859254718,
+          175.63671229742414
+        ],
+        "direction_quantiles_05_50_95": [
+          125.59817555922076,
+          168.79812113935952,
+          199.0969456686323
+        ]
+      },
+      "n2": {
+        "mean": 596.4150587043132,
+        "sd": 16.918976635731447,
+        "direction_CV": 0.028367789157583003,
+        "conditional_mean_bootstrap95": [
+          590.6128387797113,
+          602.2066940660567
+        ],
+        "direction_quantiles_05_50_95": [
+          568.481614319696,
+          596.5534038461442,
+          626.3772876795273
+        ]
+      },
+      "C_rms_A2_eV": {
+        "mean": -373.91933894256607,
+        "sd": 6.696280654147883,
+        "direction_CV": 0.01790835604567762,
+        "conditional_mean_bootstrap95": [
+          -376.21448636460116,
+          -371.67061033546594
+        ],
+        "direction_quantiles_05_50_95": [
+          -383.71126515960816,
+          -373.09741282755397,
+          -365.99331726769833
+        ]
+      }
+    },
+    "mean_C_per_atom_A2_eV": -0.06307546189009572,
+    "n_infty_fraction": 0.16861125801379379,
+    "n2_fraction": 0.5964150587043132,
+    "mean_product_chi_ninf": -63.04701013479222,
+    "covariance_chi_ninf": -0.028451755303501237,
+    "covariance_fraction_of_mean_C": 0.0004510748625682091,
+    "fd_two_scale_max": 0.0002265014236520463,
+    "hessian_symmetry_relative": 1.9582065637610076e-05,
+    "positive_C_count": 0,
+    "summary_csv": {
+      "mean_C": -63.07546189009572,
+      "mean_chi": -0.37391933894256607,
+      "mean_n_infty": 168.6112580137938,
+      "mean_n2": 596.4150587043132,
+      "C_CV": 0.13081058288486322,
+      "chi_CV": 0.017908356045677615,
+      "C_mean_CI_low": -65.83268608419021,
+      "C_mean_CI_high": -60.25411511777667
+    },
+    "budget_ratios": {
+      "force_budget_ratio_for_equal_mean_total_work": 0.32923477015876534,
+      "force_budget_ratio_for_equal_mean_per_atom_work": 1.3014146982796684
+    },
+    "frozen_transfer": {
+      "N": 1000,
+      "frozen_prediction_A2_eV": -66.19857359128325,
+      "measured_mean_A2_eV": -63.07546189009572,
+      "absolute_relative_mean_discrepancy": 0.04951389347935845,
+      "observed_minus_frozen_A2_eV": 3.1231117011875327,
+      "conditional_difference_bootstrap95": [
+        -0.213753523700219,
+        6.5635751759150835
+      ],
+      "observed_n_infty_mean": 168.6112580137938,
+      "iid_n_infty_mean": 175.2818670188404,
+      "frozen_constant_chi_direction_sd": 9.223102058587662,
+      "observed_direction_sd": 8.250937935575397
+    }
+  },
+  "Si1000_displaced": {
+    "N": 1000,
+    "directions": 32,
+    "statistics": {
+      "C_A2_eV": {
+        "mean": -52.82116697784437,
+        "sd": 10.275050369344333,
+        "direction_CV": 0.19452524351940506,
+        "conditional_mean_bootstrap95": [
+          -56.348013407537636,
+          -49.35462992630761
+        ],
+        "direction_quantiles_05_50_95": [
+          -69.44913405551577,
+          -50.651930497203715,
+          -38.12161565203328
+        ]
+      },
+      "curvature_factor_A2_eV": {
+        "mean": -0.33847287581443875,
+        "sd": 0.013175026890583828,
+        "direction_CV": 0.03892491195603746,
+        "conditional_mean_bootstrap95": [
+          -0.3429305771939328,
+          -0.3339176431531476
+        ],
+        "direction_quantiles_05_50_95": [
+          -0.35501259306909705,
+          -0.3392679680183659,
+          -0.31503905795009596
+        ]
+      },
+      "n_infty": {
+        "mean": 156.10129441815127,
+        "sd": 30.151036973616442,
+        "direction_CV": 0.19315046096190805,
+        "conditional_mean_bootstrap95": [
+          146.0392755765575,
+          166.54805928556448
+        ],
+        "direction_quantiles_05_50_95": [
+          114.38845683228654,
+          152.19330044320617,
+          205.7773483549009
+        ]
+      },
+      "n2": {
+        "mean": 582.6084777324863,
+        "sd": 17.380931713162262,
+        "direction_CV": 0.029832953651496612,
+        "conditional_mean_bootstrap95": [
+          576.7737407251219,
+          588.6104934590667
+        ],
+        "direction_quantiles_05_50_95": [
+          554.5501507954355,
+          584.8892904209999,
+          609.4787981558073
+        ]
+      },
+      "C_rms_A2_eV": {
+        "mean": -338.4728758144388,
+        "sd": 13.175026890583839,
+        "direction_CV": 0.038924911956037485,
+        "conditional_mean_bootstrap95": [
+          -342.9305771939328,
+          -333.9176431531476
+        ],
+        "direction_quantiles_05_50_95": [
+          -355.012593069097,
+          -339.26796801836593,
+          -315.039057950096
+        ]
+      }
+    },
+    "mean_C_per_atom_A2_eV": -0.05282116697784437,
+    "n_infty_fraction": 0.15610129441815127,
+    "n2_fraction": 0.5826084777324864,
+    "mean_product_chi_ninf": -52.836054040068056,
+    "covariance_chi_ninf": 0.014887062223676365,
+    "covariance_fraction_of_mean_C": -0.00028183894971348675,
+    "fd_two_scale_max": 0.0002575665290425148,
+    "hessian_symmetry_relative": 3.3234642803389056e-05,
+    "positive_C_count": 0,
+    "summary_csv": {
+      "mean_C": -52.82116697784437,
+      "mean_chi": -0.33847287581443875,
+      "mean_n_infty": 156.10129441815127,
+      "mean_n2": 582.6084777324863,
+      "C_CV": 0.19452524351940506,
+      "chi_CV": 0.03892491195603746,
+      "C_mean_CI_low": -56.348013407537636,
+      "C_mean_CI_high": -49.35462992630761
+    },
+    "budget_ratios": {
+      "force_budget_ratio_for_equal_mean_total_work": 0.31826983681502724,
+      "force_budget_ratio_for_equal_mean_per_atom_work": 1.2580719935819955
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "method": "Spearman correlation with average ranks; one record per direction, budgets not duplicated; descriptive association, no causal decomposition",
+  "results": [
+    {
+      "anchor": "A",
+      "n_directions": 64,
+      "rho_absC_n_infty": 0.4198260073260073,
+      "rho_absC_abschi": 0.787087912087912
+    },
+    {
+      "anchor": "B",
+      "n_directions": 64,
+      "rho_absC_n_infty": 0.6773809523809523,
+      "rho_absC_abschi": 0.7224816849816849
+    },
+    {
+      "anchor": "pooled",
+      "n_directions": 128,
+      "rho_absC_n_infty": 0.559037950924739,
+      "rho_absC_abschi": 0.7450787401574802
+    }
+  ]
+}

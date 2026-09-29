@@ -20,8 +20,8 @@ PRIVATE_PARTS = {'manuscript', 'development_reports', 'private',
                  '.env', '.venv', '__pycache__', '.pytest_cache', '.ruff_cache'}
 GENERATED_SUFFIXES = {'.tex', '.pdf', '.png', '.jpg', '.jpeg', '.tiff',
                       '.db', '.sqlite', '.pt', '.pth', '.log', '.zip'}
-# Reviewed supplement: names, modes, and blob identities, in Git order.
-SUPPLEMENT_SHA256 = 'a13963653f61c825bc8da55af6783a3df4e472e9266c2270bf81f7194e2535c8'
+# Reviewed numerical release v2.0.0: names, modes, and blob identities, in Git order.
+SUPPLEMENT_SHA256 = '23aca582de564019f18eebe821ce44e75b7f4f2838ac03c872ddc1db8f3dcd19'
 TEXT_PATTERNS = {
     'personal or site filesystem path': re.compile(
         rb'/(?:Users|home|data/home|public[0-9]*|lustre[0-9]*)/[^\s"\x27<>]+'),
