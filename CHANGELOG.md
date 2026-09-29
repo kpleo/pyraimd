@@ -31,6 +31,11 @@
 
 ### Fixed
 
+- The `prepared_qe_launcher` setup-change comparison now also excludes
+  the terminal-size variables `COLUMNS` and `LINES` as shell noise:
+  CI-style environments where the job's bash assigns them (pty-driven,
+  like `_`/`SHLVL`) no longer fail the prepare as if they were user
+  runtime changes.  Real unallowed changes are still refused.
 - The `prepared_qe_launcher` Slurm template now anchors a RELATIVE
   `RUN_CONFIG_TEMPLATE` at `SLURM_SUBMIT_DIR` (the documented
   submit-directory convention) instead of the job's working directory;

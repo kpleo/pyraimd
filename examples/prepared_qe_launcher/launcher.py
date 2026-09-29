@@ -13,7 +13,7 @@ OMP_/OPENBLAS_/MKL_ thread variables and CONDA_*/MINIFORGE variables;
 ``--allow-var NAME`` adds more) — the REST of the environment is never
 recorded.  Any REAL change the setup makes OUTSIDE the managed set
 (added, modified or removed; shell noise like ``_``/``SHLVL``/``PWD``/
-``BASH_FUNC_*`` excluded) aborts the prepare BEFORE anything is written,
+``BASH_FUNC_*`` and terminal-size ``COLUMNS``/``LINES`` excluded) aborts the prepare BEFORE anything is written,
 reported by variable NAME only with the ``--allow-var`` remedy — unknown
 changes are never silently dropped.  Credential-class variables
 (KEY/TOKEN/SECRET/PASS/CRED/AUTH/CERT in the name) abort even via
@@ -61,7 +61,7 @@ DEFAULT_ALLOW_VARS = ("PATH", "LD_LIBRARY_PATH", "LIBRARY_PATH",
                       "XML_CATALOG_FILES")
 ALLOW_PREFIXES = ("OMP_", "OPENBLAS_", "MKL_", "CONDA_", "MINIFORGE")
 #: shell bookkeeping and function exports, not runtime environment
-SHELL_NOISE = {"_", "SHLVL", "OLDPWD", "PWD"}
+SHELL_NOISE = {"_", "SHLVL", "OLDPWD", "PWD", "COLUMNS", "LINES"}
 SHELL_NOISE_PREFIXES = ("BASH_FUNC_",)
 CREDENTIAL_MARKERS = ("KEY", "TOKEN", "SECRET", "PASS", "CRED", "AUTH",
                       "CERT")
