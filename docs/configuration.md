@@ -55,7 +55,12 @@ resume_workflow(config.run.directory, 20)  # identical to `pyramid resume`
   structure carries fixed initial momenta) and `harmonic-compare` (the
   offline accuracy-verification chain: three configurations — reference
   NVE, unscaled and scaled MTS — around one shared structure, plus a
-  README walking through validate -> run -> compare).
+  README walking through validate -> run -> compare).  The `harmonic*`
+  templates run fully offline on the analytic backends;
+  `qe-mace-compare` instead writes the QE + MACE PROJECT SKELETON of the
+  same three-arm chain (five files incl. a README): it is NOT directly
+  runnable — edit the QE command, pseudopotentials, local model path and
+  physical parameters first, then run the static checks.
 - `pyramid validate CONFIG [--probe-backends | --check-environment |
   --probe-surrogate]`: check everything that can
   be checked without running: TOML and schema, structure readability and

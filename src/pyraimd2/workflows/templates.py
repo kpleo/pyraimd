@@ -12,7 +12,10 @@ outer_ratio 4 — no external program, no model download.
 ``harmonic-compare`` is the offline accuracy-verification chain: one
 reference NVE run plus two fixed-model MTS candidates (unscaled and
 scaled) from one shared initial structure, then `pyramid compare` on the
-completed runs.  The numbers are
+completed runs.  ``qe-mace-compare`` is the QE + MACE PROJECT SKELETON of
+the same chain (the examples/qe_mace_mts shape embedded): it is NOT
+directly runnable — the user edits the QE command, pseudopotentials and
+local model path first.  The numbers are
 demonstration values, not accuracy recommendations for any material.
 """
 
@@ -23,7 +26,7 @@ from pathlib import Path
 from pyraimd2.workflows.setup import WorkflowError
 
 TEMPLATES = ("harmonic", "harmonic-nvt", "harmonic-adaptive-nvt",
-             "harmonic-mts", "harmonic-compare")
+             "harmonic-mts", "harmonic-compare", "qe-mace-compare")
 
 HARMONIC_CONFIG = """\
 # Pyramid configuration — harmonic offline demo (schema_version 1).
@@ -413,6 +416,267 @@ verify chain (init -> validate -> run -> compare), not evidence about any
 material, and it makes no performance claims.
 """
 
+# ---------------------------------------------------------------------------
+# qe-mace-compare: the QE + MACE project SKELETON for the three-arm
+# comparison (reference DFT NVE, uncalibrated MACE MTS, scaled MTS) — the
+# same physical shape and example values as examples/qe_mace_mts/, embedded
+# here so a wheel-only user gets it from `pyramid init`.  It needs external
+# resources (QE command, pseudopotentials, a local MACE model) before any
+# run; nothing is calibrated or ready for real compute as written.
+
+QE_MACE_COMPARE_STRUCTURE = """\
+2
+Lattice="0.0 2.715 2.715 2.715 0.0 2.715 2.715 2.715 0.0" Properties=species:S:1:pos:R:3:momenta:R:3 pbc="T T T"
+Si      0.00000000    0.00000000    0.00000000   -0.28591950    0.42887925   -0.57183900
+Si      1.35750000    1.35750000    1.35750000    0.28591950   -0.42887925    0.57183900
+"""
+
+QE_MACE_COMPARE_REFERENCE_CONFIG = """\
+# QE + MACE compare skeleton (schema_version 1), REFERENCE arm: plain
+# reference-driven NVE through Quantum ESPRESSO.  NOT a verified materials
+# recipe and NOT ready to run — provide the QE command, pseudopotentials and
+# your own settings first (see README.md).  The two MTS arms share THIS
+# recipe, the SAME structure/initial state and the SAME physical duration.
+# Relative paths resolve against THIS file's directory.
+schema_version = 1
+
+[run]
+id = "qe-mace-compare-reference"
+directory = "runs/reference"
+
+[task]
+kind = "md"                       # singlepoint | relax | md
+mode = "reference"                # plain NVE driven by the reference engine
+
+[structure]
+file = "structure.extxyz"         # explicit initial momenta (MTS never thermalizes)
+
+[dynamics]
+ensemble = "nve"
+integrator = "verlet"
+timestep_fs = 1.0                 # fs (illustrative)
+steps = 16                        # 16 fs — the span the candidates must fit inside
+
+[checkpoint]
+interval_steps = 8
+
+[reference]
+backend = "qe"
+pseudo_dir = "pseudos"            # resolved relative to this file
+xc = "pbe"
+dispersion = "grimme-d3"
+ecutwfc = 40.0
+ecutrho = 320.0
+kpts = [2, 2, 2]
+conv_thr = 1e-8
+pseudos = { Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF" }
+# pw_cmd = ["mpirun", "-np", "4", "pw.x"]   # platform profile, not physics
+"""
+
+QE_MACE_COMPARE_MTS_CONFIG = """\
+# QE + MACE compare skeleton (schema_version 1), CANDIDATE arm 1:
+# fixed-model MTS (respa) NVE with a MACE fast model — SAME reference
+# recipe, structure/initial state and physical-time span as the reference
+# arm.  NOT a verified materials recipe — provide resources first (see
+# README.md).  Relative paths resolve against THIS file's directory.
+schema_version = 1
+
+[run]
+id = "qe-mace-compare-mts"
+directory = "runs/mts"
+
+[task]
+kind = "md"
+mode = "mts"
+
+[structure]
+file = "structure.extxyz"         # the SAME initial state as the reference arm
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0                 # inner step (fs, illustrative)
+steps = 16                        # inner steps; must be a multiple of outer_ratio
+outer_ratio = 4                   # complete boundaries at t = 0, 4, 8, 12, 16 fs
+
+[checkpoint]
+interval_steps = 8                # inner steps; only complete outer boundaries are checkpointed
+
+[reference]
+backend = "qe"
+pseudo_dir = "pseudos"            # resolved relative to this file
+xc = "pbe"
+dispersion = "grimme-d3"
+ecutwfc = 40.0
+ecutrho = 320.0
+kpts = [2, 2, 2]
+conv_thr = 1e-8
+pseudos = { Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF" }
+
+[surrogate]
+backend = "mace"
+model = "models/user.model"       # PLACEHOLDER: an explicit local model file
+device = "cpu"
+default_dtype = "float64"
+"""
+
+QE_MACE_COMPARE_MTS_SCALED_CONFIG = """\
+# QE + MACE compare skeleton (schema_version 1), CANDIDATE arm 2: the same
+# MTS run with the public `scaled` wrapper around the same MACE fast model.
+# `scaled` multiplies BOTH the energy and the forces by one frozen scalar
+# (scaling only one side would break force consistency).  scale = 1.0 is a
+# PLACEHOLDER — replace it with your own calibration result
+# (`pyramid calibrate-scale`, see README.md), not with a value guessed here.
+# Relative paths resolve against THIS file's directory.
+schema_version = 1
+
+[run]
+id = "qe-mace-compare-mts-scaled"
+directory = "runs/mts-scaled"
+
+[task]
+kind = "md"
+mode = "mts"
+
+[structure]
+file = "structure.extxyz"         # the SAME initial state as the reference arm
+
+[dynamics]
+ensemble = "nve"
+integrator = "respa"
+timestep_fs = 1.0                 # inner step (fs, illustrative)
+steps = 16                        # inner steps; must be a multiple of outer_ratio
+outer_ratio = 4                   # complete boundaries at t = 0, 4, 8, 12, 16 fs
+
+[checkpoint]
+interval_steps = 8                # inner steps; only complete outer boundaries are checkpointed
+
+[reference]
+backend = "qe"
+pseudo_dir = "pseudos"            # resolved relative to this file
+xc = "pbe"
+dispersion = "grimme-d3"
+ecutwfc = 40.0
+ecutrho = 320.0
+kpts = [2, 2, 2]
+conv_thr = 1e-8
+pseudos = { Si = "Si.pbe-n-kjpaw_psl.1.0.0.UPF" }
+
+[surrogate]
+backend = "scaled"
+scale = 1.0                       # PLACEHOLDER: use your calibrate-scale result
+calibration_note = "REPLACE: record your calibration source here (e.g. the scale.json sha256)"
+base = { name = "mace", kwargs = { model = "models/user.model", device = "cpu", default_dtype = "float64" } }
+"""
+
+QE_MACE_COMPARE_README = """\
+# QE + MACE compare skeleton — the three-arm accuracy check on real backends
+
+This is a PROJECT SKELETON, not a runnable demo: unlike the harmonic
+templates (which run fully offline on analytic backends), these
+configurations need external resources — a QE command, pseudopotentials,
+and a local MACE model — prepared BY YOU before any run.  Nothing here is
+calibrated, converged or ready for real compute as written.
+
+## 1. The five files
+
+- `run.toml` — the reference arm: plain NVE driven by Quantum ESPRESSO
+  (16 fs at 1 fs, illustrative).
+- `run_mts.toml` — candidate arm: fixed-model MTS with the plain MACE fast
+  model (inner 1 fs, outer_ratio 4 → complete boundaries at 0, 4, 8, 12,
+  16 fs, all present on the reference grid).
+- `run_mts_scaled.toml` — the same MTS arm behind the `scaled` wrapper
+  (`scale = 1.0` is a placeholder for YOUR calibration result).
+- `structure.extxyz` — ONE shared structure (a 2-atom Si teaching cell
+  with explicit initial momenta) used by all three configs, so all arms
+  start from the same state.  Replace it with your own structure
+  consistently in every config (`structure.file`); the tool provides no
+  built-in automatic accuracy guarantee.
+- `README.md` — this file.
+
+## 2. Prepare resources (before any run)
+
+Edit all three configs (identically, except the surrogate section):
+
+- the QE launch command (`pw_cmd`, e.g. `["mpirun", "-np", "4", "pw.x"]`
+  — a platform profile, not physics);
+- pseudopotentials: `pseudo_dir` plus `pseudos = { Si = "..." }`;
+- the MACE side needs `pip install 'pyraimd2[mace]'` and a LOCAL model
+  file at `models/user.model` (create the directory and place the file —
+  nothing is downloaded or auto-fetched, and bare foundation-model names
+  that could download are refused where a run starts).
+
+Relative paths resolve against each configuration file's own directory.
+Use your own paths; the example values are placeholders, never personal
+absolute paths, and no model/pseudo data is attached.
+
+## 3. Static and environment checks (read-only)
+
+```sh
+pyramid validate run.toml
+pyramid validate run_mts.toml
+pyramid validate run_mts_scaled.toml
+pyramid validate run_mts.toml --check-environment
+```
+
+`validate` parses and checks schema, structure and the backend contract
+without evaluating anything; `--check-environment` is the strictly
+read-only local-prerequisites preflight.  Until your resources are in
+place they report the concrete missing items as TO-PREPARE items — that
+is the honest state, never disguised as success.  (A `--probe-backends` /
+`--probe-surrogate` probe is different: it runs one REAL backend
+evaluation — only on a compute-authorized node.)
+
+## 4. Optional calibration (offline, your own data)
+
+The `scaled` arm's coefficient comes from your own paired calibration
+data — independent reference and fast-model forces on the same
+configurations, in one `.npz`:
+
+```sh
+pyramid calibrate-scale --pairs pairs.npz --output scale.json
+```
+
+`pairs.npz` keys: `reference_forces_eV_A` and `fast_forces_eV_A`
+(float `(n_frames, n_atoms, 3)`, already paired), `frame_ids`,
+`reference_id`, `fast_model_id`, and `force_unit` exactly
+`"eV/angstrom"`.  Then fill `scale` and `calibration_note` in
+`run_mts_scaled.toml` (record the scale.json hash) before production.
+The fit uses ALL frames; its residual RMS is a training metric, not an
+accuracy guarantee.
+
+## 5. Run, then compare
+
+Once resources are prepared, run the three arms explicitly (real compute
+— on your compute-authorized allocation):
+
+```sh
+pyramid run run.toml
+pyramid run run_mts.toml
+pyramid run run_mts_scaled.toml
+pyramid compare runs/reference runs/mts
+pyramid compare runs/reference runs/mts-scaled --json
+```
+
+`pyramid compare` reads the COMPLETED run directories only and reports
+pointwise position/velocity accuracy at the shared physical times plus
+the runs' recorded costs; it applies pass/fail only to thresholds you
+pass yourself.  Timing note: `inspect`'s timing block sums the run's own
+reported RUN_SUMMARY segments — segment timing is never whole-job time
+(queue, startup and gaps stay outside), so no whole-trajectory speedup
+follows from it.  Details: `docs/user_guide.md` and
+`docs/configuration.md` in the source tree.
+
+## 6. Changing the material
+
+Sync element/pseudopotentials, initial momenta, convergence settings and
+physical duration across all three configs.  Choose timesteps and the
+outer ratio from an independent reference comparison first (short
+reference vs candidate windows on YOUR system), then scale up.  The
+shipped 1 fs / 16 steps / outer_ratio 4 values are illustrative teaching
+settings, not production recommendations.
+"""
+
 _CONTENT = {"harmonic": {"run.toml": HARMONIC_CONFIG,
                          "structure.extxyz": HARMONIC_STRUCTURE},
             "harmonic-nvt": {"run.toml": HARMONIC_NVT_CONFIG,
@@ -427,7 +691,13 @@ _CONTENT = {"harmonic": {"run.toml": HARMONIC_CONFIG,
                 "run_mts.toml": HARMONIC_COMPARE_MTS_CONFIG,
                 "run_mts_scaled.toml": HARMONIC_COMPARE_MTS_SCALED_CONFIG,
                 "structure.extxyz": HARMONIC_MTS_STRUCTURE,
-                "README.md": HARMONIC_COMPARE_README}}
+                "README.md": HARMONIC_COMPARE_README},
+            "qe-mace-compare": {
+                "run.toml": QE_MACE_COMPARE_REFERENCE_CONFIG,
+                "run_mts.toml": QE_MACE_COMPARE_MTS_CONFIG,
+                "run_mts_scaled.toml": QE_MACE_COMPARE_MTS_SCALED_CONFIG,
+                "structure.extxyz": QE_MACE_COMPARE_STRUCTURE,
+                "README.md": QE_MACE_COMPARE_README}}
 
 #: every template's primary configuration (the ``write_template`` return)
 PRIMARY_CONFIG = "run.toml"

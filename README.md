@@ -170,7 +170,11 @@ pyramid compare demo/runs/reference demo/runs/mts-scaled --json
 The template writes three configurations (reference NVE, unscaled MTS,
 scaled MTS) around one shared initial structure, plus a README explaining
 each step and how to read the report. To move the same chain to your own
-reference engine and fast model (e.g. Quantum ESPRESSO + MACE), see the
+reference engine and fast model (e.g. Quantum ESPRESSO + MACE),
+`pyramid init --template qe-mace-compare` writes that skeleton directly
+(five files incl. its README; edit resources and physical parameters
+first — it needs external resources and is not runnable as written); see
+also the
 migration notes in [docs/configuration.md](docs/configuration.md) and the
 configuration shape in [examples/qe_mace_skeleton/](examples/qe_mace_skeleton/).
 

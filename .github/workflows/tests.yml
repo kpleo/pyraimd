@@ -129,6 +129,21 @@ jobs:
           wheel-venv/bin/pyramid run smoke-compare/run_mts_scaled.toml
           wheel-venv/bin/pyramid compare smoke-compare/runs/reference smoke-compare/runs/mts --json
           wheel-venv/bin/pyramid compare smoke-compare/runs/reference smoke-compare/runs/mts-scaled --json
+      - name: QE+MACE skeleton template smoke from the installed wheel
+        # init + static validate only: this environment has no QE, MACE,
+        # pseudopotentials or model files, so validation must NAME the
+        # missing resources (usage exit 2) — never execute them, never
+        # pretend success.
+        working-directory: ${{ runner.temp }}
+        run: |
+          wheel-venv/bin/pyramid init --template qe-mace-compare --output smoke-qe-compare
+          for cfg in run.toml run_mts.toml run_mts_scaled.toml; do
+            rc=0
+            wheel-venv/bin/pyramid validate "smoke-qe-compare/$cfg" --json > "smoke-qe-compare/$cfg.report.json" || rc=$?
+            test "$rc" -eq 2
+            grep -q '"configuration_valid": false' "smoke-qe-compare/$cfg.report.json"
+            grep -q 'pseudopotential not found' "smoke-qe-compare/$cfg.report.json"
+          done
       - name: Installed core carries no torch/PySCF
         run: |
           "$RUNNER_TEMP/wheel-venv/bin/python" -m pip list

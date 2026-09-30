@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- New init template `qe-mace-compare` (`pyramid init --template
+  qe-mace-compare --output DIR`): the QE + MACE three-arm comparison
+  PROJECT SKELETON in five embedded files — reference DFT NVE,
+  uncalibrated MACE MTS and scaled-MTS configs sharing one structure
+  (the public Si two-atom teaching cell with its initial momenta), one
+  reference recipe and one physical-time span, plus a self-contained
+  README (resources to prepare, read-only checks, optional
+  calibrate-scale flow, run/compare guidance, honest scope).  It ships
+  inside the wheel/sdist like every template (embedded Python
+  constants), needs external resources before any run, and is held
+  drift-free against `examples/qe_mace_mts/` by a normalization
+  consistency test.  The `pyramid init` help and success hint now
+  distinguish directly-runnable analytic demos from resource-needing
+  skeletons.  The wheel CI job smokes the template from the installed
+  artifact (init + static validate naming the missing resources, no
+  execution).
+
 ## 0.8.4 (2026-09-29)
 
 ### Added

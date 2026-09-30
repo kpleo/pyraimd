@@ -48,7 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", metavar="command")
 
     init = commands.add_parser(
-        "init", help="write a runnable configuration + structure from a template")
+        "init", help="write a configuration project from a template "
+                     "(harmonic* run fully offline on analytic backends; "
+                     "qe-mace-compare is a QE+MACE skeleton that needs "
+                     "external resources prepared first)")
     init.add_argument("--template", default="harmonic",
                       help="template name (default: harmonic)")
     init.add_argument("--output", required=True,
@@ -232,8 +235,16 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print(f"wrote {config_path} (+ {', '.join(rest)})")
     print("next steps:")
     if "README.md" in written:
-        print(f"  see {config_path.parent / 'README.md'} — the full "
-              "validate -> run -> compare chain")
+        if args.template == "qe-mace-compare":
+            print(f"  read {config_path.parent / 'README.md'} FIRST — "
+                  "edit the resource paths (QE command, pseudopotentials, "
+                  "local model file) and the physical parameters, then run "
+                  "the static checks (`pyramid validate`, "
+                  "`--check-environment`); nothing here is ready for real "
+                  "compute as written")
+        else:
+            print(f"  see {config_path.parent / 'README.md'} — the full "
+                  "validate -> run -> compare chain")
     else:
         print(f"  pyramid validate {config_path}")
         print(f"  pyramid run {config_path}")

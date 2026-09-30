@@ -34,6 +34,13 @@ plain-NVE arm and the two fixed-model MTS arms (unscaled and scaled),
 then `pyramid compare` each completed candidate against the reference.
 The template's numbers are demonstration values, not recommendations.
 
+The same chain exists for real backends as a project skeleton:
+`pyramid init --template qe-mace-compare --output proj` writes the
+QE + MACE three-arm layout (five files incl. its README). It is NOT
+directly runnable — edit the QE command, pseudopotentials, local model
+path and physical parameters first, run the static checks, and only then
+run real compute explicitly on compute-authorized nodes.
+
 ## 3. Your own material
 
 Replace the toy structure with your own, carrying explicit initial
