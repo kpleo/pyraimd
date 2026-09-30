@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.5 (2026-09-30)
+
 ### Added
 
 - New init template `qe-mace-compare` (`pyramid init --template

@@ -572,11 +572,12 @@ base = { name = "mace", kwargs = { model = "models/user.model", device = "cpu", 
 QE_MACE_COMPARE_README = """\
 # QE + MACE compare skeleton — the three-arm accuracy check on real backends
 
-This is a PROJECT SKELETON, not a runnable demo: unlike the harmonic
-templates (which run fully offline on analytic backends), these
-configurations need external resources — a QE command, pseudopotentials,
-and a local MACE model — prepared BY YOU before any run.  Nothing here is
-calibrated, converged or ready for real compute as written.
+Prerequisite: before any run, prepare the compute command (QE), the
+pseudopotentials and a local MACE model file, and check your material
+parameters.  The shipped values are illustrative, not a converged
+recipe, and having resources in place does not by itself guarantee
+accuracy.  Unlike the harmonic templates, nothing here runs on builtin
+analytic backends.
 
 ## 1. The five files
 
@@ -586,29 +587,30 @@ calibrated, converged or ready for real compute as written.
   model (inner 1 fs, outer_ratio 4 → complete boundaries at 0, 4, 8, 12,
   16 fs, all present on the reference grid).
 - `run_mts_scaled.toml` — the same MTS arm behind the `scaled` wrapper
-  (`scale = 1.0` is a placeholder for YOUR calibration result).
-- `structure.extxyz` — ONE shared structure (a 2-atom Si teaching cell
+  (`scale = 1.0` is a placeholder for your own calibration result).
+- `structure.extxyz` — one shared structure (a 2-atom Si teaching cell
   with explicit initial momenta) used by all three configs, so all arms
   start from the same state.  Replace it with your own structure
   consistently in every config (`structure.file`); the tool provides no
   built-in automatic accuracy guarantee.
 - `README.md` — this file.
 
-## 2. Prepare resources (before any run)
+## 2. Prepare resources
 
 Edit all three configs (identically, except the surrogate section):
 
 - the QE launch command (`pw_cmd`, e.g. `["mpirun", "-np", "4", "pw.x"]`
   — a platform profile, not physics);
-- pseudopotentials: `pseudo_dir` plus `pseudos = { Si = "..." }`;
-- the MACE side needs `pip install 'pyraimd2[mace]'` and a LOCAL model
-  file at `models/user.model` (create the directory and place the file —
-  nothing is downloaded or auto-fetched, and bare foundation-model names
-  that could download are refused where a run starts).
+- pseudopotentials: `pseudo_dir` plus `pseudos = { Si = "..." }` (install
+  the set yourself; none is attached);
+- the fast model: install the Pyramid distribution you actually use (from
+  its wheel or source) with the MACE optional dependency
+  (`pyraimd2[mace]`) in the same environment, then place a local model
+  file at `models/user.model`.  Nothing is downloaded or auto-fetched.
 
 Relative paths resolve against each configuration file's own directory.
 Use your own paths; the example values are placeholders, never personal
-absolute paths, and no model/pseudo data is attached.
+absolute paths.
 
 ## 3. Static and environment checks (read-only)
 
@@ -622,10 +624,10 @@ pyramid validate run_mts.toml --check-environment
 `validate` parses and checks schema, structure and the backend contract
 without evaluating anything; `--check-environment` is the strictly
 read-only local-prerequisites preflight.  Until your resources are in
-place they report the concrete missing items as TO-PREPARE items — that
-is the honest state, never disguised as success.  (A `--probe-backends` /
+place they report the concrete missing items as to-prepare items — that
+is the honest state, never disguised as success.  A `--probe-backends` /
 `--probe-surrogate` probe is different: it runs one REAL backend
-evaluation — only on a compute-authorized node.)
+evaluation — only on a compute-authorized node.
 
 ## 4. Optional calibration (offline, your own data)
 
@@ -664,8 +666,8 @@ the runs' recorded costs; it applies pass/fail only to thresholds you
 pass yourself.  Timing note: `inspect`'s timing block sums the run's own
 reported RUN_SUMMARY segments — segment timing is never whole-job time
 (queue, startup and gaps stay outside), so no whole-trajectory speedup
-follows from it.  Details: `docs/user_guide.md` and
-`docs/configuration.md` in the source tree.
+follows from it.  The full ordered path: [docs/user_guide.md](docs/user_guide.md)
+in the source tree.
 
 ## 6. Changing the material
 

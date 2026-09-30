@@ -236,12 +236,11 @@ def _cmd_init(args: argparse.Namespace) -> int:
     print("next steps:")
     if "README.md" in written:
         if args.template == "qe-mace-compare":
-            print(f"  read {config_path.parent / 'README.md'} FIRST — "
-                  "edit the resource paths (QE command, pseudopotentials, "
-                  "local model file) and the physical parameters, then run "
-                  "the static checks (`pyramid validate`, "
-                  "`--check-environment`); nothing here is ready for real "
-                  "compute as written")
+            print(f"  prepare resources first (QE command, pseudopotentials, "
+                  "a local model file) and check the physical parameters, "
+                  "then run the static checks (`pyramid validate`, "
+                  "`--check-environment`) — details in "
+                  f"{config_path.parent / 'README.md'}")
         else:
             print(f"  see {config_path.parent / 'README.md'} — the full "
                   "validate -> run -> compare chain")

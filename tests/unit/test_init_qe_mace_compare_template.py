@@ -31,8 +31,8 @@ def test_emits_exactly_five_files_and_static_validate(tmp_path,
     printed = capsys.readouterr().out
     assert code == 0
     assert {p.name for p in out.iterdir()} == TEMPLATE_FILES
-    assert "read" in printed and "README.md" in printed
-    assert "never" not in printed.lower() or "ready" in printed.lower()
+    assert "prepare resources first" in printed
+    assert "README.md" in printed
 
     configs = [load_config(out / name) for name in CONFIGS]
     assert [c.task.mode for c in configs] == ["reference", "mts", "mts"]
