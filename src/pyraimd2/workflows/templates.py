@@ -603,10 +603,11 @@ Edit all three configs (identically, except the surrogate section):
   — a platform profile, not physics);
 - pseudopotentials: `pseudo_dir` plus `pseudos = { Si = "..." }` (install
   the set yourself; none is attached);
-- the fast model: install the Pyramid distribution you actually use (from
-  its wheel or source) with the MACE optional dependency
-  (`pyraimd2[mace]`) in the same environment, then place a local model
-  file at `models/user.model`.  Nothing is downloaded or auto-fetched.
+- the fast model: install the wheel you actually use from the project's
+  GitHub Releases with the MACE extra in the same environment (`pip
+  install 'pyraimd2[mace] @ file:///path/to/pyraimd2-0.8.5-py3-none-any.whl'`),
+  then place a local model file at `models/user.model`.  Nothing is
+  downloaded or auto-fetched.
 
 Relative paths resolve against each configuration file's own directory.
 Use your own paths; the example values are placeholders, never personal
@@ -666,8 +667,8 @@ the runs' recorded costs; it applies pass/fail only to thresholds you
 pass yourself.  Timing note: `inspect`'s timing block sums the run's own
 reported RUN_SUMMARY segments — segment timing is never whole-job time
 (queue, startup and gaps stay outside), so no whole-trajectory speedup
-follows from it.  The full ordered path: [docs/user_guide.md](docs/user_guide.md)
-in the source tree.
+follows from it.  The full ordered path: the public user guide,
+[docs/user_guide.md](https://github.com/kpleo/pyraimd/blob/main/docs/user_guide.md).
 
 ## 6. Changing the material
 

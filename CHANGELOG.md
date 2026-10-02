@@ -22,6 +22,11 @@
   skeletons.  The wheel CI job smokes the template from the installed
   artifact (init + static validate naming the missing resources, no
   execution).
+- The generated `qe-mace-compare` README links the public user guide by
+  its GitHub URL, and the install instructions (user guide and template
+  README) point at the actual GitHub Release channel — the downloaded
+  local wheel plus the same-file extras form — not at a PyPI project
+  that does not exist.
 
 ## 0.8.4 (2026-09-29)
 

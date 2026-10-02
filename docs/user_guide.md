@@ -7,15 +7,18 @@ and [api.md](api.md) (the Python entry points); this page is the map.
 
 ## 1. Install
 
+There is no PyPI release: download the wheel (and/or source) of the
+version you actually use from the project's GitHub Releases, then install
+it locally. Optional extras come from the same local wheel file:
+
 ```sh
-pip install pyraimd2            # core: NumPy + ASE only
-pip install 'pyraimd2[mace]'    # optional: the MACE surrogate backend
-pip install 'pyraimd2[pyscf]'   # optional: the PySCF reference backend
+pip install pyraimd2-0.8.5-py3-none-any.whl        # the file you downloaded
+pip install 'pyraimd2[mace] @ file:///path/to/pyraimd2-0.8.5-py3-none-any.whl'   # MACE surrogate backend
+pip install 'pyraimd2[pyscf] @ file:///path/to/pyraimd2-0.8.5-py3-none-any.whl'  # PySCF reference backend
 ```
 
-pip installation reaches your package index; once installed, the core
-runs every analytic-backend example without any external compute
-software. Optional backends are
+The core install (NumPy + ASE only) runs every analytic-backend example
+without any external compute software. Optional backends are
 imported only when selected in a configuration; a Quantum ESPRESSO
 reference additionally needs `pw.x` and pseudopotentials on your machine.
 
