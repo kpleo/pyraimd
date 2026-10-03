@@ -46,7 +46,7 @@ def test_version(capsys) -> None:
 def test_help_offline_for_all_commands(capsys) -> None:
     assert "init" in help_text(capsys, "--help")
     for command in ("init", "validate", "run", "resume", "inspect", "export",
-                    "compare", "calibrate-scale", "backends"):
+                    "export-pairs", "compare", "calibrate-scale", "backends"):
         assert "usage:" in help_text(capsys, command, "--help")
 
 

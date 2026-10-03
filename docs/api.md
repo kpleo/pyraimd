@@ -66,6 +66,21 @@ command line.
   valid sources. Missing labels are NaN-marked, never zero-filled. MTS runs
   refuse `force_source="driving"` (an outer step has no single driving
   force); use `reference` or `base`.
+- `export_pairs(run_dir, *, evaluation_ids, output, force=False) -> dict`
+  (`pyraimd2.workflows.export_pairs`, CLI `pyramid export-pairs`) — export
+  saved reference/fast force labels of a completed fixed-model
+  `mts-nve-respa` run as a `calibrate-scale` pairs `.npz`, selected by
+  committed evaluation ids (the initial configuration is 1, stored at
+  step -1; non-initial frames need their STEP_COMPLETED boundary).
+  Strictly read-only (no backend constructed, nothing evaluated,
+  source-file hashes verified before/after); pairs come from the same
+  row's `data.engine.forces` / `data.surrogate.forces`, one missing frame
+  aborts the export, and correction-wrapped runs (`scaled` /
+  `quadratic-corrected`) are refused — those labels are not raw base
+  forces.  The archive also carries positions/cell/numbers and a
+  `provenance_json` record (source hashes, hashed identity encoding,
+  per-frame bindings).  Raises `ExportPairsError` on input/scope
+  problems.
 - `compare_runs(reference_run, candidate_run, *, max_position_rms_A=None,
   max_velocity_rms_A_fs=None) -> dict` (`pyraimd2.workflows.compare`,
   rendered by `format_comparison(report)`) — the offline trajectory

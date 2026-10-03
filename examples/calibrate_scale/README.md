@@ -61,3 +61,36 @@ explicitly on compute-authorized nodes, and the wrapper then keeps the
 scale constant in production (it multiplies energy and forces together).
 The training residual RMS is a metric over the fitted set only — it is
 not a generalization bound, and no MTS outer ratio follows from it.
+
+## From an existing MTS run: `export-pairs`
+
+If you already have a completed fixed-model MTS run (`task.mode = "mts"`),
+its store holds the reference and fast-model forces at the same
+configurations — exporting them needs no new reference evaluation, no
+model loading and no array hand-conversion:
+
+```sh
+# one uncalibrated analytic MTS run to see the whole chain (offline):
+pyramid init --template harmonic-compare --output demo
+pyramid run demo/run_mts.toml
+
+# export three saved states by their evaluation ids (1 is the initial
+# configuration, stored at step -1; the outer boundaries follow)
+pyramid export-pairs demo/runs/mts --evaluation-ids 1 2 3 --output pairs.npz
+
+# the same fit as above — here it returns 1.25, the analytic teaching
+# coefficient of the template (reference k = 1.0 over fast k = 0.8)
+pyramid calibrate-scale --pairs pairs.npz --output scale.json
+```
+
+`export-pairs` is strictly read-only: the run directory is never
+modified, only committed complete-step states pair, correction-wrapped
+runs (`scaled` / `quadratic-corrected`) are refused because their stored
+labels are not raw base forces, and the output must live outside the run
+directory. All exported frames enter the fit; whether to hold out a
+separate validation set is your own later choice — nothing auto-splits,
+applies the coefficient for you, or recommends an outer ratio. The NPZ
+also carries positions/cell/numbers and a `provenance_json` record
+(source file hashes, identities, per-frame evaluation/step/row binding)
+— provenance-by-record, not a certification that the labels are
+physically accurate.

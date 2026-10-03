@@ -70,6 +70,13 @@ nodes, then:
 pyramid calibrate-scale --pairs pairs.npz --output scale.json
 ```
 
+An already-completed fixed-model MTS run can supply the pairs directly
+from its saved labels — no new reference evaluation, no model loading:
+`pyramid export-pairs RUN_DIR --evaluation-ids 1 2 3 --output pairs.npz`
+(read-only; correction-wrapped runs are refused because their stored
+labels are not raw base forces; see the `export-pairs` section of
+`examples/calibrate_scale/README.md`).
+
 Copy `scale` into `[surrogate] backend = "scaled"` and record the
 file's hash in `calibration_note`. The reported residual RMS is a
 training metric over the fitted set only — no generalization bound, and

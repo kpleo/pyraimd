@@ -648,6 +648,11 @@ pyramid calibrate-scale --pairs pairs.npz --output scale.json
 The fit uses ALL frames; its residual RMS is a training metric, not an
 accuracy guarantee.
 
+An existing fixed-model MTS run can supply the pairs from its saved
+labels instead: `pyramid export-pairs RUN_DIR --evaluation-ids 1 2 3
+--output pairs.npz` (read-only, no new reference evaluation; run
+`run_mts.toml` first and export from `runs/mts`).
+
 ## 5. Run, then compare
 
 Once resources are prepared, run the three arms explicitly (real compute

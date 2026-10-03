@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added
+
+- Saved-label calibration export: `pyramid export-pairs RUN_DIR
+  --evaluation-ids 1 2 3 --output pairs.npz [--force] [--json]` (Python
+  API `pyraimd2.workflows.export_pairs(run_dir, *, evaluation_ids,
+  output, force=False)`).  A completed fixed-model `mts-nve-respa` run's
+  committed boundary records (reference and fast forces at the same
+  configurations) become a `pyramid calibrate-scale` pairs file with no
+  backend constructed, nothing evaluated and the source directory
+  strictly read-only.  Selection is by committed evaluation id (the
+  initial configuration is 1, stored at step -1); every frame needs its
+  explicit row binding and (unless initial) its STEP_COMPLETED boundary;
+  forces come from the same row's `data.engine.forces` /
+  `data.surrogate.forces`; a missing frame aborts the whole export;
+  correction-wrapped runs (`scaled` / `quadratic-corrected`) are
+  refused — those labels are not raw base forces.  The archive carries
+  forces, positions, cell, numbers and a `provenance_json` record
+  (source-file SHA256 re-verified after reading, hash-encoded
+  run/backend identities, per-frame evaluation/step/row/time bindings)
+  — provenance-by-record, not a certification of label accuracy.  The
+  full analytic chain is documented in `examples/calibrate_scale/`.
+
 ## 0.8.5 (2026-09-30)
 
 ### Added

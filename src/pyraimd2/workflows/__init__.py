@@ -12,6 +12,10 @@ from pyraimd2.workflows.export import (
     export_run,
     frames_from_store,
 )
+from pyraimd2.workflows.export_pairs import (
+    ExportPairsError,
+    export_pairs,
+)
 from pyraimd2.workflows.md import (
     WorkflowResult,
     resume_workflow,
@@ -37,6 +41,7 @@ __all__ = [
     "TEMPLATES",
     "CompareError",
     "ExportError",
+    "ExportPairsError",
     "RunOutputs",
     "SurrogateProbeError",
     "WorkflowError",
@@ -44,6 +49,7 @@ __all__ = [
     "build_backends",
     "compare_runs",
     "create_configured_backend",
+    "export_pairs",
     "export_run",
     "format_comparison",
     "frames_from_store",

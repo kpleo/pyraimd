@@ -164,6 +164,35 @@ def build_parser() -> argparse.ArgumentParser:
                               "(handled errors are reported as JSON too)")
     compare.set_defaults(func=_cmd_compare)
 
+    export_pairs_cmd = commands.add_parser(
+        "export-pairs",
+        help="export saved reference/fast force labels of a completed "
+             "fixed-model MTS run as a calibrate-scale pairs file "
+             "(offline, read-only; no backend is constructed)")
+    export_pairs_cmd.add_argument(
+        "run_dir", help="the MTS run directory (trajectory.db, "
+                        "events.jsonl, manifest.json, "
+                        "resolved_config.json)")
+    export_pairs_cmd.add_argument(
+        "--evaluation-ids", type=int, nargs="+", required=True,
+        metavar="ID",
+        help="the stored context evaluation ids to export, in commit "
+             "order (the initial configuration is 1, stored at step -1; "
+             "at least one, unique; any missing or incomplete frame "
+             "aborts the export)")
+    export_pairs_cmd.add_argument(
+        "--output", required=True,
+        help="the pairs.npz to write (must be OUTSIDE the run directory; "
+             "kept unless --force)")
+    export_pairs_cmd.add_argument("--force", action="store_true",
+                                  help="overwrite the existing output "
+                                       "file (only that file)")
+    export_pairs_cmd.add_argument("--json", action="store_true",
+                                  help="write a single JSON report to "
+                                       "stdout (handled errors are "
+                                       "reported as JSON too)")
+    export_pairs_cmd.set_defaults(func=_cmd_export_pairs)
+
     calibrate = commands.add_parser(
         "calibrate-scale",
         help="fit the closed-form force least-squares scale for the "
@@ -583,6 +612,39 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     # a requested criterion that its metric exceeds is a checked failure,
     # distinct from an input error
     return EXIT_OK if report["criteria_status"] != "failed" else EXIT_FAILURE
+
+
+def _cmd_export_pairs(args: argparse.Namespace) -> int:
+    from pyraimd2.workflows import ExportPairsError, export_pairs
+
+    try:
+        report = export_pairs(args.run_dir,
+                              evaluation_ids=args.evaluation_ids,
+                              output=args.output, force=args.force)
+    except ExportPairsError as error:
+        if args.json:
+            print(json.dumps({
+                "schema_version": 1,
+                "ok": False,
+                "error": {"code": type(error).__name__,
+                          "message": str(error)},
+            }, allow_nan=False))
+        else:
+            print(f"error: export-pairs: {error}", file=sys.stderr)
+        return EXIT_USAGE
+    if args.json:
+        print(json.dumps(report, allow_nan=False))
+    else:
+        print(f"exported {report['frames']} paired frame(s) "
+              f"({report['n_atoms']} atoms) from run "
+              f"{report['run_identity'][:40]}...")
+        print(f"  evaluation ids : {report['evaluation_ids']}")
+        print(f"  reference id   : {report['reference_id'][:40]}...")
+        print(f"  fast model id  : {report['fast_model_id'][:40]}...")
+        print(f"  wrote {report['output']} (sha256 "
+              f"{report['output_sha256'][:16]}...)")
+        print(f"next: {report['next_command']}")
+    return EXIT_OK
 
 
 def _cmd_calibrate_scale(args: argparse.Namespace) -> int:
